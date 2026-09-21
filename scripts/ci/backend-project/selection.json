@@ -1,0 +1,111 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 97,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_A",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax()"
+      ]
+    },
+    {
+      "annotation_line": 108,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_B",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentColdPreparedContinuationRefusesChangedArchiveXminAgainstExactOriginalCustody",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "recurrentColdPreparedContinuationRefusesChangedArchiveXminAgainstExactOriginalCustody()"
+      ]
+    },
+    {
+      "annotation_line": 109,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_B",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentColdProjectedReplayRefusesChangedIntentXminWithoutNewAuthorityOrCustodyWrites",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "recurrentColdProjectedReplayRefusesChangedIntentXminWithoutNewAuthorityOrCustodyWrites()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 3,
+  "expected_total": 3,
+  "selection_basis": {
+    "active_gates": {
+      "focused43": "9METHODS_ROOT_DISPATCHING_NOT_ASSUMED_PASS",
+      "focused53": "35658399276:7METHODS_ACTIVE_NOT_ASSUMED_PASS"
+    },
+    "additional_cold_E_runtimes": 2,
+    "batch": "N14_AND_ORIGINAL_B_LAST_TWO",
+    "bounded_plan": "review/working/app-29-recurrent-terminal-remaining-batch-20260921-01/BATCHES.json",
+    "bounded_plan_sha256": "11cf263666871ce7603b97c3f802e1da3f9f8ac55096120d498416d3b1e03868",
+    "carryforward_selectors": [
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.oldInitialDeletionProfileStillRefusesNewWorkAfterGenuineRecurrentSuccess",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRejectsIdentityPrivacyAndCheckpointDriftBeforeCounters",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRequiresExactPriorPublicationReceiptReservationAndNativeApply",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionOwnClaimCannotBorrowAnyPreviousPNL",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionPendingPriorAndDamagedHistoryRefuseNewWorkButNotExactContinuation",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionClaimLoserReplaysBeforeClosedControlsWithoutDoubleCharge",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionWaitedCredentialChangeCannotAuthorizeTheOriginalClaim",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRechecksDatabaseFreshnessAfterCredentialBoundary",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRetainsExactOwnersTemplatesIngressAndNativeLane"
+    ],
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "REMAINING_RECURRENT_TERMINAL_BATCH_A": 1,
+      "REMAINING_RECURRENT_TERMINAL_BATCH_B": 2
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "focused46_failed_selector": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax",
+    "focused46_selection": "review/working/app-29-backend-focused-20260921-46/focused-selectors.json",
+    "genuine_fixtures": 3,
+    "gradle_seconds": 2400,
+    "passing_evidence_carry": {
+      "focused36": "35635093191:10PASS",
+      "focused37": "35639268313:8PASS",
+      "focused41": "35643583997:4PASS",
+      "focused42": "35643584837:3PASS",
+      "focused46": "35655348378:7PASS_ROOT_REPORTED",
+      "focused48": "35655140899:5METHODS_CARRY_ROOT_REPORTED",
+      "focused52": "35656967972:RAW_ALL6PASS_ROOT_READBACK_PENDING",
+      "native08": "35645621713:1PASS"
+    },
+    "planned_remaining_union_methods": 17,
+    "prerequisite": "Root completes52 raw-pass readback, binds exact reviewed diagnostic689f9d19 source/tree and admits a free hosted slot; not assumed by preparation.",
+    "remaining_deletion_methods": 9,
+    "required_source": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+    "scope": "Exact3 existing selectors: failed46 N14 diagnostic plus original47 last2 cold physical refusals omitted from53. Root reports52 raw ALL6PASS including genuine recurrent prepared/replay and five deletion positives; readback remains root-owned. Carry46seven/48five/52six without rerun. Preserve original17 union as46sevenPASS/53sevenACTIVE/54threePENDING. No new harness, source/chain audit, scope expansion, timeout or retry. Root alone binds final source/tree and dispatches after a slot frees;53seven is active and root is dispatching43nine.",
+    "slot_status": "WAIT_FOR_ROOT_FREE_SLOT",
+    "union_accounting": {
+      "focused46_pass": 7,
+      "focused53_active": 7,
+      "focused54_pending": 3
+    }
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 3
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.recurrentColdPreparedContinuationRefusesChangedArchiveXminAgainstExactOriginalCustody",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.recurrentColdProjectedReplayRefusesChangedIntentXminWithoutNewAuthorityOrCustodyWrites"
+  ]
+}
