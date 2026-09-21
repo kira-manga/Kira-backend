@@ -21,6 +21,9 @@ class TestTerminalQuiescenceIT {
 
     @Test fun genuineEmptyRunInventoriesBothSealsAndPurgeTwiceAndRecyclesWithoutSecondLifetimeCharge() = withFixture { TestTerminalQuiescenceCasesV1.successful(it) }
     @Test fun genuineEnrolledRunAlsoInventoriesItsActualManifestAndPreservesEveryPublicationReservationAndIntent() = withFixture { TestTerminalQuiescenceCasesV1.successful(it, enrolled = true) }
+    // One protected exchange plus500 genuine registered lower-core enrollments, not501 HTTP admissions.
+    @Test fun genuineTwoChunkRunInventoriesBoth500And1EntryManifestsAndPreservesThePaid501EnrollmentSource() =
+        withFixture { TestTerminalQuiescenceCasesV1.successful(it, enrolled = true, multiChunk = true) }
     @Test fun uncompletedTerminalSealAndAbsentPreActivationPinCannotMintQuiescence() = withFixture { TestTerminalQuiescenceCasesV1.noAbsentOrUnfinishedParent(it) }
     @Test fun ordinarySignatureDomainCannotAdmitTerminalDenial() = denial(TerminalQuiescenceDenialFaultV1.ORDINARY_SIGNATURE_DOMAIN)
     @Test fun foreignSealedCandidateCannotAdmitTerminalDenial() = denial(TerminalQuiescenceDenialFaultV1.FOREIGN_CANDIDATE)

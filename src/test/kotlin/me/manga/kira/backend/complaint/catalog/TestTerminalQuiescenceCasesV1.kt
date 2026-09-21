@@ -40,8 +40,18 @@ internal enum class TerminalQuiescenceCurrentFaultV1 { EPOCH, SCAN_FENCE, SOURCE
 
 /** Authored component assertions only. Every successful predecessor is genuine; raw external declarations remain synthetic. */
 internal object TestTerminalQuiescenceCasesV1 {
-    fun successful(tls: VersionBoundPersistenceConnectedFixture, enrolled: Boolean = false) = withRun(tls, enrolled) { f, original, inputs, probe ->
+    fun successful(tls: VersionBoundPersistenceConnectedFixture, enrolled: Boolean = false, multiChunk: Boolean = false) = withRun(
+        tls, enrolled, additionalRawEnrolled = if (multiChunk) 500 else 0,
+    ) { f, original, inputs, probe ->
         val before = preserved(f); val reserve = unused(f); val counters = f.p.counters(); val old = progress(f)
+        val expectedChunks = if (multiChunk) 2 else if (enrolled) 1 else 0
+        val expectedInstallations = if (multiChunk) 501L else if (enrolled) 1L else 0L
+        assertEquals(expectedChunks, original.manifest.capturedSource().count)
+        assertEquals(2, old.installationReads().size)
+        old.installationReads().forEach { read ->
+            assertEquals(expectedInstallations, read.installationCount); assertEquals(expectedChunks, read.chunkCount)
+            assertEquals(expectedInstallations, read.sourceHighWater.enrolledCount)
+        }
         val bytes = f.sealHttp.terminalObjects().associate { it.key to it.bytes.copyOf() }
         val native = f.sealHttp.order.size
         var beforeCut: ByteArray? = null; var afterCut: ByteArray? = null
@@ -49,6 +59,8 @@ internal object TestTerminalQuiescenceCasesV1 {
             assertEquals(1, progress(f).completedCuts().size)
             assertEquals(2L, scanRuns(f))
             assertEquals(original.targets.size * 2L, scanEntries(f))
+            val staged = TestTerminalCapacityChargesV1.SCAN_RUN.scaled(2) + TestTerminalCapacityChargesV1.SCAN_ENTRY.scaled(original.targets.size * 2L)
+            assertEquals(reserve - staged, unused(f), "Only the real two-pass scan rows spend the already admitted reserve before the cut.")
             beforeCut = progressBytes(f)
             TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
                 override fun afterCommit() {
@@ -81,23 +93,26 @@ internal object TestTerminalQuiescenceCasesV1 {
         assertTrue(cut.fencingToken > original.terminalSeal.leaseToken)
         val first = cut.denial.firstInventory; val second = cut.denial.secondInventory
         val count = original.targets.size.toLong()
-        assertEquals(if (enrolled) 4L else 3L, count)
+        assertEquals(expectedChunks + 3L, count)
         assertEquals(count, first.versionCount); assertEquals(count, second.versionCount)
         assertEquals(first.sha256, second.sha256); assertEquals(first.byteCount, second.byteCount)
+        assertEquals(bytes.values.sumOf { it.size.toLong() }, first.byteCount)
         assertTrue(second.startedAtEpochSecond >= first.completedAtEpochSecond + cut.denial.acceptedRequestBoundSeconds)
         assertEquals(2, f.sealHttp.terminalRecoverySessions.size); assertEquals(2, f.sealHttp.terminalRecoverySessions.distinct().size)
         val requests = f.sealHttp.terminalInventoryRequests
         assertEquals(2 * count, requests.count { it.kind == "GET" }.toLong())
-        assertEquals(4, requests.count { it.kind == "LIST" }, "Each pass pages the complete prefix in actual two-row responses.")
-        assertEquals(original.targets.map { it.objectRef.objectKey }.toSet(), requests.filter { it.kind == "GET" }.map {
+        assertEquals(2 * ((count + 1) / 2), requests.count { it.kind == "LIST" }.toLong(), "Each pass pages the complete prefix in actual two-row responses.")
+        val gets = requests.filter { it.kind == "GET" }.groupingBy {
             it.http.encodedPath().removePrefix("/${original.routing.journalConfiguration.declaration().journalLocation.bucket}/")
-        }.toSet())
+        }.eachCount()
+        assertEquals(original.targets.associate { it.objectRef.objectKey to 2 }, gets)
         assertTrue(requests.filter { it.kind == "LIST" }.all { it.http.rawQueryParameters()["prefix"] == listOf(original.routing.journalConfiguration.sealTerminalPrefix) })
         val calls = f.sealHttp.order.drop(native)
         assertEquals(2, calls.count { it == "STS_SOURCE" }); assertEquals(2, calls.count { it == "STS_ASSUME" }); assertEquals(2, calls.count { it == "STS_TARGET" })
         assertEquals(2 * count, calls.count { it == "DECRYPT" }.toLong()); assertFalse(calls.any { it == "PUT" || it == "GENERATE" })
         f.sealHttp.terminalObjects().forEach { assertArrayEquals(bytes.getValue(it.key), it.bytes) }
         assertEquals(2L * count, probe.calls.count { it.sql == TestTerminalQuiescenceSqlV1.insertEntry }.toLong())
+        assertEquals(2L * count, probe.calls.count { it.sql == TestTerminalQuiescenceSqlV1.deleteEntry }.toLong())
         assertEquals(1, probe.calls.count { it.step === TestTerminalQuiescenceStepV1.WITNESS && it.sql == TestOrdinaryDrainSqlV1.spendAndProgress })
         assertEquals(0L, scanRuns(f)); assertEquals(0L, scanEntries(f)); assertSealed(f)
         assertTrue(f.observer.queryForObject("SELECT lease_owner IS NULL AND lease_expires_at IS NULL AND lease_token = ? " +
@@ -286,10 +301,10 @@ internal object TestTerminalQuiescenceCasesV1 {
         assertEquals(image, f.p.image()); assertEquals(providers, f.sealHttp.order); assertEquals(calls, probe.calls.size)
     }
 
-    private fun withRun(tls: VersionBoundPersistenceConnectedFixture, enrolled: Boolean = false,
+    private fun withRun(tls: VersionBoundPersistenceConnectedFixture, enrolled: Boolean = false, additionalRawEnrolled: Int = 0,
         action: (TestRunPurgeFixtureV1, TestRunTerminalQuiescenceV1, TestTerminalQuiescenceFixtureInputsV1, TestTerminalQuiescenceSqlProbeV1) -> Unit) {
         val inputs = TestTerminalQuiescenceFixtureInputsV1()
-        withTerminalEpochSealRun(tls, enrolled = enrolled, terminalQuiescence = inputs) { f, purge, epochProbe ->
+        withTerminalEpochSealRun(tls, enrolled = enrolled, terminalQuiescence = inputs, additionalRawEnrolled = additionalRawEnrolled) { f, purge, epochProbe ->
             val terminal = purge.beginTerminalEpochSeal().also { epochProbe.original = it }
             assertEquals(TestRunTerminalEpochSealResultV1.TERMINAL_EPOCH_AUTHENTICATED_AND_SEALED, terminal.seal())
             epochProbe.assertReleased(); f.assertReleased()
