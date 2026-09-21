@@ -23,6 +23,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentCheckpointDocumentV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointCreateInputV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointDeletionInputV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -56,16 +57,20 @@ internal fun withRecurrentFixture(tls: VersionBoundPersistenceConnectedFixture,
     initialCheckpointCreate: TestInitialCheckpointCreateInputV1 = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
     shortFreshness: Boolean = false,
     terminalHistory: TestOrdinaryDrainFixtureInputsV1? = null,
+    initialCheckpointDeletion: TestInitialCheckpointDeletionInputV1 = TestInitialCheckpointDeletionInputV1(1, VersionBoundTestInitialCheckpointDeletionV1.PROFILE),
+    reserveSecondConsumerCreator: Boolean = false,
     action: (TestActiveRecurrentFixtureV1) -> Unit) {
     require(verified || !applied)
     require(!retainedAllAlias || family == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL && verified)
-    val raw = TestActiveRecurrentRawFixtureV1(initialCheckpointCreate, shortFreshness)
+    require(!reserveSecondConsumerCreator || family == ComplaintJournalDeletionKindV1.OWNER_DELETE)
+    val raw = TestActiveRecurrentRawFixtureV1(initialCheckpointCreate, shortFreshness, initialCheckpointDeletion)
     val native = raw.deletion
     // D/E may supply its exact cold denial recipe; it is never spliced into an activated process.
     val history = terminalHistory ?: TestOrdinaryDrainFixtureInputsV1(maximumRetainedVersions = maximumVersions, maximumFramedBytes = maximumBytes)
     withTestActiveFirstCut(tls, ordinaryRawHttp = raw.factories, terminalHistory = history, globalScanBeforeActivation = true) { first ->
         first.initial.withExchange { exchange ->
-            val owners = List(if (family == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) 2 else 1) {
+            val precursorOwners = if (family == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) 2 else 1
+            val owners = List(if (reserveSecondConsumerCreator) 2 else precursorOwners) {
                 val candidate = first.initial.candidate()
                 candidate.installation to exchange.enroll(candidate).session.accessToken
             }
@@ -79,9 +84,10 @@ internal fun withRecurrentFixture(tls: VersionBoundPersistenceConnectedFixture,
                     checkpoint.checkpoint(); checkpoint.assertReleased()
                     val creators = owners.map { (actor, token) -> TestRegisteredInitialCheckpointCreateFixtureV1(checkpoint, exchange, actor, token) }
                     try {
-                        val reports = creators.map { creator -> creator.attempt().also { creator.assertApplied(creator.create(it), it) } }
+                        val initialCreators = creators.take(precursorOwners)
+                        val reports = initialCreators.map { creator -> creator.attempt().also { creator.assertApplied(creator.create(it), it) } }
                         assertEquals(PersistenceLifecycleObservation.READY, first.runtime.pools.deletion.prepareDeletion())
-                        TestRegisteredInitialCheckpointDeletionFixtureV1(checkpoint, exchange, creators, reports, native, family).use { precursor ->
+                        TestRegisteredInitialCheckpointDeletionFixtureV1(checkpoint, exchange, initialCreators, reports, native, family).use { precursor ->
                             val before = precursor.counters()
                             val event = precursor.authorize()
                             val after = precursor.counters()
@@ -110,7 +116,7 @@ internal fun withRecurrentFixture(tls: VersionBoundPersistenceConnectedFixture,
                                     queue.poll(); queue.assertReleased(); queue.assertNoAuthority(); queue.assertExpectedAppliedObjects()
                                 }
                                 assertEquals((if (applied) 1L else 0L) + (if (alias != null) 1L else 0L), queue.count("complaint_deletion_journal_applied"))
-                                TestActiveRecurrentFixtureV1(queue, raw, alias).use(action)
+                                TestActiveRecurrentFixtureV1(queue, raw, alias, creators).use(action)
                             }
                         }
                     } finally { creators.asReversed().forEach { it.close() } }
@@ -121,7 +127,8 @@ internal fun withRecurrentFixture(tls: VersionBoundPersistenceConnectedFixture,
 }
 
 internal class TestActiveRecurrentFixtureV1(val queue: TestActiveOwnerDeleteQueueFixtureV1,
-    val raw: TestActiveRecurrentRawFixtureV1, val historicalAll: TestActiveQueueHistoricalAllObjectV1? = null) : AutoCloseable {
+    val raw: TestActiveRecurrentRawFixtureV1, val historicalAll: TestActiveQueueHistoricalAllObjectV1? = null,
+    val retainedConsumerCreators: List<TestRegisteredInitialCheckpointCreateFixtureV1> = queue.precursor.creators) : AutoCloseable {
     val precursor = queue.precursor
     val first = precursor.first
     val registration = precursor.registration
@@ -218,10 +225,35 @@ internal class TestActiveRecurrentFixtureV1(val queue: TestActiveOwnerDeleteQueu
         it.jdbc.calls.clear()
         it.jdbc.observations.clear() // Passive prefix observations only, after asserting every lease retired.
     }
+    /** Suspend only the idle enclosing recurrent probe, not any product owner/store/registration. */
+    fun <T> withIdleDeletionHooks(action: () -> T): T {
+        assertSqlReleased()
+        val before = precursor.deletion.before; val after = precursor.deletion.after
+        precursor.deletion.before = {}; precursor.deletion.after = {}
+        return try { action() } finally { precursor.deletion.before = before; precursor.deletion.after = after }
+    }
+    /** A distinct B raw/fixture context on the exact retained graph; originals are never retargeted. */
+    fun withFreshQueue(
+        source: TestRegisteredInitialCheckpointDeletionFixtureV1 = precursor,
+        beforeAuthorization: Map<ComplaintCapacityCounter, DeleteAllCounter> = queue.beforeAuthorization,
+        afterAuthorization: Map<ComplaintCapacityCounter, DeleteAllCounter> = queue.afterAuthorization,
+        expectedAppliedRecords: List<TestRegisteredInitialDeletionNativeRecordV1> = listOf(record),
+        expectedPublicationEpoch: Long = 3,
+        action: (TestActiveOwnerDeleteQueueFixtureV1) -> Unit,
+    ) {
+        assertSame(precursor.binding, source.binding); assertSame(precursor.ownerStore, source.ownerStore)
+        assertSame(precursor.deletionOwner, source.deletionOwner); assertSame(precursor.deletion, source.deletion)
+        source.assertReleased()
+        raw.withFreshQueue { fresh -> withIdleDeletionHooks {
+            TestActiveOwnerDeleteQueueFixtureV1(source, fresh, checkNotNull(source.record), beforeAuthorization, afterAuthorization,
+                verifiedPublication = true, expectedPublicationEpoch = expectedPublicationEpoch).use { selected ->
+                selected.expectAppliedRecords(*expectedAppliedRecords.toTypedArray())
+                action(selected)
+            }
+        } }
+    }
     fun providerCounts(): List<Int> = precursor.creators.first().providerCounts() + precursor.native.counts() + listOf(
-        raw.sts.requests.size, raw.kms.requests.size, raw.requests.size, raw.budgets.size,
-        raw.queue.sts.requests.size, raw.queue.kms.requests.size, raw.queue.sqs.requests.size,
-        raw.queue.requests.size, raw.queue.budgets.size)
+        raw.sts.requests.size, raw.kms.requests.size, raw.requests.size, raw.budgets.size) + raw.queueProviderCounts()
     fun immutableImage() = listOf("complaint_test_active_seal_intents", "complaint_test_active_recurrent_seal_intents",
         "complaint_test_active_checkpoint_history").associateWith { table -> observer.queryForList(
             "SELECT to_jsonb(t)::text FROM $table t WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text", String::class.java, scope) }

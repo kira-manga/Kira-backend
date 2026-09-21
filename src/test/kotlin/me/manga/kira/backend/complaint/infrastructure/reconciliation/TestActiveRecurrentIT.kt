@@ -20,12 +20,59 @@ import org.junit.jupiter.api.parallel.ExecutionMode
  * The ALL setup additionally needs the separately owned B readback-oracle correction composed.
  * The current-consumer selectors retain the actual original actor through genuine nonempty
  * SUCCESS, with the combined CREATE/REPLY/EDIT recipe selected before D; no supplied SUCCESS.
+ * Four current-deletion families select their separate privacy recipe before D, then create real
+ * new targets after SUCCESS. OWNER additionally uses actual epoch3 B APPLY, CREATE and another
+ * deletion under the unchanged checkpoint/advanced fence. A genuine B-reconstructed prior N is
+ * covered separately; this does not claim general recurrent bookkeeping reconstruction.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
 class TestActiveRecurrentIT {
     private val database = lazy { PgLifecycleDatabaseFixture(TestActiveRecurrentIT::class.java).also { it.start() } }
     @AfterAll fun closeDatabase() { if (database.isInitialized()) database.value.close() }
+
+    @Test fun genuineRecurrentOwnerDeletionAppliesThroughBThenCreatesAndDeletesAgainWithoutAnotherCheckpoint() = withFixture {
+        TestActiveRecurrentCasesV1.genuineRecurrentDeletion(it, ComplaintJournalDeletionKindV1.OWNER_DELETE)
+    }
+    @Test fun genuineRecurrentOwnerDeleteAllUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure() = withFixture {
+        TestActiveRecurrentCasesV1.genuineRecurrentDeletion(it, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL)
+    }
+    @Test fun genuineRecurrentAdminDeleteUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure() = withFixture {
+        TestActiveRecurrentCasesV1.genuineRecurrentDeletion(it, ComplaintJournalDeletionKindV1.ADMIN_DELETE)
+    }
+    @Test fun genuineRecurrentAdminBatchUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure() = withFixture {
+        TestActiveRecurrentCasesV1.genuineRecurrentDeletion(it, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE)
+    }
+    @Test fun genuinelyBReconstructedPriorReceiptPermitsNewRecurrentDeletionWithoutReauthorizationOrReconversion() = withFixture {
+        TestActiveRecurrentCasesV1.reconstructedPriorReceiptFeedsANewCurrentDeletionWithoutReauthorization(it)
+    }
+    @Test fun oldInitialDeletionProfileStillRefusesNewWorkAfterGenuineRecurrentSuccess() = withFixture {
+        TestActiveRecurrentCasesV1.olderDeletionProfileRemainsInitialOnly(it)
+    }
+    @Test fun recurrentDeletionRejectsIdentityPrivacyAndCheckpointDriftBeforeCounters() = withFixture {
+        TestActiveRecurrentCasesV1.currentDeletionRejectsCheckpointAndPrivacyGateDrift(it)
+    }
+    @Test fun recurrentDeletionRequiresExactPriorPublicationReceiptReservationAndNativeApply() = withFixture {
+        TestActiveRecurrentCasesV1.currentDeletionRequiresExactPriorPNLAndNativeApply(it)
+    }
+    @Test fun recurrentDeletionOwnClaimCannotBorrowAnyPreviousPNL() = withFixture {
+        TestActiveRecurrentCasesV1.currentDeletionOwnClaimCannotBorrowPriorRows(it)
+    }
+    @Test fun recurrentDeletionPendingPriorAndDamagedHistoryRefuseNewWorkButNotExactContinuation() = withFixture {
+        TestActiveRecurrentCasesV1.pendingPriorAndMissingHistoryNeverBlockExactDeletionContinuation(it)
+    }
+    @Test fun recurrentDeletionClaimLoserReplaysBeforeClosedControlsWithoutDoubleCharge() = withFixture {
+        TestActiveRecurrentCasesV1.currentDeletionClaimLoser(it)
+    }
+    @Test fun recurrentDeletionWaitedCredentialChangeCannotAuthorizeTheOriginalClaim() = withFixture {
+        TestActiveRecurrentCasesV1.currentDeletionWaitedCredential(it)
+    }
+    @Test fun recurrentDeletionRechecksDatabaseFreshnessAfterCredentialBoundary() = withFixture {
+        TestActiveRecurrentCasesV1.currentDeletionNaturalFreshness(it)
+    }
+    @Test fun recurrentDeletionRetainsExactOwnersTemplatesIngressAndNativeLane() = withFixture {
+        TestActiveRecurrentCasesV1.currentDeletionExactResources(it)
+    }
 
     @Test fun genuineRecurrentCurrentCheckpointFeedsCountedCreateReplyEditAndExactHistoricalReceipts() = withFixture {
         TestActiveRecurrentCasesV1.genuineCurrentCreateReplyEdit(it)
