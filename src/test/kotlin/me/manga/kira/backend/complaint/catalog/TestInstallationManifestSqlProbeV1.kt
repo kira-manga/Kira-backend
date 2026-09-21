@@ -9,6 +9,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestSqlV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OrdinaryJournalRetentionV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestStepV1
@@ -31,10 +32,18 @@ import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
 
 /** Observe/inject failures on the actual SQL/holder only; never manufacture a producer or successful completion. */
-internal class TestInstallationManifestSqlProbeV1(
-    private val f: TestRunOrdinaryDrainFixtureV1,
-    private val expectedDrain: TestRunOrdinaryDrainV1? = null,
-) : JdbcTemplate(f.registration.process.pools.catalogCoordinator.dataSource), AutoCloseable {
+internal class TestInstallationManifestSqlProbeV1 private constructor(
+    private val registration: ComplaintTestNamespaceRegistrationV1,
+    private val projection: ProjectionActivationObservation,
+    private val expectedDrain: TestRunOrdinaryDrainV1?,
+) : JdbcTemplate(registration.process.pools.catalogCoordinator.dataSource), AutoCloseable {
+    constructor(f: TestRunOrdinaryDrainFixtureV1, expectedDrain: TestRunOrdinaryDrainV1? = null) :
+        this(f.registration, f.history.p, expectedDrain)
+
+    /** Same actual phase probe for the unused/protected-enrollment predecessor, not a fabricated drain. */
+    constructor(f: TestRunPurgeFixtureV1, expectedDrain: TestRunOrdinaryDrainV1) :
+        this(f.registration, f.p, expectedDrain)
+
     var original: TestRunInstallationManifestV1? = null
     var before: (Call) -> Unit = {}
     var after: (Call) -> Unit = {}
@@ -47,7 +56,7 @@ internal class TestInstallationManifestSqlProbeV1(
     private var lastReturned = false
     private var databaseClock: Pair<PersistencePhaseContext, Instant>? = null
     private var sidecarTiming = "NOT_OBSERVED"
-    private val executor = f.registration.process.pools.catalogCoordinator.testInstallationManifest
+    private val executor = registration.process.pools.catalogCoordinator.testInstallationManifest
     private val field = executor.javaClass.getDeclaredField("jdbc").apply { check(trySetAccessible()) }
     private val previous = field.get(executor)
     init {
@@ -83,15 +92,15 @@ internal class TestInstallationManifestSqlProbeV1(
             original = owner
         }
         assertSame(original, owner)
-        assertSame(f.registration, owner.registration)
+        assertSame(registration, owner.registration)
         assertEquals(PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE, ownedCutField(phase, "path"))
         assertEquals(sql.count { it == '?' }, args.size)
         val source = checkNotNull(dataSource)
         val connection = (TransactionSynchronizationManager.getResource(source) as ConnectionHolder).connection
         assertEquals(setOf(source), TransactionSynchronizationManager.getResourceMap().keys)
         assertEquals(Connection.TRANSACTION_READ_COMMITTED, connection.transactionIsolation)
-        assertTrue(f.history.p.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
-        assertTrue(f.history.p.advisory(connection, "complaint-journal-epoch", "ExclusiveLock"))
+        assertTrue(projection.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
+        assertTrue(projection.advisory(connection, "complaint-journal-epoch", "ExclusiveLock"))
         val lease = ownedPoolLease(connection)
         val observation = observations.getOrPut(phase) {
             val identity = connection.createStatement().use { s -> s.executeQuery("SELECT pg_backend_pid(), txid_current()").use { r ->
@@ -142,7 +151,7 @@ internal class TestInstallationManifestSqlProbeV1(
         requireConnectionFree()
         assertNull(PersistencePhaseOwnership.current())
         assertTrue(TransactionSynchronizationManager.getResourceMap().isEmpty())
-        assertEquals(0, f.registration.process.pools.catalogCoordinator.activeSnapshotOwners())
+        assertEquals(0, registration.process.pools.catalogCoordinator.activeSnapshotOwners())
         observations.forEach { (phase, value) ->
             assertTrue(value.lease.completion.quiescent())
             assertTrue(phase.testInstallationManifestCleanupProven(owners.getValue(phase)))

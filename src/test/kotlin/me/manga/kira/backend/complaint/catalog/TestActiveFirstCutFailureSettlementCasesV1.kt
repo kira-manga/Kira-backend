@@ -37,6 +37,7 @@ internal object TestActiveFirstCutFailureSettlementCasesV1 {
         val cleanupCaller = AtomicReference<Thread?>()
         val originalReturned = CountDownLatch(1)
         val checkedReturn = AtomicBoolean()
+        val returnedCheckFailure = AtomicReference<Throwable?>()
         val returnedProblem = AtomicReference<Throwable?>()
         var requested = ""
         var paid = emptyList<String>()
@@ -78,6 +79,11 @@ internal object TestActiveFirstCutFailureSettlementCasesV1 {
                     assertNull(SignedActivationObservation.active(f.runtime.pools.catalogCoordinator))
                 }
                 checkedReturn.set(true)
+            } catch (failure: Throwable) {
+                // Count-down signals callback exit, not passed assertions. Preserve the exact
+                // observer failure so the rendezvous caller cannot mask it with checkedReturn.
+                returnedCheckFailure.set(failure)
+                throw failure
             } finally { originalReturned.countDown() }
 
             if (exhaustWork) {
@@ -112,6 +118,7 @@ internal object TestActiveFirstCutFailureSettlementCasesV1 {
                     }
                     if (exhaustWork) {
                         assertTrue(originalReturned.await(3, TimeUnit.SECONDS), "Spent native work cannot borrow the remaining original J allowance.")
+                        returnedCheckFailure.get()?.let { throw it }
                         assertTrue(checkedReturn.get())
                     } else {
                         assertEquals(1L, originalReturned.count, "The original cannot return before exact native reclamation.")
@@ -124,6 +131,7 @@ internal object TestActiveFirstCutFailureSettlementCasesV1 {
             f.afterFailedCapture = { _, _ -> }
         }
         assertTrue(outcome.isFailure)
+        returnedCheckFailure.get()?.let { throw it }
         assertTrue(checkedReturn.get())
         assertSame(returnedProblem.get(), outcome.exceptionOrNull(), "Settlement never replaces the original failure with success.")
         f.awaitNativeReclaimed()

@@ -114,10 +114,19 @@ internal fun withTerminalEpochSealRun(tls: VersionBoundPersistenceConnectedFixtu
                         assertEquals(0L, drain.manifestCut().denial.firstInventory.versionCount)
                         assertEquals(listOf("LIST", "LIST"), f.inventoryRequests.map { it.kind })
                         val preparation = TestRunInstallationManifestV1.begin(drain)
-                        assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, preparation.prepare())
+                        TestInstallationManifestSqlProbeV1(f, expectedDrain = drain).use { probe ->
+                            probe.original = preparation
+                            try { assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, preparation.prepare()) }
+                            catch (problem: Throwable) { runCatching { probe.reportUnexpectedFailure() }; throw problem }
+                        }
                         assertEquals(chunkSizes, (0 until preparation.capturedSource().count).map { preparation.capturedSource().chunk(it).count })
                         val manifest = preparation.beginPublication()
-                        assertEquals(TestRunInstallationManifestPublicationResultV1.ALL_CHUNKS_AUTHENTICATED_AND_VERIFIED, manifest.publish())
+                        try { assertEquals(TestRunInstallationManifestPublicationResultV1.ALL_CHUNKS_AUTHENTICATED_AND_VERIFIED, manifest.publish()) }
+                        catch (problem: Throwable) {
+                            // Failure-only discriminator when PREPARE already returned; no new SQL, retry or outcome substitution.
+                            runCatching { System.err.println("MANIFEST_DESCENDANT_UNEXPECTED edge=PUBLICATION step=${manifest.step}") }
+                            throw problem
+                        }
                         val summary = manifest.authenticatedSummary()
                         assertEquals(chunkSizes.size, summary.chunkCount); assertEquals(enrollmentCount.toLong(), summary.installationCount)
                         assertEquals(enrollmentCount.toLong(), summary.retiredCount); assertEquals(0L, summary.deletedCount)

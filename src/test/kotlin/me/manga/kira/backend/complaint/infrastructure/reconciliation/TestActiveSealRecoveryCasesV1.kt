@@ -115,6 +115,17 @@ internal object TestActiveSealRecoveryCasesV1 {
             assertTrue(minimum > Instant.now()); assertNull(h.native.stored); assertTrue(h.native.requests.isEmpty())
             assertTrue(minimum >= (paid["created_at"] as Timestamp).toInstant().atOffset(ZoneOffset.UTC).plusYears(10).toInstant())
             assertTrue(minimum >= h.native.horizon.plusSeconds(31 * 86_400L))
+            // Lease expiry alone need not outlast M's original remaining-attempt/arrival margin.
+            // Age the genuine frozen history before creating the fresh recovery original; keep
+            // the later strict tenYears > M assertion, all clocks and stored bytes unchanged.
+            assertNull(f.probe.original)
+            val ageDeadline = System.nanoTime() + 120_000_000_000L
+            while (Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
+                    .atOffset(ZoneOffset.UTC).plusYears(10).toInstant() <= minimum) {
+                assertTrue(System.nanoTime() < ageDeadline, "Frozen retention did not naturally age within the setup allowance.")
+                Thread.sleep(100)
+            }
+            assertEquals(before, TestActiveSealRecoveryObservationV1.image(h.observer))
             var lock: Instant? = null
             var acknowledged = false
             var got = false
@@ -168,13 +179,18 @@ internal object TestActiveSealRecoveryCasesV1 {
                 assertEquals(0L, h.process.publicationLanes.activeOwners().totalOwners)
             } }
             val original = f.begin()
+            fun recoverObserved() = try { f.recover(original) } catch (failure: Throwable) {
+                // Native boundaries correctly sanitize Error; keep this TEST's original assertion.
+                h.native.assertNoLostAssertions()
+                throw failure
+            }
             if (shortenAcknowledgedGet) {
-                assertThrows<TestActiveOrdinarySealRecoveryExceptionV1> { f.recover(original) }
+                assertThrows<TestActiveOrdinarySealRecoveryExceptionV1> { recoverObserved() }
                 assertEquals("SEAL_PREPARED", h.control()["seal_state"]); assertNull(h.control()["seal_verification_bytes"])
                 assertEquals(before.filterKeys { it != "complaint_journal_control" },
                     TestActiveSealRecoveryObservationV1.image(h.observer).filterKeys { it != "complaint_journal_control" })
             } else {
-                val result = f.recover(original)
+                val result = recoverObserved()
                 val stored = checkNotNull(h.native.stored)
                 assertEquals(h.scope, result.scope); assertEquals(stored.key, result.objectKey); assertEquals(stored.version, result.version)
                 assertEquals(Sha256.hex(wire), result.ciphertextSha256)

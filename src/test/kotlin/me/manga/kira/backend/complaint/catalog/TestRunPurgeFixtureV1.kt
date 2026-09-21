@@ -65,7 +65,11 @@ internal fun withUnusedPurgeRun(tls: VersionBoundPersistenceConnectedFixture, sh
         assertTrue(f.inventoryKeys.requests.isEmpty(), "No dummy empty event is constructed or decrypted.")
         assertEquals(0L, drain.manifestCut().denial.firstInventory.versionCount)
         val preparation = TestRunInstallationManifestV1.begin(drain)
-        assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, preparation.prepare())
+        TestInstallationManifestSqlProbeV1(f, expectedDrain = drain).use { probe ->
+            probe.original = preparation
+            try { assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, preparation.prepare()) }
+            catch (problem: Throwable) { runCatching { probe.reportUnexpectedFailure() }; throw problem }
+        }
         val manifest = preparation.beginPublication()
         if (checkUnstartedManifest) {
             val before = f.p.image(); val providers = http.order.toList()
@@ -73,7 +77,12 @@ internal fun withUnusedPurgeRun(tls: VersionBoundPersistenceConnectedFixture, sh
             assertEquals(before, f.p.image()); assertEquals(providers, http.order)
             assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM complaint_test_terminal_intents WHERE data_scope_id = ? AND object_kind = 'TEST_RUN_PURGE'", Long::class.java, f.scope))
         }
-        assertEquals(TestRunInstallationManifestPublicationResultV1.ALL_CHUNKS_AUTHENTICATED_AND_VERIFIED, manifest.publish())
+        try { assertEquals(TestRunInstallationManifestPublicationResultV1.ALL_CHUNKS_AUTHENTICATED_AND_VERIFIED, manifest.publish()) }
+        catch (problem: Throwable) {
+            // Failure-only discriminator when PREPARE already returned; no new SQL, retry or outcome substitution.
+            runCatching { System.err.println("MANIFEST_DESCENDANT_UNEXPECTED edge=PUBLICATION step=${manifest.step}") }
+            throw problem
+        }
         assertEquals(0, manifest.capturedSource().count)
         assertEquals(0, manifest.authenticatedSummary().chunkCount)
         assertTrue(http.manifestObjects.isEmpty(), "Zero chunks means no fake empty chunk or manifest provider call.")
