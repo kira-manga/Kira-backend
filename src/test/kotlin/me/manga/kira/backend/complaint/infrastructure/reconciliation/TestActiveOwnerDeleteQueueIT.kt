@@ -181,7 +181,7 @@ class TestActiveOwnerDeleteQueueIT {
             assertEquals(native, f.precursor.native.counts(), "Queue uses the original PUT/key mapping, never another producer call.")
             val calls = f.calls.filter { it.step === TestActiveOwnerDeleteQueueStepV1.APPLY }.map { it.sql }
             val counters = calls.indexOfFirst { "FROM complaint_capacity_counters" in it && "FOR UPDATE" in it }
-            val verified = calls.indexOfFirst { it.startsWith("UPDATE complaint_journal_publications SET state = 'VERIFIED'") }
+            val verified = calls.indexOfFirst { it == OwnerDeleteAllVerificationSql.test(f.precursor.dataScope).RECORD_VERIFIED }
             val domain = calls.indexOfFirst { "FROM complaint_installation_ids" in it && "FOR UPDATE" in it }
             assertTrue(counters >= 0 && verified > counters && domain > verified)
             assertEquals(1, f.raw.order.count { it == "GET" }); assertEquals(1, f.raw.order.count { it == "DECRYPT" })
