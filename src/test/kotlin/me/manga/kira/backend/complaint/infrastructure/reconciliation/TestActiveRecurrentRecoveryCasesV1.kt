@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
+import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.DeleteAllCounter
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteLiteralCharges
@@ -14,6 +15,7 @@ import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrent
 import me.manga.kira.backend.complaint.infrastructure.AdminDeletePersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
+import me.manga.kira.backend.complaint.journal.JournalPublisherObject
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -28,6 +30,8 @@ import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
 import java.sql.SQLException
 import java.sql.Timestamp
 import java.util.UUID
@@ -37,9 +41,203 @@ import java.util.concurrent.locks.ReentrantLock
 internal enum class RecurrentSealRecoveryCut { CANONICAL, FROZEN_NATIVE }
 internal enum class RecurrentPaidPrefixCut { FIRST_STAGED, PAIR_COMPLETE, FIRST_REFUND_COMMITTED }
 internal enum class RecurrentApplyBookkeepingCut { MISSING_N, MISSING_L, MISSING_NPL }
+internal enum class RecurrentRetainedAllInventoryCut { MISSING_ALIAS, ALIAS_VERSION, PRIMARY_OVERLAP_HASH, FOREIGN_ALIAS, PRIMARY_ROW_ABA, ALIAS_ROW_ABA }
+internal enum class RecurrentRetainedAllHistoryCut { MISSING_N, MISSING_L, ORPHAN_E, TORN_USED }
 
 /** First missing-primary APPLY retains its live original; failed/UNKNOWN originals still require a DIFFERENT original after lease expiry. */
 internal object TestActiveRecurrentRecoveryCasesV1 {
+    /** One real A producer + labeled protocol history, actual B alias APPLY, then original-bound Split2. */
+    fun retainedAllAliasThenActualPrimary(tls: VersionBoundPersistenceConnectedFixture) =
+        withRecurrentFixture(tls, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, applied = false, retainedAllAlias = true, maximumVersions = 2) { f ->
+            val alias = checkNotNull(f.historicalAll)
+            val before = f.counters(); val audits = f.queue.audits(); val erased = allErasedImage(f)
+            val primary = f.queue.domainImage().filterKeys { it in setOf("complaint_journal_publications", "installation_deletion_receipts") }
+            val aliasMarker = f.queue.domainImage().getValue("complaint_deletion_journal_applied").single()
+            val initial = f.immutableImage().getValue("complaint_test_active_seal_intents")
+            val initialCheckpoint = (f.control().getValue("checkpoint_bytes") as ByteArray).copyOf()
+            val queueNative = f.raw.queue.order.toList(); val aPuts = f.raw.deletion.publisher.requests.count { it.kind == "PUT" }
+            val aKeys = f.raw.deletion.publisher.generated()
+            f.queue.expectAppliedObjects(alias.stored, f.record.stored) // Assertion only; nothing is supplied to MAIN.
+            val staged = linkedSetOf<Int>()
+            f.probe.after = { call -> if (call.sql == TestActiveRecurrentScanSqlV1.completeRun) {
+                val holder = JdbcTemplate(f.runtime.pools.catalogCoordinator.dataSource)
+                val pass = f.passNumber(); staged.add(pass)
+                assertEquals(2L, holder.queryForObject("SELECT entry_count FROM complaint_journal_scan_runs WHERE data_scope_id=? AND pass=?", Long::class.java, f.scope, pass))
+                assertEquals(if (pass == 1) 1L else 2L, holder.queryForObject(
+                    "SELECT count(*) FROM complaint_journal_scan_entries WHERE data_scope_id=? AND pass=? AND replay_state='APPLIED'", Long::class.java, f.scope, pass))
+            } }
+            val waiting = assertInstanceOf(TestActiveRecurrentV1.RecoveryRequired::class.java, f.checkpoint())
+            val input = waiting.input()
+            assertEquals(f.record.stored.key, input.event.route.objectKey); assertEquals(f.record.stored.version, input.versionId)
+            assertEquals(Sha256.hex(f.record.stored.bytes), input.wireSha256)
+            assertEquals(primary, f.queue.domainImage().filterKeys { it in primary.keys })
+            assertEquals(1L, f.queue.count("complaint_deletion_journal_applied")); assertTrue(f.applyCalls.isEmpty())
+            assertNull(f.control()["checkpoint_result"])
+            var rechecked = false
+            f.probe.before = { call -> if (!rechecked && call.step == TestActiveRecurrentStepV1.RECHECK_ENTRY && f.applyObservations.isNotEmpty()) {
+                val applied = f.applyObservations.keys.single()
+                val leaf = ownedCutField(applied, "testRecurrentApply") as TestActiveRecurrentApplyV1
+                assertSame(input, leaf.input); assertSame(f.original, leaf.original)
+                assertEquals(PersistenceDatabaseOutcome.COMMITTED, applied.databaseOutcome()); assertTrue(applied.testActiveRecurrentApplyCleanupProven(leaf))
+                val holder = JdbcTemplate(f.runtime.pools.catalogCoordinator.dataSource)
+                assertEquals(2L, holder.queryForObject("SELECT count(*) FROM complaint_deletion_journal_applied WHERE data_scope_id=?", Long::class.java, f.scope))
+                assertEquals("PENDING", holder.queryForObject("SELECT replay_state FROM complaint_journal_scan_entries WHERE data_scope_id=? AND pass=1 AND object_key=? AND object_version=?",
+                    String::class.java, f.scope, f.record.stored.key, f.record.stored.version))
+                assertNull(holder.queryForObject("SELECT checkpoint_result FROM complaint_journal_control WHERE data_scope_id=?", String::class.java, f.scope))
+                rechecked = true
+            } }
+            assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, f.apply(waiting))
+            f.assertSuccessful(); assertTrue(rechecked); assertEquals(setOf(1, 2), staged); assertEquals(1, f.applyObservations.size)
+            f.queue.assertExpectedAppliedObjects(); f.queue.assertOnlyAuthorizedReportsErased()
+            assertEquals(erased, allErasedImage(f), "No second erasure, domain xmin rewrite or credential TTL extension.")
+            assertTrue(aliasMarker in f.queue.domainImage().getValue("complaint_deletion_journal_applied"))
+            assertEquals("APPLIED", f.precursor.publication()["state"]); assertEquals("COMPLETED", f.queue.receipt()["state"])
+            assertEquals(f.record.stored.version, f.queue.receipt()["external_object_version"])
+            assertEquals(f.record.event.route.eventId, f.queue.receipt()["external_event_id"])
+            assertEquals(f.queue.proofBeforeQueue, f.queue.publicationProof()); assertEquals(f.queue.receiptBeforeQueue, f.queue.receiptIdentity())
+            assertEquals(audits + ("COMPLAINT_RECOVERY_APPLIED" to (audits.getOrDefault("COMPLAINT_RECOVERY_APPLIED", 0L) + 1)), f.queue.audits())
+            val use = OwnerDeleteLiteralCharges.appliedOnly + OwnerDeleteLiteralCharges.audit
+            assertRetainedAllTransfer(f, before, use)
+            assertEquals((materialized(f) + use).toLongArray().joinToString(",", "{", "}"), f.observer.queryForObject(
+                "SELECT converted_amounts::text FROM complaint_recovery_capacity_reservations WHERE data_scope_id=? AND event_id=? AND state='PARTIAL'",
+                String::class.java, f.scope, f.record.event.route.eventId))
+            val sql = OwnerDeleteAllApplySql.test(f.precursor.dataScope)
+            assertEquals(1, f.applyCalls.count { it.sql == sql.INSERT_APPLIED })
+            assertEquals(1, f.applyCalls.count { it.sql == sql.COMPLETE_RECEIPT }); assertEquals(1, f.applyCalls.count { it.sql == sql.MARK_APPLIED })
+            assertFalse(f.applyCalls.any { it.sql in setOf(sql.DELETE_CONTENT, sql.DELETE_CREDENTIAL, sql.DELETE_INSTALLATION) })
+            assertFalse(f.applyCalls.any { it.sql == TestActiveRecurrentScanSqlV1.markApplied || it.sql == TestActiveRecurrentSqlV1.success })
+            assertEquals(initial, f.immutableImage().getValue("complaint_test_active_seal_intents"))
+            assertArrayEquals(initialCheckpoint, f.history().first()["checkpoint_bytes"] as ByteArray)
+            assertRetainedAllNativeCoverage(f, replayedPrimary = true)
+            assertEquals(queueNative, f.raw.queue.order); assertEquals(aPuts, f.raw.deletion.publisher.requests.count { it.kind == "PUT" }); assertEquals(aKeys, f.raw.deletion.publisher.generated())
+        }
+
+    fun retainedAllAlreadyAppliedFamily(tls: VersionBoundPersistenceConnectedFixture) =
+        withRecurrentFixture(tls, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, retainedAllAlias = true, maximumVersions = 2) { f ->
+            val before = f.counters(); val domain = f.domainImage(); val queueNative = f.raw.queue.order.toList()
+            val initial = f.immutableImage().getValue("complaint_test_active_seal_intents")
+            assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, f.checkpoint())
+            f.assertSuccessful(); assertTrue(f.applyCalls.isEmpty() && f.applyObservations.isEmpty())
+            f.queue.assertExpectedAppliedObjects(); assertEquals(domain, f.domainImage())
+            assertRetainedAllTransfer(f, before, ComplaintCapacityVector.ZERO)
+            assertEquals(initial, f.immutableImage().getValue("complaint_test_active_seal_intents"))
+            assertRetainedAllNativeCoverage(f, replayedPrimary = false); assertEquals(queueNative, f.raw.queue.order)
+        }
+
+    /** Missing/drifting physical history is never filled by a plausible expected-set row. */
+    fun retainedAllInventoryCannotHideDrift(tls: VersionBoundPersistenceConnectedFixture, cut: RecurrentRetainedAllInventoryCut) =
+        withRecurrentFixture(tls, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, retainedAllAlias = true) { f ->
+            val alias = checkNotNull(f.historicalAll).stored
+            var changed = false
+            when (cut) {
+                RecurrentRetainedAllInventoryCut.MISSING_ALIAS, RecurrentRetainedAllInventoryCut.ALIAS_VERSION ->
+                    f.raw.listing = { _, values -> changed = true; if (cut == RecurrentRetainedAllInventoryCut.MISSING_ALIAS) values.filterNot { it.key == alias.key }
+                        else values.map { if (it.key == alias.key) it.copy(version = "hostile-different-alias-version") else it } }
+                RecurrentRetainedAllInventoryCut.PRIMARY_OVERLAP_HASH -> {
+                    assertEquals(1, f.observer.update("UPDATE complaint_deletion_journal_applied SET ciphertext_hash=? WHERE object_key=? AND object_version=?",
+                        ByteArray(32) { 9 }, f.record.stored.key, f.record.stored.version)); changed = true
+                }
+                RecurrentRetainedAllInventoryCut.FOREIGN_ALIAS -> {
+                    assertEquals(1, f.observer.update("UPDATE complaint_deletion_journal_applied SET data_scope_id=? WHERE object_key=? AND object_version=?", UUID.randomUUID(), alias.key, alias.version))
+                    changed = true
+                }
+                RecurrentRetainedAllInventoryCut.PRIMARY_ROW_ABA, RecurrentRetainedAllInventoryCut.ALIAS_ROW_ABA ->
+                    f.probe.after = { call -> if (!changed && call.sql == TestActiveRecurrentSqlV1.manifestPage) {
+                        // Same real holder after the first bounded page was read: semantic bytes
+                        // stay identical but the physical xmin changes before pass two.
+                        val holder = JdbcTemplate(f.runtime.pools.catalogCoordinator.dataSource)
+                        val count = if (cut == RecurrentRetainedAllInventoryCut.PRIMARY_ROW_ABA)
+                            holder.update("UPDATE complaint_journal_publications SET state=state WHERE event_id=?", f.record.event.route.eventId)
+                        else holder.update("UPDATE complaint_deletion_journal_applied SET applied_at=applied_at WHERE object_key=? AND object_version=?", alias.key, alias.version)
+                        assertEquals(1, count); changed = true
+                    } }
+            }
+            val domain = f.domainImage(); val initial = f.immutableImage().getValue("complaint_test_active_seal_intents")
+            try {
+                assertThrows<TestActiveRecurrentExceptionV1> { f.checkpoint() }
+                f.assertReleased(); assertTrue(changed); assertTrue(f.applyCalls.isEmpty())
+                assertNull(f.control()["checkpoint_result"]); assertNull(f.history().last()["checkpoint_bytes"])
+                assertEquals(initial, f.immutableImage().getValue("complaint_test_active_seal_intents"))
+                assertFalse(f.probe.calls.any { it.step == TestActiveRecurrentStepV1.SUCCESS })
+                if (cut in setOf(RecurrentRetainedAllInventoryCut.MISSING_ALIAS, RecurrentRetainedAllInventoryCut.ALIAS_VERSION)) {
+                    assertEquals(domain, f.domainImage()); assertTrue(f.raw.order.contains("PASS1")); assertFalse(f.raw.order.contains("PASS2"))
+                } else {
+                    assertTrue(f.raw.order.isEmpty() && f.scans().isEmpty(), "Conflicting overlap/foreign row/physical drift cannot freeze or scan a manifest.")
+                    assertEquals("RESERVED", f.intents().single()["state"])
+                    assertFalse(f.probe.calls.any { it.step == TestActiveRecurrentStepV1.CANONICAL })
+                }
+            } finally {
+                // Restore only the explicitly foreign row for disposable fixture teardown; no retry.
+                if (cut == RecurrentRetainedAllInventoryCut.FOREIGN_ALIAS)
+                    assertEquals(1, f.observer.update("UPDATE complaint_deletion_journal_applied SET data_scope_id=? WHERE object_key=? AND object_version=?", f.scope, alias.key, alias.version))
+            }
+        }
+
+    /** Actual alias E already exists; native authentication must not turn missing/torn N/P/L/U into coverage. */
+    fun retainedAllHistoryMustRemainWhole(tls: VersionBoundPersistenceConnectedFixture, cut: RecurrentRetainedAllHistoryCut) =
+        withRecurrentFixture(tls, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, applied = false, retainedAllAlias = true) { f ->
+            f.queue.adversarialTransaction { jdbc ->
+                if (cut in setOf(RecurrentRetainedAllHistoryCut.MISSING_N, RecurrentRetainedAllHistoryCut.ORPHAN_E))
+                    assertEquals(1, jdbc.update("DELETE FROM installation_deletion_receipts WHERE data_scope_id=? AND publication_ref=?", f.scope, f.record.event.route.eventId))
+                if (cut in setOf(RecurrentRetainedAllHistoryCut.MISSING_L, RecurrentRetainedAllHistoryCut.ORPHAN_E))
+                    assertEquals(1, jdbc.update("DELETE FROM complaint_recovery_capacity_reservations WHERE data_scope_id=? AND event_id=?", f.scope, f.record.event.route.eventId))
+                if (cut == RecurrentRetainedAllHistoryCut.ORPHAN_E)
+                    assertEquals(1, jdbc.update("DELETE FROM complaint_journal_publications WHERE data_scope_id=? AND event_id=?", f.scope, f.record.event.route.eventId))
+                if (cut == RecurrentRetainedAllHistoryCut.TORN_USED) {
+                    val storage = ComplaintCapacityCounter.STORAGE_BYTES.storedOrdinal
+                    assertEquals(1, jdbc.update("UPDATE complaint_recovery_capacity_reservations SET converted_amounts[?]=converted_amounts[?]+1 WHERE data_scope_id=? AND event_id=?",
+                        storage, storage, f.scope, f.record.event.route.eventId))
+                }
+            }
+            val domain = f.domainImage(); val counters = f.counters()
+            assertThrows<TestActiveRecurrentExceptionV1> { f.checkpoint() }
+            f.assertReleased(); assertEquals(domain, f.domainImage()); assertTrue(f.applyCalls.isEmpty())
+            assertEquals(1L, f.queue.count("complaint_deletion_journal_applied"))
+            assertTrue(f.entries().all { it["replay_state"] == "PENDING" && it["object_key"] == f.record.stored.key },
+                "A lexically earlier pending primary may be staged, but the torn alias cannot become APPLIED coverage.")
+            assertNull(f.control()["checkpoint_result"]); assertNull(f.history().last()["checkpoint_bytes"])
+            assertTrue(f.raw.order.contains("GET1") && f.raw.order.contains("DECRYPT")); assertFalse(f.raw.order.contains("PASS2"))
+            assertTrue(f.probe.calls.any { it.step == TestActiveRecurrentStepV1.APPEND && it.sql == TestActiveRecurrentSqlV1.retainedAllPublication(f.precursor.dataScope) })
+            assertFalse(f.probe.calls.any { it.sql == TestActiveRecurrentScanSqlV1.markApplied || it.step == TestActiveRecurrentStepV1.SUCCESS })
+            assertTrue(f.probe.observations.keys.any { it.databaseOutcome() == PersistenceDatabaseOutcome.ROLLED_BACK })
+            f.assertCharge(counters, TestActiveRecurrentStorageV1.INTENT + TestActiveRecurrentStorageV1.HISTORY.scaled(2) +
+                TestActiveRecurrentStorageV1.scanCharge(f.scans().size.toLong(), f.entries().size.toLong()))
+        }
+
+    private fun allErasedImage(f: TestActiveRecurrentFixtureV1) = f.domainImage().filterKeys {
+        it in setOf("complaint_installation_ids", "app_installations", "complaint_resource_ids", "complaints")
+    }
+    private fun assertRetainedAllTransfer(f: TestActiveRecurrentFixtureV1, before: Map<ComplaintCapacityCounter, DeleteAllCounter>, use: ComplaintCapacityVector) {
+        val charge = TestActiveRecurrentStorageV1.INTENT + TestActiveRecurrentStorageV1.HISTORY.scaled(2)
+        val after = f.counters()
+        before.forEach { (counter, old) -> assertEquals(old.copy(free = old.free - charge[counter], actual = old.actual + charge[counter] + use[counter],
+            recovery = old.recovery - use[counter]), after.getValue(counter), counter.storedName) }
+    }
+    private fun assertRetainedAllNativeCoverage(f: TestActiveRecurrentFixtureV1, replayedPrimary: Boolean) {
+        val objects = listOf(f.record.stored, checkNotNull(f.historicalAll).stored).sortedBy { it.key }
+        val doc = f.document()
+        assertEquals(2L, doc.objectCount); assertEquals(objects.sumOf { it.bytes.size.toLong() }, doc.byteCount)
+        assertEquals(listOf(0L, 2L), doc.ranges.map { it.eventCount })
+        assertEquals(retainedAllManifest(f, 2, objects), doc.ranges.last().manifestSha256)
+        assertEquals(retainedAllManifest(f, 1, objects), doc.first.manifestSha256)
+        assertEquals(doc.first.manifestSha256, doc.second.manifestSha256)
+        assertEquals(1, f.raw.order.count { it == "PASS1" }); assertEquals(1, f.raw.order.count { it == "PASS2" })
+        assertEquals(if (replayedPrimary) 3 else 2, f.raw.order.count { it == "GET1" }); assertEquals(2, f.raw.order.count { it == "GET2" })
+        assertEquals(if (replayedPrimary) 5 else 4, f.raw.order.count { it == "DECRYPT" })
+        assertEquals(1L, f.queue.count("complaint_journal_publications"))
+    }
+    /** Independent LP32 framing over each object's OWN ciphertext, not the MAIN union/builder. */
+    private fun retainedAllManifest(f: TestActiveRecurrentFixtureV1, start: Int, objects: List<JournalPublisherObject>): String {
+        val fields = listOf("kira-complaint-journal-epoch-seal-v1", "1", "manifest", f.process.consumers.journalConfiguration.declaration().writer.generationId,
+            f.process.consumers.journalConfiguration.ordinaryPrefix, "TEST", f.scope.toString(), start.toString(), "2", objects.size.toString()) +
+            objects.flatMap { listOf(it.key, it.version, Sha256.hex(it.bytes)) }
+        val bytes = ByteArrayOutputStream().use { stream ->
+            DataOutputStream(stream).use { output -> fields.forEach { value -> val encoded = value.toByteArray(Charsets.UTF_8); output.writeInt(encoded.size); output.write(encoded) } }
+            stream.toByteArray()
+        }
+        return Sha256.hex(bytes)
+    }
+
     fun firstMissingPrimary(tls: VersionBoundPersistenceConnectedFixture, family: ComplaintJournalDeletionKindV1) =
         withRecurrentFixture(tls, family, applied = false) { f ->
             val before = f.counters()

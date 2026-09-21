@@ -44,13 +44,17 @@ import java.util.concurrent.atomic.AtomicReference
  * Genuine C global predecessor/fresh TEST assembly -> enrollment -> initial capture/seal/checkpoint
  * -> CREATE -> A AUTH/native ciphertext -> optional VERIFY/genuine B queue APPLY. Recurrent inputs
  * are selected BEFORE D. Only raw HTTP, passive observations and explicit failure injection vary.
+ * Opt-in ALL history is ONE actual A producer plus explicitly labeled reference-protocol alias
+ * bytes consumed/authenticated by the actual B queue. It is not a second AUTH/PUT producer.
  * The existing raw seal depot's opt-in three-key support does not supply terminal authority.
  */
 internal fun withRecurrentFixture(tls: VersionBoundPersistenceConnectedFixture,
     family: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE,
     applied: Boolean = true, maximumVersions: Long = 10_000, maximumBytes: Long? = null, verified: Boolean = true,
+    retainedAllAlias: Boolean = false,
     action: (TestActiveRecurrentFixtureV1) -> Unit) {
     require(verified || !applied)
+    require(!retainedAllAlias || family == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL && verified)
     val raw = TestActiveRecurrentRawFixtureV1()
     val native = raw.deletion
     val history = TestOrdinaryDrainFixtureInputsV1(maximumRetainedVersions = maximumVersions, maximumFramedBytes = maximumBytes)
@@ -81,9 +85,27 @@ internal fun withRecurrentFixture(tls: VersionBoundPersistenceConnectedFixture,
                             if (verified) precursor.verify()
                             precursor.assertReleased()
                             TestActiveOwnerDeleteQueueFixtureV1(precursor, raw.queue, record, before, after, verified).use { queue ->
-                                if (applied) { queue.poll(); queue.assertReleased(); queue.assertNoAuthority() }
-                                assertEquals(if (applied) 1L else 0L, queue.count("complaint_deletion_journal_applied"))
-                                TestActiveRecurrentFixtureV1(queue, raw).use(action)
+                                val alias = if (retainedAllAlias) {
+                                    val primary = queue.domainImage().filterKeys { it in setOf("complaint_journal_publications", "installation_deletion_receipts") }
+                                    val nativeBefore = precursor.native.counts()
+                                    val historical = raw.queue.protocolHistoricalAllObject()
+                                    assertSame(record, queue.record)
+                                    raw.queue.selectHistorical(historical); queue.expectAppliedObjects(historical.stored)
+                                    val consumed = queue.poll()
+                                    assertEquals(1, consumed.primaryAcknowledged); assertEquals(0, consumed.dlqAcknowledged)
+                                    queue.assertReleased(); queue.assertNoAuthority(); queue.assertExpectedAppliedObjects(); queue.assertOnlyAuthorizedReportsErased()
+                                    assertEquals(primary, queue.domainImage().filterKeys { it in primary.keys }, "Alias consumption does not complete or rewrite the original P/N.")
+                                    assertEquals("VERIFIED", precursor.publication()["state"]); assertEquals("AUTHORIZED_DELETE", queue.receipt()["state"])
+                                    assertEquals(nativeBefore, precursor.native.counts(), "Protocol-history bytes and B consumption never issue another A AUTH/PUT.")
+                                    raw.queue.selectOriginal()
+                                    historical
+                                } else null
+                                if (applied) {
+                                    if (alias != null) queue.expectAppliedObjects(alias.stored, record.stored)
+                                    queue.poll(); queue.assertReleased(); queue.assertNoAuthority(); queue.assertExpectedAppliedObjects()
+                                }
+                                assertEquals((if (applied) 1L else 0L) + (if (alias != null) 1L else 0L), queue.count("complaint_deletion_journal_applied"))
+                                TestActiveRecurrentFixtureV1(queue, raw, alias).use(action)
                             }
                         }
                     } finally { creators.asReversed().forEach { it.close() } }
@@ -94,7 +116,7 @@ internal fun withRecurrentFixture(tls: VersionBoundPersistenceConnectedFixture,
 }
 
 internal class TestActiveRecurrentFixtureV1(val queue: TestActiveOwnerDeleteQueueFixtureV1,
-    val raw: TestActiveRecurrentRawFixtureV1) : AutoCloseable {
+    val raw: TestActiveRecurrentRawFixtureV1, val historicalAll: TestActiveQueueHistoricalAllObjectV1? = null) : AutoCloseable {
     val precursor = queue.precursor
     val first = precursor.first
     val registration = precursor.registration

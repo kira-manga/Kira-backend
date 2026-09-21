@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalReadbackV1
@@ -100,16 +101,16 @@ internal class TestActiveCutoffPublicationsV1(private val original: TestActiveOr
             } finally { factory.close() }
             val builder = TestActiveOrdinarySealManifestV1.Builder(original.routing, original.cutoff, original.epochStart)
             repeat(2) { pass ->
-                var after = ""
+                var after: Pair<String, String>? = null
                 while (true) {
                     original.renew()
                     val page = original.keyPage(after)
                     try {
-                        if (page.rows.isEmpty()) break
-                        page.rows.forEach { row ->
-                            requireActiveSeal(row.objectKey > after && row.objectKey >= original.lowerCutoffKey && row.objectKey < original.upperCutoffKey)
-                            row.requireProof(row.event(original), original.routing)
-                            builder.entry(row); after = row.objectKey
+                        if (page.manifestRows.isEmpty()) break
+                        page.manifestRows.forEach { row ->
+                            requireActiveSeal(after?.let { TestOrdinaryDrainRowsV1.compare(it, row.locator) < 0 } != false)
+                            row.requireOriginal(original)
+                            builder.entry(row); after = row.locator
                         }
                     } finally { page.closeRows() }
                 }

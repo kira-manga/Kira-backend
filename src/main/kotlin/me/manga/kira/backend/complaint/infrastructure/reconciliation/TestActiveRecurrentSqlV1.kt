@@ -1,6 +1,8 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationTestRunRows
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 
 /** Fixed recurrent statements; every caller is the closed original pooled/native operation. */
 internal object TestActiveRecurrentSqlV1 {
@@ -10,6 +12,84 @@ internal object TestActiveRecurrentSqlV1 {
     val lockScope = TestActiveFirstCutSqlV1.lockScope
     val lockRun = TestActiveFirstCutSqlV1.lockRun
     val lockSlot = "SELECT operation_token FROM complaint_test_active_recurrent_seal_intents WHERE data_scope_id = ?::uuid AND operation_token = ?::uuid AND test_only FOR UPDATE"
+
+    /**
+     * Recurrent expected inventory only. UNION selects exact locators, NOT accepted history:
+     * every physical P/E overlap is checked below and every E-only ALL row still needs the
+     * original's authenticated-native four-route/N/P/L comparison before marker acceptance.
+     * Both scope/epoch and unfiltered key probes retain malformed/foreign rows for refusal.
+     */
+    val manifestPage = """
+        WITH b AS (SELECT ?::uuid AS scope, ?::bigint AS first_epoch, ?::bigint AS last_epoch,
+            ?::text AS lower_key, ?::text AS upper_key, ?::text AS after_key, ?::text AS after_version),
+        candidates AS (
+            SELECT p.object_key, p.object_version FROM complaint_journal_publications p,b
+            WHERE (p.data_scope_id=b.scope AND p.journal_epoch BETWEEN b.first_epoch AND b.last_epoch)
+                OR (p.object_key COLLATE "C">=b.lower_key COLLATE "C" AND p.object_key COLLATE "C"<b.upper_key COLLATE "C")
+            UNION
+            SELECT a.object_key, a.object_version FROM complaint_deletion_journal_applied a,b
+            WHERE (a.data_scope_id=b.scope AND a.journal_epoch BETWEEN b.first_epoch AND b.last_epoch)
+                OR (a.object_key COLLATE "C">=b.lower_key COLLATE "C" AND a.object_key COLLATE "C"<b.upper_key COLLATE "C")
+        ), page AS (
+            SELECT k.* FROM candidates k,b WHERE b.after_key IS NULL OR
+                (k.object_key COLLATE "C",coalesce(k.object_version,'') COLLATE "C")>(b.after_key COLLATE "C",b.after_version COLLATE "C")
+            ORDER BY k.object_key COLLATE "C",coalesce(k.object_version,'') COLLATE "C" LIMIT ${TestActiveCutoffPublicationSqlV1.PAGE_SIZE}
+        )
+        SELECT CASE WHEN octet_length(k.object_key) BETWEEN 1 AND 1024 THEN k.object_key END AS manifest_key,
+            CASE WHEN octet_length(k.object_version) BETWEEN 1 AND 1024 THEN k.object_version END AS manifest_version,
+            p.event_id IS NOT NULL AS publication_present, a.object_key IS NOT NULL AS applied_present,
+            sha256(convert_to((to_jsonb(p)||jsonb_build_object('row_xmin',p.xmin::text))::text,'UTF8')) AS publication_fingerprint,
+            sha256(convert_to((to_jsonb(a)||jsonb_build_object('row_xmin',a.xmin::text))::text,'UTF8')) AS applied_fingerprint,
+            CASE WHEN octet_length(a.event_id)=43 THEN a.event_id END AS applied_event_id,
+            a.data_scope_id AS applied_scope, a.test_only AS applied_test_only, a.writer_generation AS applied_writer,
+            a.journal_epoch AS applied_epoch, a.event_kind AS applied_kind, a.target_count AS applied_targets, a.applied_at,
+            CASE WHEN octet_length(a.ciphertext_hash)=32 THEN a.ciphertext_hash END AS applied_ciphertext_hash,
+            (a.test_only AND complaint_event_id_valid(a.event_id) AND complaint_is_v4(a.writer_generation)
+                AND complaint_ascii_valid(a.object_key,1024) AND complaint_opaque_valid(a.object_version,1024) AND a.object_version<>'null'
+                AND complaint_digest_valid(a.ciphertext_hash) AND complaint_test_terminal_instant_valid(a.applied_at)
+                AND octet_length(to_jsonb(a)::text) BETWEEN 1 AND 16384) IS TRUE AS applied_valid,
+            (CASE WHEN p.event_id IS NOT NULL AND a.object_key IS NOT NULL THEN
+                p.state='APPLIED' AND p.test_only=a.test_only AND p.data_scope_id=a.data_scope_id AND p.writer_generation=a.writer_generation
+                AND p.event_id=a.event_id AND p.object_key=a.object_key AND p.object_version=a.object_version
+                AND p.journal_epoch=a.journal_epoch AND p.event_kind=a.event_kind AND p.target_count=a.target_count
+                AND p.ciphertext_hash=a.ciphertext_hash AND p.applied_at=a.applied_at AND p.applied_at>=p.verified_at
+                ELSE p.event_id IS NULL OR p.state='VERIFIED' END) IS TRUE AS overlap_valid,
+            CASE WHEN octet_length(p.event_id)=43 THEN p.event_id END AS event_id,
+            p.data_scope_id,p.test_only,p.writer_generation,p.journal_epoch,
+            CASE WHEN octet_length(p.event_kind) BETWEEN 1 AND 32 THEN p.event_kind END AS event_kind,
+            p.target_count,CASE WHEN octet_length(p.routing_key_id) BETWEEN 1 AND 64 THEN p.routing_key_id END AS routing_key_id,
+            CASE WHEN octet_length(p.object_key) BETWEEN 1 AND 1024 THEN p.object_key END AS object_key,p.created_at,
+            CASE WHEN octet_length(p.state) BETWEEN 1 AND 16 THEN p.state END AS state,
+            CASE WHEN complaint_bytes_match(p.event_bytes,p.semantic_hash,65536) THEN p.event_bytes END AS event_bytes,
+            CASE WHEN octet_length(p.semantic_hash)=32 THEN p.semantic_hash END AS semantic_hash,
+            CASE WHEN octet_length(p.object_version) BETWEEN 1 AND 1024 THEN p.object_version END AS object_version,
+            p.object_created_at,p.retain_until,p.verified_at,
+            CASE WHEN octet_length(p.ciphertext_hash)=32 THEN p.ciphertext_hash END AS ciphertext_hash,
+            CASE WHEN complaint_bytes_match(p.verification_bytes,p.verification_hash,65536) THEN p.verification_bytes END AS verification_bytes,
+            CASE WHEN octet_length(p.verification_hash)=32 THEN p.verification_hash END AS verification_hash,
+            (p.test_only AND complaint_is_v4(p.data_scope_id) AND complaint_is_v4(p.writer_generation)
+                AND complaint_event_id_valid(p.event_id) AND p.journal_epoch>0 AND p.target_count BETWEEN 0 AND 100
+                AND p.event_kind IN ('OWNER_DELETE','OWNER_DELETE_ALL','ADMIN_DELETE','ADMIN_BATCH_DELETE')
+                AND complaint_ascii_valid(p.routing_key_id,64) AND complaint_ascii_valid(p.object_key,1024)
+                AND p.canonicalizer='kcj-1' AND complaint_bytes_match(p.event_bytes,p.semantic_hash,65536)
+                AND complaint_finite_times(p.created_at,p.object_created_at,p.retain_until,p.verified_at,p.applied_at)
+                AND p.state IN ('VERIFIED','APPLIED') AND complaint_opaque_valid(p.object_version,1024) AND p.object_version<>'null'
+                AND complaint_digest_valid(p.ciphertext_hash) AND p.object_created_at IS NOT NULL AND p.retain_until IS NOT NULL
+                AND p.verified_at IS NOT NULL AND p.retain_until>p.verified_at AND p.object_created_at<=p.verified_at
+                AND complaint_bytes_match(p.verification_bytes,p.verification_hash,65536)
+                AND ((p.state='VERIFIED' AND p.applied_at IS NULL) OR (p.state='APPLIED' AND p.applied_at>=p.verified_at))
+                AND octet_length(to_jsonb(p)::text) BETWEEN 1 AND 524288) IS TRUE AS valid
+        FROM page k LEFT JOIN complaint_journal_publications p ON p.object_key=k.object_key
+        LEFT JOIN complaint_deletion_journal_applied a ON a.object_key=k.object_key AND a.object_version=k.object_version
+        ORDER BY k.object_key COLLATE "C",coalesce(k.object_version,'') COLLATE "C"
+    """.trimIndent()
+
+    // Fixed comparison-only readers under the original recurrent global/scoped holder. No
+    // backward N/P/L row-lock acquisition after run/staging locks, and no APPLY or repair writes.
+    fun retainedAllReceipt(scope: ComplaintDataScope) = OwnerDeleteAllApplySql.test(scope).LOCK_RECEIPTS.removeSuffix(" FOR UPDATE")
+    fun retainedAllPublication(scope: ComplaintDataScope) = OwnerDeleteAllApplySql.test(scope).LOCK_PUBLICATION.removeSuffix(" FOR UPDATE")
+    fun retainedAllReservation(scope: ComplaintDataScope) = OwnerDeleteAllApplySql.test(scope).LOCK_RECOVERY.removeSuffix(" FOR UPDATE")
+    fun retainedAllApplied(scope: ComplaintDataScope) = OwnerDeleteAllApplySql.test(scope).QUEUE_APPLIED_FAMILY
     private val expected = """
         WITH e AS MATERIALIZED (SELECT ?::uuid AS scope, ?::bytea AS configuration_hash, ?::bigint AS installation_limit,
             ?::bigint AS generation, ?::bytea AS activation_hash, ?::timestamptz AS created_at, ?::bigint[] AS original_reserve),

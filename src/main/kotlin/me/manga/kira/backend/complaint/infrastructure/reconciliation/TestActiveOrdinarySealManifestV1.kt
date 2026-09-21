@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.security.EpochSealFramesV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
 import java.security.MessageDigest
@@ -13,6 +14,7 @@ internal class TestActiveOrdinarySealManifestV1 private constructor(val count: L
         private val second = MessageDigest.getInstance("SHA-256")
         private val manifest = MessageDigest.getInstance("SHA-256")
         private var previous: String? = null
+        private var recurrentPrevious: Pair<String, String>? = null
         private var count = 0L
         private var repeated = 0L
         private var bytes = 0L
@@ -40,13 +42,31 @@ internal class TestActiveOrdinarySealManifestV1 private constructor(val count: L
             }
             previous = row.objectKey
         }
+        /** Exact recurrent P/E projection, never a synthetic publication or VERIFY record. */
+        fun entry(row: TestActiveRecurrentOperationV1.ManifestEntry) = guarded {
+            requireActiveSeal(pass in 0..1 && row.epoch in start..cutoff &&
+                recurrentPrevious?.let { TestOrdinaryDrainRowsV1.compare(it, row.locator) < 0 } != false)
+            val fields = listOf(row.locator.first, row.locator.second, row.wire)
+            val physical = row.fingerprint()
+            if (pass == 0) {
+                requireActiveSeal(count < limit.maximumRetainedVersions)
+                val frame = EpochSealFramesV1.frame(fields)
+                try { bytes = add(bytes, frame.size.toLong()) } finally { frame.fill(0) }
+                EpochSealFramesV1.update(first, fields + physical); count++
+            } else {
+                requireActiveSeal(repeated < count)
+                repeatedBytes = add(repeatedBytes, EpochSealFramesV1.update(manifest, fields))
+                EpochSealFramesV1.update(second, fields + physical); repeated++
+            }
+            recurrentPrevious = row.locator
+        }
         fun beginSecond() = guarded {
             requireActiveSeal(pass == 0)
             fingerprint = HexFormat.of().formatHex(first.digest())
             val journal = routing.journalConfiguration
             total = add(bytes, EpochSealFramesV1.update(manifest, listOf(EpochSealFramesV1.DOMAIN, "1", "manifest", journal.declaration().writer.generationId,
                 journal.ordinaryPrefix, "TEST", journal.scope.id.toString(), start.toString(), cutoff.toString(), count.toString())))
-            pass = 1; previous = null
+            pass = 1; previous = null; recurrentPrevious = null
         }
         fun finish(): TestActiveOrdinarySealManifestV1 = guarded {
             requireActiveSeal(pass == 1 && count == repeated && bytes == repeatedBytes && fingerprint == HexFormat.of().formatHex(second.digest()))

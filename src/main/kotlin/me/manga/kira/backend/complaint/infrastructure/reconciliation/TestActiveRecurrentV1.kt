@@ -121,7 +121,7 @@ internal class TestActiveRecurrentV1 private constructor(
     private var publisherClosed = false
     private var evidence: ReleasedTestActiveCutoffPublicationV1? = null
     private var epochAfter = 0L to ""
-    private var keyAfter = ""
+    private var keyAfter: Pair<String, String>? = null
     private var scan: TestActiveRecurrentScanV1? = null
     private var scanAfter = 0 to ("" to "")
     private var appliedAfter = "" to ""
@@ -459,9 +459,9 @@ internal class TestActiveRecurrentV1 private constructor(
     }
 
     internal fun epochPage(after: Pair<Long, String>): TestActiveRecurrentOperationV1 { epochAfter = after; return execute(TestActiveRecurrentStepV1.EPOCH_PAGE) }
-    internal fun keyPage(after: String): TestActiveRecurrentOperationV1 { keyAfter = after; return execute(TestActiveRecurrentStepV1.KEY_PAGE) }
+    internal fun keyPage(after: Pair<String, String>?): TestActiveRecurrentOperationV1 { keyAfter = after; return execute(TestActiveRecurrentStepV1.KEY_PAGE) }
     internal fun epochCursor(): Pair<Long, String> { requireRecurrent(step == TestActiveRecurrentStepV1.EPOCH_PAGE); return epochAfter }
-    internal fun keyCursor(): String { requireRecurrent(step == TestActiveRecurrentStepV1.KEY_PAGE); return keyAfter }
+    internal fun keyCursor(): Pair<String, String>? { requireRecurrent(step == TestActiveRecurrentStepV1.KEY_PAGE); return keyAfter }
     internal fun persistObservation(work: ReleasedTestActiveCutoffPublicationV1) {
         work.requireOriginal(this); requireRecurrent(evidence == null); evidence = work
         try { execute(TestActiveRecurrentStepV1.EVIDENCE).requireReleased() } finally { evidence = null }

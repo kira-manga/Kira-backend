@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.catalog.TestActiveOrdinaryRawHttpV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealHttpFixtureV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentInputV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentStorageV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.complaint.journal.JournalPublisherHttpRequest
 import me.manga.kira.backend.complaint.journal.JournalPublisherObject
 import me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherFixture
@@ -26,8 +27,10 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Cold HTTP factories, not a process/result factory. The service's initial-empty and later-nonempty
- * responses evolve only after the actual PUTs. The positive object and wrapped-key map come from
- * the exact registered producer; no encryption/key/proof/marker is synthesized by this reader.
+ * responses evolve after the actual PUT. The original object/wrapped-key map stay bound to that
+ * producer. An opt-in retained ALL alias uses separately labeled protocol-history bytes only
+ * after the genuine B queue has authenticated/applied it; it is not a second AUTH/PUT history.
+ * No encryption/key/proof/marker is synthesized by this reader.
  * Fault functions corrupt raw responses only. Not a real provider or two-process qualification.
  */
 internal class TestActiveRecurrentRawFixtureV1 {
@@ -83,17 +86,22 @@ internal class TestActiveRecurrentRawFixtureV1 {
         kms.respond = { request -> checked {
             boundary(); signed(request, "kms"); order.add("DECRYPT")
             assertEquals(AwsJournalKmsFixture.DECRYPT_TARGET, request.target(), "Read-only recurrent recovery never generates a key.")
-            val record = checkNotNull(fixture).record
+            val f = checkNotNull(fixture); val record = f.record
+            val historical = f.historicalAll
             val context = request.fields()["EncryptionContext"].fields().asSequence().associate { it.key to it.value.textValue() }
-            if (context == record.kmsContext) record.decrypt(request) // Original producer raw wrapped-key responder, not copied plaintext.
-            else JournalKmsHttpReply("""{"__type":"InvalidCiphertextException","message":"Synthetic context mismatch"}""").apply {
-                status = 400 // A tampered-key NEGATIVE cannot obtain the original wrapped key under a different context.
+            when {
+                context == record.kmsContext -> record.decrypt(request) // Original producer responder, not copied plaintext.
+                historical != null && context == historical.kmsContext -> historical.decrypt(request) // Explicit existing protocol-history map, not producer evidence.
+                else -> JournalKmsHttpReply("""{"__type":"InvalidCiphertextException","message":"Synthetic context mismatch"}""").apply {
+                    status = 400 // A tampered-key NEGATIVE cannot obtain either wrapped key under a different context.
+                }
             }
         } }
     }
     fun attach(f: TestActiveRecurrentFixtureV1) {
         check(fixture == null); fixture = f
         listedObjects[f.record.stored.key to f.record.stored.version] = f.record.stored
+        f.historicalAll?.stored?.let { listedObjects[it.key to it.version] = it }
         assertTrue(requests.isEmpty() && sts.requests.isEmpty() && kms.requests.isEmpty())
     }
     fun detach(f: TestActiveRecurrentFixtureV1) { check(fixture === f); fixture = null; listedObjects.clear(); assertNoLostAssertions() }
@@ -118,10 +126,13 @@ internal class TestActiveRecurrentRawFixtureV1 {
                 assertEquals(listOf(j.ordinaryPrefix), request.http.rawQueryParameters()["prefix"])
                 assertEquals(listOf("2"), request.http.rawQueryParameters()["max-keys"])
                 assertTrue(request.http.rawQueryParameters().keys.none { it in setOf("delimiter", "key-marker", "version-id-marker", "start-after") })
-                val versions = listing(pass, listOf(f.record.stored))
-                check(versions.size <= 3) // Bounded negative clones only, never positive publication evidence.
+                val inventory = (listOf(f.record.stored) + listOfNotNull(f.historicalAll?.stored)).sortedWith { a, b ->
+                    TestOrdinaryDrainRowsV1.compare(a.key to a.version, b.key to b.version)
+                }
+                val versions = listing(pass, inventory)
+                check(versions.size <= 3) // At most the two honestly sourced objects plus bounded hostile response input.
                 listedObjects.clear()
-                listedObjects[f.record.stored.key to f.record.stored.version] = f.record.stored
+                inventory.forEach { listedObjects[it.key to it.version] = it }
                 versions.forEach { listedObjects[it.key to it.version] = it }
                 OwnerDeleteAllJournalPublisherFixture.xmlReply(listDocument(pass, journalPublisherRawListDocument(location.bucket, j.ordinaryPrefix, versions)))
             }

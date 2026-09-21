@@ -5,19 +5,31 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseC
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
+import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveCheckpointHistoryV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentStorageV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableStateV1
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyRows
 import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRecoveryRegistrationSqlV1
 import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRecoveryRegistrationTailV1
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationHistoryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationSqlV1
+import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOrdinaryInventoryReadbackV1
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.ResultSetExtractor
+import java.sql.ResultSet
 import java.sql.Timestamp
+import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.Base64
+import java.util.UUID
 
 /** Fixed current-holder phases. No SQL callback, caller charge, or visible-row success constructor. */
 internal class TestActiveRecurrentOperationV1 private constructor(
@@ -47,6 +59,8 @@ internal class TestActiveRecurrentOperationV1 private constructor(
         private set
     internal var rows: List<TestActiveCutoffPublicationRowV1> = emptyList()
         private set
+    internal var manifestRows: List<ManifestEntry> = emptyList()
+        private set
     internal var entries: List<TestActiveRecurrentScanV1.Entry> = emptyList()
         private set
     internal var applied: List<TestActiveRecurrentScanV1.Applied> = emptyList()
@@ -67,7 +81,11 @@ internal class TestActiveRecurrentOperationV1 private constructor(
         requireReleased()
         requireRecurrent(step == TestActiveRecurrentStepV1.EPOCH_PAGE && !rowsClosed && rows.any { it === row } && row.state == "PREPARED")
     }
-    internal fun closeRows() { rowsClosed = true; rows.forEach { it.close() } }
+    private fun requireManifestRow(row: ManifestEntry) {
+        requireReleased()
+        requireRecurrent(step == TestActiveRecurrentStepV1.KEY_PAGE && !rowsClosed && manifestRows.any { it === row })
+    }
+    internal fun closeRows() { rowsClosed = true; rows.forEach { it.close() }; manifestRows.forEach { it.close() } }
     internal fun discardDetached() {
         closeRows()
         discardState()
@@ -109,8 +127,19 @@ internal class TestActiveRecurrentOperationV1 private constructor(
                 rows = publicationPage(TestActiveCutoffPublicationSqlV1.recurrentEpochPage, original.scope, original.identity.writer,
                     intent.epochStart, intent.epochEnd, after.first, after.second)
             }
-            TestActiveRecurrentStepV1.KEY_PAGE -> rows = publicationPage(TestActiveCutoffPublicationSqlV1.keyPage,
-                original.lowerCutoffKey, original.upperCutoffKey, original.keyCursor())
+            TestActiveRecurrentStepV1.KEY_PAGE -> {
+                val after = original.keyCursor()
+                manifestRows = checkNotNull(jdbc.query(TestActiveRecurrentSqlV1.manifestPage, ResultSetExtractor { selected ->
+                    val result = ArrayList<ManifestEntry>()
+                    try {
+                        while (selected.next()) {
+                            requireRecurrent(result.size < TestActiveCutoffPublicationSqlV1.PAGE_SIZE)
+                            result.add(ManifestEntry.read(selected, this))
+                        }
+                        result
+                    } catch (problem: Throwable) { result.forEach { it.close() }; throw problem }
+                }, original.scope, intent.epochStart, intent.epochEnd, original.lowerCutoffKey, original.upperCutoffKey, after?.first, after?.second))
+            }
             TestActiveRecurrentStepV1.CANONICAL -> canonical()
             TestActiveRecurrentStepV1.FREEZE -> freeze()
             TestActiveRecurrentStepV1.VERIFY -> verify()
@@ -352,14 +381,104 @@ internal class TestActiveRecurrentOperationV1 private constructor(
             original.leaseToken > intent.preparingToken() && history.records.size == intents.size && history.records.last().checkpointSha256 == null)
         original.requireAllNative(this)
     }
-    private fun nativeApplied(native: me.manga.kira.backend.complaint.infrastructure.journal.TestOrdinaryInventoryReadbackV1): Boolean {
+    private fun nativeApplied(native: TestOrdinaryInventoryReadbackV1): Boolean {
         val event = native.event
         val rows = jdbc.query(TestActiveRecurrentScanSqlV1.nativeApplied, { row, _ -> row.getBoolean("valid").also { requireRecurrent(!row.wasNull()) } },
             original.scope, original.identity.writer, event.comparison.epoch, event.comparison.eventKind.name, event.route.eventId,
             recurrentBytes(native.wireSha256), event.complaintIds().size, Timestamp.from(native.lastModified), event.route.objectKey, native.versionId)
         requireRecurrent(rows.size <= 1 && rows.none { !it })
+        if (rows.size == 1 && event.comparison.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) requireRetainedAllHistory(native)
         return rows.size == 1
     }
+
+    /**
+     * E-only inventory is not an orphan-history grant. These four routes come from this exact
+     * original's authenticated native event, never an expected-set row or caller family list.
+     * Read only, under the same current-holder prefix; the ordinary ALL reducer still owns APPLY.
+     */
+    private fun requireRetainedAllHistory(native: TestOrdinaryInventoryReadbackV1) {
+        retained()
+        val binding = OwnerDeleteAllJournalBindingV1(original.routing)
+        val observed = binding.fromTest(native.event)
+        val tuple = observed.tuple
+        val routes = binding.derive(tuple).sortedBy { it.eventId }
+        requireRecurrent(routes.size == 4 && routes.distinct().size == 4 && observed.route in routes)
+        val scope = original.routing.journalConfiguration.scope
+        val publications = ArrayList<OwnerDeleteAllApplyRows.Publication>()
+        var receipt: OwnerDeleteAllApplyRows.Receipt? = null
+        try {
+            routes.forEach { route ->
+                val found = jdbc.query(TestActiveRecurrentSqlV1.retainedAllPublication(scope), { row, _ -> OwnerDeleteAllApplyRows.publication(row) }, route.eventId)
+                publications.addAll(found)
+                requireRecurrent(found.size <= 1 && publications.size <= 1)
+                found.singleOrNull()?.let { requireRecurrent(it.eventId == route.eventId && it.objectKey == route.objectKey && it.routingKeyId == route.routingKeyId) }
+            }
+            val p = publications.single()
+            val primary = binding.restore(p.bytes, p.routingKeyId)
+            val actual = primary.tuple
+            requireRecurrent(primary.route in routes && primary.route.eventId == p.eventId && primary.route.objectKey == p.objectKey &&
+                p.writer == original.identity.writer && p.epoch == tuple.epoch &&
+                p.targetCount == observed.complaintIds().size && primary.complaintIds() == observed.complaintIds() &&
+                p.bytes.contentEquals(primary.canonicalBytes()) && recurrentHex(p.hash) == primary.semanticSha256 &&
+                actual.scope == tuple.scope && actual.eventKind == tuple.eventKind && actual.actorKind == tuple.actorKind && actual.actorId == tuple.actorId &&
+                actual.credentialVersion == tuple.credentialVersion && actual.operationKey == tuple.operationKey && actual.epoch == tuple.epoch &&
+                actual.encodedFingerprint() == tuple.encodedFingerprint())
+            val proof = p.verification
+            val parsed = OwnerDeleteAllVerificationCodecV1(binding).parse(proof.bytes, primary)
+            requireRecurrent(Sha256.hex(proof.bytes) == recurrentHex(proof.verificationHash) && parsed.objectVersion == proof.version &&
+                parsed.ciphertextSha256 == recurrentHex(proof.hash) && Instant.parse(parsed.objectCreatedAt) == proof.createdAt &&
+                Instant.parse(parsed.retainUntil) == proof.retainUntil && Instant.parse(parsed.verifiedAt) == proof.verifiedAt &&
+                p.createdAt <= current.sampledAt && proof.createdAt <= proof.verifiedAt && proof.verifiedAt <= current.sampledAt && proof.retainUntil > current.sampledAt)
+            if (primary.route == observed.route) requireRecurrent(proof.version == native.versionId && recurrentHex(proof.hash) == native.wireSha256 &&
+                proof.createdAt == native.lastModified && proof.retainUntil <= native.retainUntil && proof.verifiedAt <= native.verifiedAt)
+
+            val n = jdbc.query(TestActiveRecurrentSqlV1.retainedAllReceipt(scope), { row, _ -> OwnerDeleteAllApplyRows.receipt(row) }, tuple.actorId).single()
+            receipt = n
+            val fingerprint = Base64.getUrlDecoder().decode(tuple.encodedFingerprint())
+            try { requireRecurrent(n.key == tuple.operationKey && n.version == tuple.credentialVersion && n.fingerprint.contentEquals(fingerprint)) }
+            finally { fingerprint.fill(0) }
+            requireRecurrent(n.reference == p.eventId && n.authorizedAt == p.createdAt && n.completedAt == p.appliedAt &&
+                ((p.state == "VERIFIED" && n.state == "AUTHORIZED_DELETE") || (p.state == "APPLIED" && n.state == "COMPLETED")))
+            n.external?.let { requireRecurrent(it.eventId == p.eventId && it.epoch == tuple.epoch && it.version == proof.version && it.hash.contentEquals(proof.hash)) }
+
+            val reservations = routes.flatMap { route -> jdbc.query(TestActiveRecurrentSqlV1.retainedAllReservation(scope),
+                { row, _ -> OwnerDeleteAllApplyRows.recovery(row) }, route.eventId) }
+            val l = reservations.single()
+            requireRecurrent(l.eventId == p.eventId && l.promise == OwnerDeleteAllCapacityCharges.RECOVERY && l.state == "PARTIAL")
+            val family = jdbc.query(TestActiveRecurrentSqlV1.retainedAllApplied(scope), { row, _ ->
+                OwnerDeleteAllApplyRows.valid(row)
+                val id = OwnerDeleteAllApplyRows.string(row, "event_id")
+                val route = routes.single { it.eventId == id }
+                requireRecurrent(row.getString("object_key") == route.objectKey && row.getObject("writer_generation", UUID::class.java) == original.identity.writer &&
+                    OwnerDeleteAllApplyRows.long(row, "journal_epoch") == tuple.epoch && OwnerDeleteAllApplyRows.long(row, "target_count") == observed.complaintIds().size.toLong())
+                RetainedAllApplied(id, OwnerDeleteAllApplyRows.string(row, "object_version"), recurrentHash(row, "ciphertext_hash"), OwnerDeleteAllApplyRows.instant(row, "applied_at"))
+            }, routes.joinToString(",", "{", "}") { it.eventId })
+            requireRecurrent(family.size in 1..4 && family.map { it.eventId }.distinct().size == family.size)
+            val exact = family.single { it.eventId == observed.route.eventId }
+            requireRecurrent(exact.version == native.versionId && exact.wire == native.wireSha256 && exact.at >= native.lastModified)
+            val at = checkNotNull(l.convertedAt)
+            val installations = l.used[ComplaintCapacityCounter.INSTALLATION_IDS]
+            val ids = l.used[ComplaintCapacityCounter.RESOURCE_IDS]
+            val audits = l.used[ComplaintCapacityCounter.AUDIT_ROWS]
+            requireRecurrent(installations in 0..1 && ids in 0..100 && audits in family.size.toLong()..113 && at <= current.sampledAt &&
+                family.all { it.at in p.createdAt..at })
+            val allowed = ComplaintCapacityCharges.INSTALLATION_ID.scaled(installations) + ComplaintCapacityCharges.RESOURCE_ID.scaled(ids) +
+                ComplaintCapacityCharges.AUDIT.scaled(audits) + OwnerDeleteAllCapacityCharges.APPLIED.scaled(family.size.toLong())
+            requireRecurrent(l.used == allowed && l.used.fitsWithin(l.promise))
+            val appliedPrimary = family.singleOrNull { it.eventId == p.eventId }
+            if (p.state == "APPLIED") {
+                val applied = checkNotNull(appliedPrimary)
+                requireRecurrent(applied.version == proof.version && applied.wire == recurrentHex(proof.hash) && applied.at == p.appliedAt && applied.at >= proof.verifiedAt)
+            } else requireRecurrent(appliedPrimary == null)
+            retained()
+        } finally {
+            receipt?.let { it.fingerprint.fill(0); it.external?.hash?.fill(0) }
+            publications.forEach { p ->
+                p.bytes.fill(0); p.hash.fill(0); p.verification.hash.fill(0); p.verification.bytes.fill(0); p.verification.verificationHash.fill(0)
+            }
+        }
+    }
+    private class RetainedAllApplied(val eventId: String, val version: String, val wire: String, val at: Instant)
     private fun requireSupported() { requireRecurrent(valid(TestActiveRecurrentScanSqlV1.supported, original.scope, original.identity.writer)) }
     private fun insertHistory(record: TestActiveRecurrentHistoryV1.Record) {
         val args = record.insertArguments()
@@ -490,6 +609,62 @@ internal class TestActiveRecurrentOperationV1 private constructor(
         throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)
     }
     override fun toString(): String = "RecurrentOperation(fixed-original-holder,known-commit-and-cleanup-required)"
+
+    /** Detached <=32-row comparison owned by one released KEY_PAGE. It cannot issue APPLY/VERIFY. */
+    internal class ManifestEntry private constructor(
+        private val page: TestActiveRecurrentOperationV1, private val publication: TestActiveCutoffPublicationRowV1?,
+        val locator: Pair<String, String>, val epoch: Long, val wire: String, private val physical: String,
+    ) : AutoCloseable {
+        private var closed = false
+        fun requireOriginal(original: TestActiveRecurrentV1) {
+            requireRecurrent(!closed && page.original === original)
+            page.requireManifestRow(this); original.requireCutoffRunning()
+            requireRecurrent(epoch in original.epochStart..original.cutoff && locator.first >= original.lowerCutoffKey && locator.first < original.upperCutoffKey)
+            publication?.let { it.requireProof(it.event(original), original.routing) }
+        }
+        fun fingerprint(): String { requireOriginal(page.original); return physical }
+        override fun close() { closed = true; publication?.close() }
+        override fun toString(): String = "RecurrentExpectedEntry(physical-P-or-E-comparison,no-authority,redacted)"
+        companion object {
+            fun read(row: ResultSet, page: TestActiveRecurrentOperationV1): ManifestEntry {
+                requireRecurrent(row.getBoolean("overlap_valid") && !row.wasNull())
+                val original = page.original
+                val key = checkNotNull(row.getString("manifest_key")); val version = checkNotNull(row.getString("manifest_version"))
+                requireRecurrent(TestActiveRecurrentJsonV1.opaque(version))
+                var p: TestActiveCutoffPublicationRowV1? = null
+                try {
+                    val physical = ArrayList<String>()
+                    if (row.getBoolean("publication_present")) {
+                        p = TestActiveCutoffPublicationRowV1.read(row)
+                        requireRecurrent(p.objectKey == key && checkNotNull(p.proof).version == version)
+                        physical.add("P"); physical.add(recurrentHash(row, "publication_fingerprint"))
+                    }
+                    var epoch = p?.epoch
+                    var wire = p?.proof?.ciphertext
+                    if (row.getBoolean("applied_present")) {
+                        requireRecurrent(row.getBoolean("applied_valid") && !row.wasNull() && row.getBoolean("applied_test_only") && !row.wasNull() &&
+                            row.getObject("applied_scope", UUID::class.java) == original.scope && row.getObject("applied_writer", UUID::class.java) == original.identity.writer)
+                        val kind = checkNotNull(row.getString("applied_kind")); val targets = recurrentLong(row, "applied_targets")
+                        val appliedEpoch = recurrentLong(row, "applied_epoch"); val appliedWire = recurrentHash(row, "applied_ciphertext_hash")
+                        requireRecurrent(recurrentTime(row, "applied_at") <= page.current.sampledAt && appliedEpoch in original.epochStart..original.cutoff &&
+                            kind in TestActiveRecurrentScanV1.FAMILIES && (p != null || kind == "OWNER_DELETE_ALL") &&
+                            Regex("[A-Za-z0-9_-]{43}").matches(checkNotNull(row.getString("applied_event_id"))) &&
+                            when (kind) { "OWNER_DELETE_ALL" -> targets in 0..100; "ADMIN_BATCH_DELETE" -> targets in 1..50; else -> targets == 1L })
+                        requireRecurrent(epoch == null || epoch == appliedEpoch); requireRecurrent(wire == null || wire == appliedWire)
+                        epoch = appliedEpoch; wire = appliedWire
+                        physical.add("E"); physical.add(recurrentHash(row, "applied_fingerprint"))
+                    }
+                    val actualEpoch = checkNotNull(epoch)
+                    val prefix = "${original.routing.journalConfiguration.ordinaryPrefix}writer/${original.writer}/epoch/${actualEpoch.toString().padStart(19, '0')}/"
+                    requireRecurrent(key.length in 1..1024 && key.all { it in '!'..'~' } && key.startsWith(prefix))
+                    val parts = key.removePrefix(prefix).split('/')
+                    requireRecurrent(parts.size == 2 && original.routing.journalConfiguration.declaration().routing.keys.any { it.keyId == parts[0] } &&
+                        Regex("[A-Za-z0-9_-]{43}").matches(parts[1]) && physical.isNotEmpty())
+                    return ManifestEntry(page, p, key to version, actualEpoch, checkNotNull(wire), physical.joinToString(":"))
+                } catch (problem: Throwable) { p?.close(); throw problem }
+            }
+        }
+    }
     companion object {
         private val ACCOUNTING = setOf(TestActiveRecurrentStepV1.REQUEST, TestActiveRecurrentStepV1.VERIFY, TestActiveRecurrentStepV1.START_PASS,
             TestActiveRecurrentStepV1.APPEND, TestActiveRecurrentStepV1.CLEAN)

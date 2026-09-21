@@ -590,7 +590,8 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         val exact = family.any { it.eventId == observed.record.eventId }
         check(exact || family.size < 4)
         if (recurrent != null) {
-            check(family.size == if (exact) 1 else 0)
+            // Already-applied retained-key aliases do not complete this primary. The exact
+            // original still needs its real N/P/L, native proof and cumulative-U family below.
             check((publication?.state == "APPLIED") == exact && (receipt?.state == "COMPLETED") == exact)
         }
         val plan = QueuePlan(receipt, publication, primary, recovery == null, isPrimary, exact, family)

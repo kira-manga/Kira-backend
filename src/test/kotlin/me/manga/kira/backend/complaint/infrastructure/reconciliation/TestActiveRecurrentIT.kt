@@ -13,8 +13,10 @@ import org.junit.jupiter.api.parallel.ExecutionMode
 /**
  * SOURCE_ONLY / NOT_COMPILED / NOT_RUN / NOT_REVIEWED. Selectors for actual PG/TLS and substituted
  * raw HTTP only; no provider, deployment-cadence, dropped-COMMIT-reply or two-JVM qualification.
- * Split2 joins only the first genuine retained-primary missing APPLY. Deferred replay sweep,
- * missing bookkeeping, receiptless retirement, full14 and terminal authority remain unresolved.
+ * Split2 joins exact retained-primary missing APPLY, including a previously B-applied retained-key
+ * ALL alias. Alias fixture bytes are labeled protocol history, NOT a second A AUTH/PUT producer.
+ * Missing alias APPLY, same-key versions, general deferred replay sweep, missing bookkeeping,
+ * receiptless retirement, full14 and terminal authority remain unresolved.
  * The ALL setup additionally needs the separately owned B readback-oracle correction composed.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -55,6 +57,18 @@ class TestActiveRecurrentIT {
     }
     @Test fun genuineMissingAdminBatchPrimaryAppliesBeforeTheIndependentRecurrentMarkerRecheck() = withFixture {
         TestActiveRecurrentRecoveryCasesV1.firstMissingPrimary(it, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE)
+    }
+    @Test fun bAppliedProtocolHistoryAllAliasPrecedesOnlyTheActualOriginalPrimarySplit2() = withFixture {
+        TestActiveRecurrentRecoveryCasesV1.retainedAllAliasThenActualPrimary(it)
+    }
+    @Test fun bothAppliedAllVersionsRemainExactNativeCoverageWithoutAnotherApplyOrCharge() = withFixture {
+        TestActiveRecurrentRecoveryCasesV1.retainedAllAlreadyAppliedFamily(it)
+    }
+    @Test fun retainedAllManifestRejectsMissingVersionsOverlapForeignRowsAndPhysicalDrift() {
+        RecurrentRetainedAllInventoryCut.entries.forEach { cut -> withFixture { TestActiveRecurrentRecoveryCasesV1.retainedAllInventoryCannotHideDrift(it, cut) } }
+    }
+    @Test fun authenticatedAllAliasCannotReplaceMissingPrimaryHistoryOrTornCumulativeUse() {
+        RecurrentRetainedAllHistoryCut.entries.forEach { cut -> withFixture { TestActiveRecurrentRecoveryCasesV1.retainedAllHistoryMustRemainWhole(it, cut) } }
     }
     @Test fun missingPrimaryApplyBeforeAfterAndUnknownCommitCannotResumeTheFailedOriginal() {
         ComplaintJournalDeletionKindV1.entries.forEach { family ->
