@@ -669,7 +669,7 @@ internal class TestActiveRecurrentV1 private constructor(
     }
     private fun epochKey(epoch: Long): String = "${routing.journalConfiguration.ordinaryPrefix}writer/$writer/epoch/${epoch.toString().padStart(19, '0')}/"
     private enum class Cleanup { OBSOLETE, SUCCESS }
-    sealed class Result private constructor()
+    sealed class Result protected constructor()
     /** Not success; the exact original remains live and bounded. No public delivery or callback is accepted. */
     class RecoveryRequired private constructor(private val original: TestActiveRecurrentV1, internal val nativeInput: TestActiveRecurrentScanRecoveryInputV1) : Result() {
         fun input(): TestActiveRecurrentScanRecoveryInputV1 {
