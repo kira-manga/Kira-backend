@@ -24,6 +24,7 @@ internal object TestOrdinaryDrainSqlV1 {
             AND r.retired_count IS NULL AND r.deleted_count IS NULL AND r.terminal_event_id IS NULL AND r.terminal_object_key IS NULL
             AND r.terminal_object_version IS NULL AND r.terminal_ciphertext_hash IS NULL
             AND r.terminal_catalog_generation IS NULL AND r.terminal_catalog_hash IS NULL
+            AND r.recurrent_erasure_history_hash IS NULL
             AND ((r.permanent_denial_bytes IS NULL AND r.permanent_denial_hash IS NULL)
                 OR complaint_bytes_match(r.permanent_denial_bytes, r.permanent_denial_hash, 51291))
             AND ((r.final_ordinary_epoch IS NULL AND r.terminal_seal_epoch IS NULL AND r.generation_seal_count IS NULL
@@ -66,6 +67,7 @@ internal object TestOrdinaryDrainSqlV1 {
             AND r.retired_count IS NULL AND r.deleted_count IS NULL AND r.terminal_event_id IS NULL AND r.terminal_object_key IS NULL
             AND r.terminal_object_version IS NULL AND r.terminal_ciphertext_hash IS NULL
             AND r.terminal_catalog_generation IS NULL AND r.terminal_catalog_hash IS NULL
+            AND r.recurrent_erasure_history_hash IS NULL
             AND ((r.permanent_denial_bytes IS NULL AND r.permanent_denial_hash IS NULL)
                 OR complaint_bytes_match(r.permanent_denial_bytes, r.permanent_denial_hash, 51291))
             AND ((r.final_ordinary_epoch IS NULL AND r.terminal_seal_epoch IS NULL AND r.generation_seal_count IS NULL

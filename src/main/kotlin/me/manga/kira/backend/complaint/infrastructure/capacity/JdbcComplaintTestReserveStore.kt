@@ -148,7 +148,8 @@ internal class ComplaintTestReserveSpendOperation private constructor(
                     AND installation_chunk_count IS NULL AND retired_count IS NULL AND deleted_count IS NULL
                     AND permanent_denial_bytes IS NULL AND permanent_denial_hash IS NULL
                     AND terminal_event_id IS NULL AND terminal_object_key IS NULL AND terminal_object_version IS NULL
-                    AND terminal_ciphertext_hash IS NULL AND terminal_catalog_generation IS NULL AND terminal_catalog_hash IS NULL AS active_shape
+                    AND terminal_ciphertext_hash IS NULL AND terminal_catalog_generation IS NULL AND terminal_catalog_hash IS NULL
+                    AND recurrent_erasure_history_hash IS NULL AS active_shape
             FROM complaint_test_runs
             WHERE data_scope_id = ?
             FOR UPDATE

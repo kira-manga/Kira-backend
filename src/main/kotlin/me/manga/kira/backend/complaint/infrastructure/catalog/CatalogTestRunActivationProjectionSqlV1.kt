@@ -23,7 +23,7 @@ internal object CatalogTestRunActivationProjectionSqlV1 {
         generation_seal_root, seal_set_bytes, seal_set_hash, event_manifest_count, event_manifest_root,
         installation_manifest_count, installation_manifest_root, installation_chunk_count, retired_count, deleted_count,
         permanent_denial_bytes, permanent_denial_hash, terminal_event_id, terminal_object_key, terminal_object_version,
-        terminal_ciphertext_hash, terminal_catalog_generation, terminal_catalog_hash
+        terminal_ciphertext_hash, terminal_catalog_generation, terminal_catalog_hash, recurrent_erasure_history_hash
     """.trimIndent()
     private val runValues = """
         e.scope, true, 'ACTIVE'::text, e.configuration_hash, 1::smallint, e.installation_limit, 0::bigint,
@@ -32,7 +32,7 @@ internal object CatalogTestRunActivationProjectionSqlV1 {
         NULL::bytea, NULL::bytea, NULL::bytea, NULL::bigint, NULL::bytea,
         NULL::bigint, NULL::bytea, NULL::integer, NULL::bigint, NULL::bigint,
         NULL::bytea, NULL::bytea, NULL::text, NULL::text, NULL::text,
-        NULL::bytea, NULL::bigint, NULL::bytea
+        NULL::bytea, NULL::bigint, NULL::bytea, NULL::bytea
     """.trimIndent()
     val insertRun = "$expected\nINSERT INTO complaint_test_runs ($runColumns) SELECT $runValues FROM expected e"
 

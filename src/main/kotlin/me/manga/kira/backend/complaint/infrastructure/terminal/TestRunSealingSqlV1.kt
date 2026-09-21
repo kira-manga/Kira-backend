@@ -15,6 +15,7 @@ internal object TestRunSealingSqlV1 {
         AND r.retired_count IS NULL AND r.deleted_count IS NULL AND r.permanent_denial_bytes IS NULL AND r.permanent_denial_hash IS NULL
         AND r.terminal_event_id IS NULL AND r.terminal_object_key IS NULL AND r.terminal_object_version IS NULL
         AND r.terminal_ciphertext_hash IS NULL AND r.terminal_catalog_generation IS NULL AND r.terminal_catalog_hash IS NULL
+        AND r.recurrent_erasure_history_hash IS NULL
     """.trimIndent()
 
     val readRun = """
