@@ -39,6 +39,7 @@ import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedRec
 import me.manga.kira.backend.complaint.catalog.ComplaintTestNamespaceRegistrationCases
 import me.manga.kira.backend.complaint.catalog.ComplaintTestInitialAdmissionCases
 import me.manga.kira.backend.complaint.catalog.ComplaintTestNamespaceActiveRegistrationCasesV1
+import me.manga.kira.backend.complaint.catalog.ComplaintTestColdActiveRegistrationProcessCasesV1
 import me.manga.kira.backend.complaint.catalog.InitialAdmissionDriftCut
 import me.manga.kira.backend.complaint.catalog.InitialAdmissionLifetimeCut
 import me.manga.kira.backend.complaint.catalog.InitialAdmissionLockCut
@@ -1341,6 +1342,15 @@ class VersionBoundPersistenceConnectedIT {
     fun testColdActiveRegistrationFreshRootAdmitsIdentityAfterEnrollmentWithoutReprojecting() = withFixture(testActivation = true) {
         ComplaintTestNamespaceActiveRegistrationCasesV1.freshRootAdmitsIdentityAfterEnrollmentWithoutReprojecting(it)
     }
+
+    @Test
+    fun testColdActiveRegistrationTwoJvmEnrolledIdentityWithoutReprojectionOrRecharge() =
+        ComplaintTestColdActiveRegistrationProcessCasesV1.qualify(interruptedRelease = false)
+
+    // Known native COMMIT, failed original local release, and the real preexisting scan flag; NOT C first-cut recovery or UNKNOWN.
+    @Test
+    fun testColdActiveRegistrationTwoJvmCommittedInitialReleaseFailureKeepsPendingScanIdentityOnly() =
+        ComplaintTestColdActiveRegistrationProcessCasesV1.qualify(interruptedRelease = true)
 
     @Test
     fun testColdActiveRegistrationChangedFullDRefusesBeforeRawRead() = withFixture(testActivation = true) {

@@ -68,19 +68,7 @@ internal data class ColdRawHandoffV1(
             val evidence = f.history.p.f.rows.evidence
             val input = evidence.coldInputBytes()
             ColdFixtureFilesV1.write(root.resolve("test-deployment.json"), input)
-            val http = f.history.p.f.http.read
-            check(http.requests.size == http.replies.size)
-            // Latest raw versioned GET of each actual retained copy; no checked chain/readback/proof is serialized.
-            val catalog = linkedMapOf<Triple<String, String, String>, ColdCatalogObjectV1>()
-            http.requests.zip(http.replies).forEach { (request, reply) ->
-                val version = request.firstMatchingRawQueryParameter("versionId").orElse(null)
-                if (version != null) {
-                    check(request.method() == SdkHttpMethod.GET && reply.status == 200 && reply.calls == 1 && reply.closes > 0)
-                    val location = OfflineTrustBundleFixture.locations.single { request.encodedPath().startsWith("/${it.bucket}/") }
-                    val key = request.encodedPath().removePrefix("/${location.bucket}/")
-                    catalog[Triple(location.bucket, key, version)] = ColdCatalogObjectV1(location.bucket, key, version, base64(reply.bytes), reply.headers)
-                }
-            }
+            val catalog = coldCatalogObjectsV1(f.history.p.f.http.read)
             check(catalog.values.groupBy { it.bucket }.values.map { it.size }.toSet() == setOf(evidence.prefix.size + 1))
             check(catalog.values.map { it.bucket }.toSet() == OfflineTrustBundleFixture.locations.map { it.bucket }.toSet())
             val provider = f.provider
@@ -101,36 +89,43 @@ internal data class ColdRawHandoffV1(
     }
 }
 
-/** New HTTP clients over persisted TEST mock objects. No original event/routing owner is reconstructed here. */
-internal class ColdRawProvidersV1(private val saved: ColdRawHandoffV1, private val journal: TestOwnerDeleteJournalConfigurationV1) {
+/** Actual retained raw GET replies only; no accepted catalog/readback/proof crosses JVMs. */
+internal fun coldCatalogObjectsV1(http: S3CatalogReadbackFixture): LinkedHashMap<Triple<String, String, String>, ColdCatalogObjectV1> {
+    check(http.requests.size == http.replies.size)
+    // Latest raw versioned GET of each actual retained copy; no checked chain/readback/proof is serialized.
+    val catalog = linkedMapOf<Triple<String, String, String>, ColdCatalogObjectV1>()
+    http.requests.zip(http.replies).forEach { (request, reply) ->
+        val version = request.firstMatchingRawQueryParameter("versionId").orElse(null)
+        if (version != null) {
+            check(request.method() == SdkHttpMethod.GET && reply.status == 200 && reply.calls == 1 && reply.closes > 0)
+            val location = OfflineTrustBundleFixture.locations.single { request.encodedPath().startsWith("/${it.bucket}/") }
+            val key = request.encodedPath().removePrefix("/${location.bucket}/")
+            catalog[Triple(location.bucket, key, version)] = ColdCatalogObjectV1(location.bucket, key, version, base64(reply.bytes), reply.headers)
+        }
+    }
+    return catalog
+}
+
+/** Raw secret/catalog transport shared by cold TEST histories; never an identity or capability issuer. */
+internal class ColdIdentityRawProvidersV1(
+    secretObjects: List<ColdSecretObjectV1>, catalogObjects: List<ColdCatalogObjectV1>,
+    private val requireReleased: () -> Unit,
+) {
     val secrets = AwsSecretVersionFixture()
     val catalog = S3CatalogReadbackFixture()
-    val kms = AwsJournalKmsFixture()
-    val requests = mutableListOf<JournalPublisherHttpRequest>()
-    private val objects = saved.ordinary.map(ColdJournalObjectV1::raw).sortedBy { it.key }
-    private val mapper = ObjectMapper()
-    private val keys = saved.kms.associate { raw ->
-        val reply = mapper.readTree(raw.generateReply)
-        reply["CiphertextBlob"].textValue() to (mapper.readTree(raw.generateRequest)["EncryptionContext"] to reply)
-    }
-    var boundary: () -> Unit = {}
-    private var opened = 0
-    private var closed = 0
-
     init {
-        check(keys.size == 4)
         secrets.respond = { request ->
             val fields = request.fields()
-            val raw = saved.secrets.single { it.arn == fields.getValue("SecretId") && it.version == fields.getValue("VersionId") }
+            val raw = secretObjects.single { it.arn == fields.getValue("SecretId") && it.version == fields.getValue("VersionId") }
             SecretHttpReply(unbase64(raw.body)).apply { headers = raw.headers }
         }
         catalog.respond = { request ->
-            released()
+            requireReleased()
             assertEquals(SdkHttpMethod.GET, request.method())
             val location = OfflineTrustBundleFixture.locations.single { request.encodedPath().startsWith("/${it.bucket}") }
             assertEquals(location.accountId, request.firstMatchingHeader("x-amz-expected-bucket-owner").orElseThrow())
             assertEquals(S3CatalogReadbackFixture.credentials.sessionToken(), request.firstMatchingHeader("x-amz-security-token").orElseThrow())
-            val values = saved.catalog.filter { it.bucket == location.bucket }.sortedBy { it.key }
+            val values = catalogObjects.filter { it.bucket == location.bucket }.sortedBy { it.key }
             if (request.rawQueryParameters().containsKey("versions")) {
                 assertEquals(CatalogReadbackProtocol.PREFIX, request.firstMatchingRawQueryParameter("prefix").orElseThrow())
                 val maximum = request.firstMatchingRawQueryParameter("max-keys").orElseThrow().toInt()
@@ -148,8 +143,41 @@ internal class ColdRawProvidersV1(private val saved: ColdRawHandoffV1, private v
                 val raw = values.single { request.encodedPath() == "/${location.bucket}/${it.key}" &&
                     request.firstMatchingRawQueryParameter("versionId").orElseThrow() == it.version }
                 S3CatalogReply(unbase64(raw.body)).apply { headers = raw.headers }
-            }.apply { beforeCall = ::released; beforeRead = ::released; onAbort = ::released; onClose = ::released }
+            }.apply { beforeCall = requireReleased; beforeRead = requireReleased; onAbort = requireReleased; onClose = requireReleased }
         }
+    }
+
+    fun assertClientsClosed() {
+        assertEquals(secrets.createdClients, secrets.closedClients); assertEquals(catalog.createdClients, catalog.closedClients)
+    }
+
+    fun assertRepliesClosed() {
+        secrets.replies.forEach { assertEquals(1, it.calls); assertEquals(1, it.aborts); assertTrue(it.closes > 0) }
+        catalog.replies.forEach { assertEquals(1, it.calls); assertEquals(1, it.aborts); assertTrue(it.closes > 0) }
+    }
+
+    fun assertClosed() { assertClientsClosed(); assertRepliesClosed() }
+}
+
+/** New HTTP clients over persisted TEST mock objects. No original event/routing owner is reconstructed here. */
+internal class ColdRawProvidersV1(private val saved: ColdRawHandoffV1, private val journal: TestOwnerDeleteJournalConfigurationV1) {
+    private val identity = ColdIdentityRawProvidersV1(saved.secrets, saved.catalog, ::released)
+    val secrets get() = identity.secrets
+    val catalog get() = identity.catalog
+    val kms = AwsJournalKmsFixture()
+    val requests = mutableListOf<JournalPublisherHttpRequest>()
+    private val objects = saved.ordinary.map(ColdJournalObjectV1::raw).sortedBy { it.key }
+    private val mapper = ObjectMapper()
+    private val keys = saved.kms.associate { raw ->
+        val reply = mapper.readTree(raw.generateReply)
+        reply["CiphertextBlob"].textValue() to (mapper.readTree(raw.generateRequest)["EncryptionContext"] to reply)
+    }
+    var boundary: () -> Unit = {}
+    private var opened = 0
+    private var closed = 0
+
+    init {
+        check(keys.size == 4)
         kms.beforePrepare = ::released
         kms.onClientClose = ::released
         kms.respond = { request ->
@@ -203,11 +231,10 @@ internal class ColdRawProvidersV1(private val saved: ColdRawHandoffV1, private v
 
     fun assertClosed() {
         assertEquals(opened, closed)
-        assertEquals(secrets.createdClients, secrets.closedClients); assertEquals(catalog.createdClients, catalog.closedClients)
+        identity.assertClientsClosed()
         assertEquals(kms.createdClients, kms.closedClients); assertEquals(kms.createdClients, kms.returnedClientCloses)
         requests.forEach { assertEquals(1, it.calls); assertEquals(1, it.aborts); assertEquals(1, checkNotNull(it.reply).closes) }
-        secrets.replies.forEach { assertEquals(1, it.calls); assertEquals(1, it.aborts); assertTrue(it.closes > 0) }
-        catalog.replies.forEach { assertEquals(1, it.calls); assertEquals(1, it.aborts); assertTrue(it.closes > 0) }
+        identity.assertRepliesClosed()
         kms.replies.forEach { assertEquals(1, it.calls); assertEquals(1, it.aborts); assertTrue(it.closes > 0) }
     }
     private fun released() { requireConnectionFree(); boundary() }

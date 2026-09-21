@@ -51,15 +51,12 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.orm.jpa.SharedEntityManagerCreator
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
-import java.io.File
-import java.net.URLClassLoader
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import java.time.Clock
 import java.time.Instant
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 import kotlin.system.exitProcess
 
 /**
@@ -81,7 +78,7 @@ internal object ComplaintTestColdRecoveryProcessCasesV1 {
             val generation = ColdSqlObservationV1.generation(jdbc)
             val descriptor = database.exportColdChildAttachment(root)
             val descriptorHash = ColdFixtureFilesV1.sha256(ColdFixtureFilesV1.read(descriptor))
-            val first = runChild(root, descriptorHash, "author", paidCut, children)
+            val first = ComplaintTestColdProcessSupportV1.runChild(root, descriptorHash, "author", paidCut, children, ColdTestProcessEntryV1.SEALED)
             val saved = try { ColdRawHandoffV1.read(root) } catch (problem: Exception) {
                 // Serializer diagnostics may contain input snippets; never send raw mock keys to the JUnit report.
                 throw AssertionError("Cold author handoff read failed: ${problem.javaClass.name}")
@@ -94,7 +91,7 @@ internal object ComplaintTestColdRecoveryProcessCasesV1 {
             val immutable = listOf("owned-container.txt", "test-deployment.json", "raw-backing.json").associateWith {
                 ColdFixtureFilesV1.sha256(ColdFixtureFilesV1.read(root.resolve(it)))
             }
-            val second = runChild(root, descriptorHash, "recover", paidCut, children)
+            val second = ComplaintTestColdProcessSupportV1.runChild(root, descriptorHash, "recover", paidCut, children, ColdTestProcessEntryV1.SEALED)
             assertTrue(first.first.pid() != second.first.pid(), "Distinct actual JVM invocations, not a fresh graph in the old JVM.")
             ColdSqlObservationV1.noRuntimeSessions(jdbc)
             assertEquals(generation, ColdSqlObservationV1.generation(jdbc))
@@ -106,61 +103,11 @@ internal object ComplaintTestColdRecoveryProcessCasesV1 {
             assertEquals(1L, jdbc.queryForObject("SELECT count(*) FROM complaint_test_runs WHERE state = 'SEALED' AND permanent_denial_bytes IS NOT NULL AND seal_set_bytes IS NOT NULL", Long::class.java))
         } finally {
             // Forced disposal cannot turn any timeout/failed assertion into success. Keep raw files if process death is unproven.
-            children.forEach(::stopOwnedChild)
+            children.forEach(ComplaintTestColdProcessSupportV1::stopOwnedChild)
             check(children.none(Process::isAlive))
             database.close() // Owning parent alone stops its container, then disposes server TLS.
             Files.walk(root).use { entries -> entries.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
         }
-    }
-
-    private fun runChild(root: Path, descriptorHash: String, stage: String, paid: Boolean,
-        children: MutableList<Process>): Pair<Process, Instant> {
-        val builder = ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-            "-Xms32m", "-Xmx384m", "-XX:MaxMetaspaceSize=192m", "-XX:ActiveProcessorCount=1", "-XX:+ExitOnOutOfMemoryError",
-            "-Djava.io.tmpdir=$root", "-Duser.home=$root", "-cp", runtimeClasspath(), ComplaintTestColdRecoveryProcessV1::class.java.name,
-            root.toString(), descriptorHash, stage, paid.toString()).directory(root.toFile())
-            .redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD)
-        builder.environment().clear() // No JAVA_OPTIONS/agents/ambient provider credentials/controller endpoint.
-        val process = builder.start().also(children::add)
-        val started = process.info().startInstant().orElseThrow()
-        process.outputStream.close()
-        try {
-            assertTrue(process.waitFor(180, TimeUnit.SECONDS), "Cold $stage JVM exceeded its bound; forced disposal is failure.")
-        } catch (interrupted: InterruptedException) {
-            Thread.currentThread().interrupt(); throw interrupted
-        }
-        assertFalse(process.isAlive)
-        val diagnostic = root.resolve("$stage-failure.txt").let { if (Files.exists(it)) ColdFixtureFilesV1.read(it, 4096).toString(Charsets.UTF_8) else "no child diagnostic" }
-        assertEquals(0, process.exitValue(), "Cold $stage JVM failed: $diagnostic")
-        return process to started
-    }
-
-    private fun runtimeClasspath(): String {
-        // Identical ordinary-runtime recipe to CatalogAuthorProcessTest; never a substitute dependency overlay.
-        val entries = linkedSetOf<Path>()
-        generateSequence(Thread.currentThread().contextClassLoader) { it.parent }.filterIsInstance<URLClassLoader>().forEach { loader ->
-            loader.getURLs().forEach { url -> check(url.protocol == "file"); entries.add(Path.of(url.toURI()).toAbsolutePath().normalize()) }
-        }
-        listOf(ComplaintTestColdRecoveryProcessV1::class.java, ComplaintTestProcessAssemblyV1::class.java, Unit::class.java).forEach {
-            entries.add(Path.of(it.protectionDomain.codeSource.location.toURI()).toAbsolutePath().normalize())
-        }
-        System.getProperty("java.class.path").split(File.pathSeparator).filter(String::isNotEmpty).forEach {
-            entries.add(Path.of(it).toAbsolutePath().normalize())
-        }
-        return entries.joinToString(File.pathSeparator)
-    }
-
-    private fun stopOwnedChild(child: Process) {
-        var interrupted = Thread.interrupted()
-        try {
-            if (child.isAlive) child.destroyForcibly()
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-            while (child.isAlive && System.nanoTime() < deadline) {
-                try { child.waitFor(25, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { interrupted = true }
-            }
-            check(!child.isAlive) { "Keep private raw backing while child retirement is unproven." }
-            child.outputStream.close(); child.inputStream.close(); child.errorStream.close()
-        } finally { if (interrupted) Thread.currentThread().interrupt() }
     }
 }
 
