@@ -6,6 +6,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.DESIRED_OPERATOR_
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcLifecycleOwner
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleActivation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePublicTrustPreparation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
@@ -429,7 +430,9 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
     override fun close() {
         val stopped = runCatching { retireRuntime("D7_CLOSE") }
         val authors = originalFreeze?.invocations.orEmpty()
-        val retired = authors.map { runCatching(it::fixtureCleanup) } + desired.firstDInvocations.map { runCatching(it::fixtureCleanup) } +
+        val authorRetirements = authors.map { runCatching(it::fixtureCleanup) }
+        val firstDRetirements = desired.firstDInvocations.map { runCatching(it::fixtureCleanup) }
+        val retired = authorRetirements + firstDRetirements +
             desired.invocations.map { runCatching(it::fixtureCleanup) }
         val ready = runCatching {
             stopped.getOrThrow()
@@ -459,9 +462,25 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
             if (stopped.isFailure || retired.any { it.isFailure } || ready.isFailure || sourceClosed.isFailure || desiredClosed.isFailure) {
                 println("TEST_D7_CLOSE_FAILURE stopReturned=${stopped.isSuccess} retirementFailures=${retired.count { it.isFailure }} " +
                     "restorationReady=${ready.isSuccess} sourceCloseReturned=${sourceClosed.isSuccess} desiredCloseReturned=${desiredClosed.isSuccess}")
+                authorRetirements.getOrNull(0)?.let { observeCloseResultFailure("AUTHOR_FREEZE", it) }
+                authorRetirements.getOrNull(1)?.let { observeCloseResultFailure("AUTHOR_RESUME", it) }
+                firstDRetirements.forEach { observeCloseResultFailure("FIRST_D", it) }
+                observeCloseResultFailure("RESTORATION_READY", ready)
             }
         } catch (_: Throwable) { /* Diagnostics cannot change original aggregation, suppression or cleanup gates. */ }
         rethrowSignerRotationFixtureFailures(listOf(stopped) + retired + listOf(ready, sourceClosed, desiredClosed))
+    }
+
+    /** Already-caught results only, under close's diagnostic catch; no renewed cleanup or ownership observation. */
+    private fun observeCloseResultFailure(label: String, result: Result<*>) {
+        val failure = result.exceptionOrNull() ?: return
+        val category = when (failure) {
+            is PersistencePhaseException -> "PHASE"
+            is AssertionError -> "ASSERTION"
+            else -> "OTHER"
+        }
+        val phaseCode = (failure as? PersistencePhaseException)?.code?.name ?: "NONE"
+        println("TEST_D7_CLOSE_RESULT_FAILURE label=$label category=$category phaseCode=$phaseCode")
     }
 
     private fun databaseNow(): Instant = checkNotNull(observer.queryForObject("SELECT clock_timestamp()", Timestamp::class.java)).toInstant()
