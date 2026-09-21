@@ -1176,7 +1176,7 @@ internal class CatalogTestRunActivationV1 private constructor(
             coordinator.dataSource === source && coordinator.catalogTestRunActivation && !coordinator.catalogSignerRotationActivation &&
             !coordinator.catalogSignerRotationRecovery && !coordinator.catalogSignerRotationDelivery && !coordinator.catalogSignerRotationAuthoring &&
             !coordinator.catalogGenesisAuthoring && !coordinator.catalogGenesisFinalization && !coordinator.desiredInstallationOperator &&
-            process.pools.epochRotation == null && process.consumers.journalConfiguration.scope.testOnly &&
+            (process.pools.epochRotation == null) == (process.activeFirstCut == null) && process.consumers.journalConfiguration.scope.testOnly &&
             username != VersionBoundPersistenceConfiguration.CATALOG_GENESIS_AUTHOR_USERNAME &&
             username != VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME, CatalogTestRunActivationFailureV1.PROCESS_REFUSED)
         coordinator.requireResources()

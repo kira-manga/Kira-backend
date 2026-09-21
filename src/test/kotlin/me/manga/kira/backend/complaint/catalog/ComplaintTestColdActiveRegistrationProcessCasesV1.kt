@@ -121,12 +121,44 @@ internal object ComplaintTestColdActiveRegistrationProcessV1 {
             }
         } catch (problem: Throwable) {
             // No throwable prose, SQL rows, access tokens, input bodies or mock keys leave private scratch.
-            val safe = "stage=$stage type=${problem.javaClass.name}\n" + problem.stackTrace.take(10).joinToString("\n") {
-                "${it.className}.${it.methodName}:${it.lineNumber}"
-            }
-            runCatching { ColdFixtureFilesV1.write(root.resolve("$stage-failure.txt"), safe.toByteArray()) }
+            runCatching { ColdFixtureFilesV1.write(root.resolve("$stage-failure.txt"), failureLocations(stage, problem)) }
             exitProcess(1)
         }
+    }
+
+    /** Passive bounded failure topology, not Throwable.message/toString or a second cleanup attempt. */
+    private fun failureLocations(stage: String, problem: Throwable): ByteArray {
+        fun symbol(value: String): String = value.take(200).map {
+            if (it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "._$<>:-") it else '?'
+        }.joinToString("")
+        val report = StringBuilder("stage=$stage type-source-tree-v1\n")
+        val seen = java.util.IdentityHashMap<Throwable, Boolean>()
+        val pending = ArrayDeque<Pair<String, Throwable>>()
+        pending.addLast("root" to problem)
+        var count = 0
+        var truncated = false
+        while (pending.isNotEmpty() && count < 16) {
+            val (edge, failure) = pending.removeFirst()
+            if (seen.put(failure, true) != null) continue
+            val frames = failure.stackTrace
+            // For an assertAll leaf this is the actual failing fixture lambda/line, not AssertAll's aggregate frame.
+            val source = frames.firstOrNull { it.className.startsWith("me.manga.kira.backend.") } ?: frames.firstOrNull()
+            val location = source?.let { "${symbol(it.className.substringAfterLast('.'))}.${symbol(it.methodName)}:${it.lineNumber}" } ?: "NO_SOURCE"
+            val line = "node=$count via=$edge type=${symbol(failure.javaClass.name)} at=$location\n"
+            if (report.length + line.length > 4000) { truncated = true; break }
+            report.append(line)
+            val parent = count++
+            fun enqueue(edgeName: String, child: Throwable) {
+                if (count + pending.size < 16) pending.addLast("$parent.$edgeName" to child) else truncated = true
+            }
+            failure.cause?.let { enqueue("cause", it) }
+            val suppressed = failure.suppressed
+            suppressed.take(16).forEachIndexed { index, child -> enqueue("suppressed[$index]", child) }
+            if (suppressed.size > 16) truncated = true
+        }
+        if (truncated || pending.isNotEmpty()) report.append("TRUNCATED_TYPE_SOURCE_TREE\n")
+        // ASCII-only copied symbols plus fixed labels: stays below the existing parent's 4096-byte read cap.
+        return report.toString().toByteArray(Charsets.UTF_8)
     }
 
     private fun author(database: PgLifecycleDatabaseFixture, root: Path, interruptedRelease: Boolean): Nothing {
