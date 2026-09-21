@@ -117,7 +117,7 @@ internal val TEST_TERMINAL_CAPACITY_PROFILES = listOf(
         "seal_set_hash:bytea,event_manifest_count:bigint,event_manifest_root:bytea,installation_manifest_count:bigint," +
         "installation_manifest_root:bytea,installation_chunk_count:integer,retired_count:bigint,deleted_count:bigint," +
         "permanent_denial_bytes:bytea,permanent_denial_hash:bytea,terminal_event_id:character varying(43),terminal_object_key:text," +
-        "terminal_object_version:text,terminal_ciphertext_hash:bytea,terminal_catalog_generation:bigint,terminal_catalog_hash:bytea",
+        "terminal_object_version:text,terminal_ciphertext_hash:bytea,terminal_catalog_generation:bigint,terminal_catalog_hash:bytea,recurrent_erasure_history_hash:bytea",
         listOf(
             TestTerminalCapacityIndex("pk_complaint_test_runs", "data_scope_id"),
             TestTerminalCapacityIndex("uq_complaint_run_nonterminal", "1", "state = ANY (ARRAY['ACTIVE', 'SEALED', 'PURGING'])"),
