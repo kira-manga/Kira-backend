@@ -294,18 +294,19 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
         val p = read.facts
         requireTestTerminalCatalog(row.getString("event_id") == p.id && row.getString("publication_ref") == p.id &&
             row.getObject("data_scope_id", UUID::class.java) == input.scope && row.requiredTestActivationBoolean("test_only") &&
-            row.requiredTestActivationBoolean("finite") && row.getInt("accounting_version") == 1 &&
-            checkNotNull(row.getTimestamp("created_at")).toInstant() == p.createdAt)
+            row.requiredTestActivationBoolean("finite") && row.getInt("accounting_version") == 1)
+        val createdAt = checkNotNull(row.getTimestamp("created_at")).toInstant()
         val reserved = TestOrdinaryDrainRowsV1.vector(row, "reserved_amounts")
         if (p.kind == "INSTALLATION_MANIFEST" || p.kind == "TEST_RUN_PURGE") {
-            requireTestTerminalCatalog(row.getString("state") == "RESERVED" && row.getTimestamp("converted_at") == null &&
+            requireTestTerminalCatalog(createdAt == p.createdAt && row.getString("state") == "RESERVED" && row.getTimestamp("converted_at") == null &&
                 row.getObject("converted_amounts") == null && reserved == if (p.kind == "TEST_RUN_PURGE") TestRunPurgeOperationV1.FUTURE else ComplaintCapacityVector.ZERO)
             return Recovery(hash(row, "physical_hash"), null, 0)
         }
+        // Ordinary P/L INSERTs use independent clocks; a missing L can also be reconstructed after P.
         val recovered = TestOrdinaryDrainRowsV1.Recovery(row,
             TestOrdinaryDrainPersistenceV1.FamilyFacts(original.routing, input.ordinaryEpoch), p.id, p.kind, checkNotNull(read.event))
         requireTestTerminalCatalog(recovered.state == "CONVERTED" && recovered.promise == reserved &&
-            recovered.lastAppliedAt >= p.verifiedAt && recovered.lastAppliedAt <= now)
+            createdAt <= recovered.lastAppliedAt && recovered.lastAppliedAt >= p.verifiedAt && recovered.lastAppliedAt <= now)
         return Recovery(hash(row, "physical_hash"), recovered.lastAppliedAt, recovered.used[ComplaintCapacityCounter.JOURNAL_APPLIED])
     }
 

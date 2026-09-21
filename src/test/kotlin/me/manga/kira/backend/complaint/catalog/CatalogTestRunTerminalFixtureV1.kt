@@ -20,6 +20,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerm
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalRequestV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.OfflineCatalogInventoryChainVerifier
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialDeletionNativeRecordV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalEpochSealResultV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalQuiescenceResultV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalQuiescenceV1
@@ -76,6 +77,7 @@ internal class CatalogTestRunTerminalFixtureV1(
     terminalApproval: ByteArray,
     terminalRaw: List<ByteArray>,
     ordinaryApprovalInput: ByteArray? = null,
+    ordinaryRecord: TestRegisteredInitialDeletionNativeRecordV1? = null,
 ) : AutoCloseable {
     val process = f.registration.process
     val scope = f.scope
@@ -111,8 +113,9 @@ internal class CatalogTestRunTerminalFixtureV1(
         prefixRetentions = evidence.prefix.map { evidence.retainedUntil } + f.p.f.http.primaryRetention)
     val signing = AwsJournalKmsFixture()
     val signatures = mutableListOf<ByteArray>()
-    val ordinaryKeys = AwsJournalKmsFixture()
-    val ordinaryRequests = mutableListOf<JournalPublisherHttpRequest>()
+    val originalOrdinary = ordinaryRecord?.let { CatalogTerminalOriginalOrdinaryHttpV1(process.consumers.journalConfiguration, it, ::released) }
+    val ordinaryKeys = originalOrdinary?.keys ?: AwsJournalKmsFixture()
+    val ordinaryRequests = originalOrdinary?.requests ?: mutableListOf<JournalPublisherHttpRequest>()
     private var ordinaryCreated = 0
     private var ordinaryClosed = 0
     private val originals = mutableListOf<CatalogTestRunTerminalV1>()
@@ -130,8 +133,10 @@ internal class CatalogTestRunTerminalFixtureV1(
         http.beforePut = ::released
         http.afterPutClientClose = ::released
         http.afterReadClientClose = ::released
-        ordinaryKeys.beforePrepare = { error("This genuinely empty ordinary history must never decrypt an invented event.") }
-        ordinaryKeys.onClientClose = ::released
+        if (originalOrdinary == null) {
+            ordinaryKeys.beforePrepare = { error("This genuinely empty ordinary history must never decrypt an invented event.") }
+            ordinaryKeys.onClientClose = ::released
+        }
         signing.respond = { request ->
             released()
             assertTrue(signatures.isEmpty(), "The terminal envelope is signed once; the activation signature is a different original.")
@@ -212,6 +217,7 @@ internal class CatalogTestRunTerminalFixtureV1(
     }
 
     private fun ordinaryClient(): SdkHttpClient {
+        originalOrdinary?.let { return it.client() }
         released(); ordinaryCreated++
         return journalPublisherRawHttpClient(ordinaryRequests, ::released, {}, { ordinaryClosed++; released() }) { request ->
             val journal = process.consumers.journalConfiguration; val location = journal.declaration().journalLocation
@@ -257,6 +263,7 @@ internal class CatalogTestRunTerminalFixtureV1(
             assertEquals(ordinaryCreated, ordinaryClosed)
             assertEquals(signing.createdClients, signing.closedClients)
             assertEquals(ordinaryKeys.createdClients, ordinaryKeys.closedClients)
+            originalOrdinary?.assertClosed()
             assertEquals(http.put.createdClients, http.put.closedClients)
             assertEquals(http.read.createdClients, http.read.closedClients)
             http.assertNoLostAssertions()
