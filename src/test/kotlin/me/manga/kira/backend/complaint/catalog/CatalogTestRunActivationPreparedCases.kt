@@ -130,7 +130,7 @@ internal fun withPreparedActivationRows(
     if (globalScanBeforeActivation) {
         require(activeFirstCut && ordinaryRawHttp?.initialCheckpoint != null)
         val capacity = testActivationCapacityPolicy(BoundComplaintConsumerFixture().capacity, ordinarySealHttp?.manifestPublication == true)
-        withTestGlobalScanPredecessor(tls, capacity, ::withRows)
+        withTestGlobalScanPredecessor(tls, capacity, ordinaryPoolSize = checkNotNull(ordinaryRawHttp).ordinaryPoolSize, action = ::withRows)
     } else withRows(tls, null)
 }
 

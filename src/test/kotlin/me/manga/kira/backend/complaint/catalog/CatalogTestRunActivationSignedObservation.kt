@@ -3,6 +3,7 @@ package me.manga.kira.backend.complaint.catalog
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorPersistence
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcParticipantRole
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
@@ -90,6 +91,8 @@ internal class SignedActivationObservation(
     private val originals = mutableListOf<CatalogTestRunActivationV1>()
     private val contenders = mutableListOf<Thread>()
     private val physicallyClosedWithoutReceipt = mutableSetOf<Any>()
+    // Snapshot the actual original cold pool, not a replacement declaration after signing.
+    private val ordinaryPoolSize = tls.pools.descriptors().single { it.role === PersistenceJdbcParticipantRole.ORDINARY }.hikari.sizing.maximumPoolSize
     private val parent = Files.createTempDirectory(
         Path.of(System.getProperty("user.home")).toRealPath(), "kira-test-signed-prepared-",
         PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")),
@@ -188,7 +191,7 @@ internal class SignedActivationObservation(
         rows.awaitRealLeaseExpiry() // No SQL backdating, replacement lease result or old budget revival.
         // The endpoint participates in full D: transport-loss fixtures keep it unchanged from freeze through cold replay.
         VersionBoundPersistenceConnectedFixture(tls.database, testActivation = true, activeFirstCut = rows.evidence.activeFirstCutInput != null,
-            endpointPort = tls.endpointPort).use { fresh ->
+            endpointPort = tls.endpointPort, ordinaryPoolSize = ordinaryPoolSize).use { fresh ->
             fresh.bind(nanoClock = nanoClock)
             probe(fresh)
             fresh.startCatalogTestRunActivation()

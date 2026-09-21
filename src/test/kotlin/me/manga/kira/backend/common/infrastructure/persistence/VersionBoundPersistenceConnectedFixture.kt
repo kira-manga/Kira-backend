@@ -37,7 +37,12 @@ internal class VersionBoundPersistenceConnectedFixture(
     internal val endpointPort: Int = database.port,
     private val testIntake: ComplaintTestProcessAssemblyV1? = null,
     private val testRegistrationPredecessor: VersionBoundPersistenceConnectedFixture? = null,
+    ordinaryPoolSize: Int = 2,
 ) : AutoCloseable {
+    init {
+        // Only the cold TEST claimant recipe opts in; LIVE/author/operator roots keep their original P=2.
+        require(ordinaryPoolSize == 2 || ordinaryPoolSize == 3 && testActivation && activeFirstCut)
+    }
     // Narrow observation of the intake's ACTUAL normal graph, never supplied replacement pools/credentials.
     private val intakeConfiguration = testIntake?.let { poolTestField<VersionBoundPersistenceConfiguration>(it, "persistence") }
     private val trustParent = intakeConfiguration?.let {
@@ -85,7 +90,7 @@ internal class VersionBoundPersistenceConnectedFixture(
             endpointPort,
             PgLifecycleDatabaseSettings.DATABASE,
             PgLifecycleDatabaseSettings.CANDIDATE,
-            2,
+            ordinaryPoolSize,
             database.versionBoundTls().publicTrust(client == ConnectedTlsClient.WRONG_CA),
             trustParent,
         )
