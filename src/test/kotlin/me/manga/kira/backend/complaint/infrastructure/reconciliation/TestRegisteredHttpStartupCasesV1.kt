@@ -72,7 +72,8 @@ import java.util.UUID
  * No MockMvc, prebound ordinary fixture, fake server/EMF/audit, result or cleanup substitution.
  */
 internal object TestRegisteredHttpStartupCasesV1 {
-    fun identityCreateAndReceipts(tls: VersionBoundPersistenceConnectedFixture) = withPrepared(tls) { first, ordinary, raw ->
+    fun identityCreateAndReceipts(tls: VersionBoundPersistenceConnectedFixture) =
+        withPrepared(tls, globalScanBeforeActivation = true) { first, ordinary, raw ->
         val providers = providerCounts(first, ordinary, raw)
         first.assembly.beginRegisteredHttpStartup(first.registration).use { startup ->
             assertSame(startup, poolTestField<ComplaintTestRegisteredHttpStartupV1>(first.assembly, "httpStartup"))
@@ -132,6 +133,7 @@ internal object TestRegisteredHttpStartupCasesV1 {
                         TestActiveInitialCheckpointFixtureV1(sealer, verified, raw).use { checkpoint ->
                             checkpoint.checkpoint() // Completed is intentionally discarded, never supplied as HTTP authority.
                             checkpoint.assertReleased()
+                            first.p.f.rows.globalPredecessor?.assertPreserved(first.observer)
                             val afterProviders = providerCounts(first, ordinary, raw)
                             val beforeCreate = first.counters()
                             val created = web.post(ComplaintInstallationRoutes.HISTORY, createBody(attempt), bearer, attempt.input.key)
@@ -141,7 +143,8 @@ internal object TestRegisteredHttpStartupCasesV1 {
                             assertTrue(checkNotNull(header(created, "ETag")).isNotEmpty())
                             assertCreateCharge(beforeCreate, first.counters())
                             assertEquals(actor.id, first.observer.queryForObject("SELECT owner_id FROM complaints WHERE id = ?", UUID::class.java, attempt.input.id))
-                            assertEquals(1L, first.observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? " +
+                            // Two activation notices plus this new CREATE; enrollment has its own action.
+                            assertEquals(3L, first.observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? " +
                                 "AND action = 'COMPLAINT_CREATED'", Long::class.java, first.scope))
                             assertEquals(1, first.observer.update("UPDATE complaint_journal_control SET maintenance_closed = true, creation_closed = true WHERE data_scope_id = ?", first.scope))
                             val closed = first.counters()
@@ -236,13 +239,16 @@ internal object TestRegisteredHttpStartupCasesV1 {
         checkNotNull(retained).assertDisposed(nativeStillActive = false)
     }
 
-    private fun withPrepared(tls: VersionBoundPersistenceConnectedFixture,
+    // Only positive CREATE needs the captured global predecessor. HTTP lifecycle-only cases keep the old prerequisite.
+    private fun withPrepared(tls: VersionBoundPersistenceConnectedFixture, globalScanBeforeActivation: Boolean = false,
         action: (TestActiveFirstCutFixtureV1, TestActiveOrdinaryRawFixtureV1, TestActiveInitialCheckpointRawFixtureV1) -> Unit) {
         val ordinary = TestActiveOrdinaryRawFixtureV1()
         val raw = TestActiveInitialCheckpointRawFixtureV1()
         val factories = ordinary.factories.let { TestActiveOrdinaryRawHttpV1(it.sts, it.kms, it.s3, raw.input,
             initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE)) }
-        withTestActiveFirstCut(tls, ordinaryRawHttp = factories) { first -> action(first, ordinary, raw) }
+        withTestActiveFirstCut(tls, ordinaryRawHttp = factories, globalScanBeforeActivation = globalScanBeforeActivation) {
+            first -> action(first, ordinary, raw)
+        }
     }
 
     /** Passive references to the actual product graph; this view owns only its real TCP client. */

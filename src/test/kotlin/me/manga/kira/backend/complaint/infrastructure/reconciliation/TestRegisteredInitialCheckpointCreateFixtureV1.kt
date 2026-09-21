@@ -44,7 +44,8 @@ import java.util.UUID
 internal val REGISTERED_CREATE = PersistencePhasePath.COMPLAINT_OWNER_CREATE
 
 /**
- * Thin nesting of genuine existing producers. The SAME enrollment ordinary owner/template stays
+ * Genuine global G1/full-D/request/capture precedes TEST activation; no global seal/health claim.
+ * Thin nesting of existing producers. The SAME enrollment ordinary owner/template stays
  * alive through capture, seal, both checkpoint passes and CREATE. No SQL-seeded checkpoint,
  * accepted DTO, current/healthy stub or copied registration is supplied to the registered factory.
  */
@@ -57,7 +58,7 @@ internal fun withRegisteredInitialCheckpointCreate(tls: VersionBoundPersistenceC
     val factories = ordinary.factories.let { TestActiveOrdinaryRawHttpV1(it.sts, it.kms, it.s3, raw.input,
         initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
         shortInitialCheckpointFreshness = shortFreshness) }
-    withTestActiveFirstCut(tls, ordinaryRawHttp = factories, terminalHistory = terminalHistory) { first ->
+    withTestActiveFirstCut(tls, ordinaryRawHttp = factories, terminalHistory = terminalHistory, globalScanBeforeActivation = true) { first ->
         first.initial.withExchange { exchange ->
             val candidate = first.initial.candidate()
             val token = exchange.enroll(candidate).session.accessToken
@@ -74,6 +75,7 @@ internal fun withRegisteredInitialCheckpointCreate(tls: VersionBoundPersistenceC
                             checkpoint.checkpoint() // Intentionally discard Completed; it is not a factory or CREATE argument.
                             checkpoint.assertReleased()
                         }
+                        first.p.f.rows.globalPredecessor?.assertPreserved(first.observer)
                         action(fixture)
                     }
                 }

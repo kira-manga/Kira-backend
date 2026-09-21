@@ -19,6 +19,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogFrozenManif
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunPreparedV1
+import me.manga.kira.backend.security.BoundComplaintConsumerFixture
 import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -100,6 +101,7 @@ internal fun withPreparedActivationRows(
     activeSealRecovery: Boolean = false,
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     activeFirstCutSuccessor: Boolean = false,
+    globalScanBeforeActivation: Boolean = false,
     action: (PreparedActivationRows) -> Unit,
 ) {
     val source = ordinaryCleanupReader(tls.database)
@@ -110,14 +112,26 @@ internal fun withPreparedActivationRows(
             "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${PgLifecycleDatabaseSettings.CANDIDATE}; " +
             "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${PgLifecycleDatabaseSettings.CANDIDATE}",
     )
-    withActivationEvidence(tls, prefix, selectedSigner, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { evidence ->
-        SyntheticComplaintCounters(observer, Instant.ofEpochSecond(CatalogReadbackFixture.EVALUATED_AT)).use { counters ->
-            PreparedActivationRows(evidence, observer, counters).use { rows ->
-                rows.seed()
-                action(rows)
+    fun withRows(selected: VersionBoundPersistenceConnectedFixture, predecessor: TestGlobalScanPredecessorV1?) {
+        withActivationEvidence(selected, if (predecessor == null) prefix else ActivationEvidencePrefix.GENESIS,
+            if (predecessor == null) selectedSigner else "catalog-old", createGlobal = createGlobal,
+            ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain,
+            registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete,
+            activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery, ordinaryRawHttp = ordinaryRawHttp,
+            activeFirstCutSuccessor = activeFirstCutSuccessor, globalPredecessor = predecessor) { evidence ->
+            SyntheticComplaintCounters(observer, Instant.ofEpochSecond(CatalogReadbackFixture.EVALUATED_AT)).use { counters ->
+                PreparedActivationRows(evidence, observer, counters, selected, predecessor).use { rows ->
+                    if (predecessor == null) rows.seed() else rows.retainGenuinePredecessor()
+                    action(rows)
+                }
             }
         }
     }
+    if (globalScanBeforeActivation) {
+        require(activeFirstCut && ordinaryRawHttp?.initialCheckpoint != null)
+        val capacity = testActivationCapacityPolicy(BoundComplaintConsumerFixture().capacity, ordinarySealHttp?.manifestPublication == true)
+        withTestGlobalScanPredecessor(tls, capacity, ::withRows)
+    } else withRows(tls, null)
 }
 
 /** Owns only its exact fixture tokens/global preimage; never truncates unknown catalog work or fabricates PREPARED success. */
@@ -125,6 +139,8 @@ internal class PreparedActivationRows(
     val evidence: CatalogTestRunActivationEvidenceFixture,
     val observer: JdbcTemplate,
     val counters: SyntheticComplaintCounters,
+    val tls: VersionBoundPersistenceConnectedFixture,
+    val globalPredecessor: TestGlobalScanPredecessorV1? = null,
 ) : AutoCloseable {
     private val live = ComplaintDataScope.LIVE.id
     private val token = UUID.fromString(evidence.token)
@@ -172,7 +188,16 @@ internal class PreparedActivationRows(
     fun reload(owner: CatalogTestRunActivationV1): CatalogTestRunPreparedV1 =
         owner.reloadPrepared(intent, S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials)
 
+    /** Read-only bridge from the actual global producer; no seeded head/D/flag/P or global health receipt. */
+    fun retainGenuinePredecessor() {
+        val predecessor = checkNotNull(globalPredecessor)
+        predecessor.assertReadyForActivation(observer)
+        predecessor.assertTestInputs(evidence)
+        http.respondWithChain(evidence.prefix, evidence.prefixRetainedUntil)
+    }
+
     fun seed() {
+        check(globalPredecessor == null) // A genuine captured prefix must never pass through legacy fixture writes.
         assertEquals(0L, observer.queryForObject("SELECT count(*) FROM complaint_catalog_mutations", Long::class.java))
         assertEquals(0L, observer.queryForObject("SELECT count(*) FROM complaint_test_runs", Long::class.java))
         evidence.prefix.forEach(::seedPredecessor)
@@ -198,7 +223,7 @@ internal class PreparedActivationRows(
                 if (installation) policy.dailyEnrollmentLimit else null, counter.storedName,
             ))
         }
-        http.respondWithChain(evidence.prefix, evidence.retainedUntil)
+        http.respondWithChain(evidence.prefix, evidence.prefixRetainedUntil)
     }
 
     private fun seedPredecessor(bytes: ByteArray) {

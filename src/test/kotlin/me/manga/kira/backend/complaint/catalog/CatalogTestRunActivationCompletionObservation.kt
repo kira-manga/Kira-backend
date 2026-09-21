@@ -42,8 +42,9 @@ internal fun withCompletionActivationRows(
     activeSealRecovery: Boolean = false,
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     activeFirstCutSuccessor: Boolean = false,
+    globalScanBeforeActivation: Boolean = false,
     action: (CompletionActivationObservation) -> Unit,
-) = withSignedActivationRows(tls, prefix, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { signed ->
+) = withSignedActivationRows(tls, prefix, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor, globalScanBeforeActivation = globalScanBeforeActivation) { signed ->
     val before = signed.rows.counters.snapshot()
     val original = signed.begin()
     val prepared = try {
@@ -70,7 +71,7 @@ internal class CompletionActivationObservation(val signed: SignedActivationObser
     val envelope = signed.read(CatalogTestRunActivationReleaseLeafV1.ENVELOPE)
     val http = CatalogGenesisPublishHttpFixture(
         envelope, rows.evidence.creation.createdAtEpochSecond,
-        prefixBytes = rows.evidence.prefix, prefixRetainUntil = rows.evidence.retainedUntil,
+        prefixBytes = rows.evidence.prefix, prefixRetainUntil = rows.evidence.prefixRetainedUntil,
     )
     val initialPrepared = rows.preparedRow()
     val initialCounters = rows.counters.snapshot()

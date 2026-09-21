@@ -53,6 +53,7 @@ internal fun withInitialAdmission(tls: VersionBoundPersistenceConnectedFixture, 
     activeFirstCutSuccessor: Boolean = false,
     activeSealRecovery: Boolean = false, sealRecoveryHorizon: java.time.Instant? = null,
     terminalHistory: TestOrdinaryDrainFixtureInputsV1? = null,
+    globalScanBeforeActivation: Boolean = false,
     action: (InitialAdmissionFixture) -> Unit) =
     // The longest current-row drift history pays four enrollment attempts, including refusals, before any window expires.
     TestOrdinarySealHttpFixtureV1(horizon = sealRecoveryHorizon ?: java.time.Instant.parse("2038-01-01T00:00:00Z"),
@@ -64,9 +65,11 @@ internal fun withInitialAdmission(tls: VersionBoundPersistenceConnectedFixture, 
         require(terminalHistory == null || activeFirstCut)
         ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, ordinarySealHttp = native,
             // Only closed setup predecessor leases: not the tested release or natural-expiry qualification.
-            expireClosedSetupPredecessors = true, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery,
+            // The genuine global-prefix path also waits for the two TEST setup leases on real DB time.
+            expireClosedSetupPredecessors = !globalScanBeforeActivation, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery,
             ordinaryDrain = terminalHistory ?: if (activeFirstCut) TestOrdinaryDrainFixtureInputsV1() else null,
-            ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { p, runtime, registration, probe ->
+            ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor,
+            globalScanBeforeActivation = globalScanBeforeActivation) { p, runtime, registration, probe ->
             val fixture = InitialAdmissionFixture(p, runtime, registration, probe, native)
             val executor = runtime.pools.catalogCoordinator.testInitialAdmission
             val field = executor.javaClass.getDeclaredField("jdbc").apply { check(trySetAccessible()) }

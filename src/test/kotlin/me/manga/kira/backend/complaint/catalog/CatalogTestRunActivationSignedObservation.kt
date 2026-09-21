@@ -66,16 +66,17 @@ internal fun withSignedActivationRows(
     activeSealRecovery: Boolean = false,
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     activeFirstCutSuccessor: Boolean = false,
+    globalScanBeforeActivation: Boolean = false,
     action: (SignedActivationObservation) -> Unit,
-) = withPreparedActivationRows(tls, prefix, selectedSigner, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { rows ->
-    SignedActivationObservation(tls, rows).use { observed ->
-        observed.probe(tls) // The real template is installed before any owner/input exists.
-        tls.startCatalogTestRunActivation()
+) = withPreparedActivationRows(tls, prefix, selectedSigner, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor, globalScanBeforeActivation = globalScanBeforeActivation) { rows ->
+    SignedActivationObservation(rows.tls, rows).use { observed ->
+        observed.probe(rows.tls) // The real template is installed before any owner/input exists.
+        rows.tls.startCatalogTestRunActivation()
         action(observed)
     }
 }
 
-/** Only test observations and strictly owned temporary paths. Historical predecessor inputs remain synthetic. */
+/** Only test observations and strictly owned temporary paths. Legacy prefixes are synthetic; the opted-in G1 prefix is genuinely produced. */
 internal class SignedActivationObservation(
     val tls: VersionBoundPersistenceConnectedFixture,
     val rows: PreparedActivationRows,

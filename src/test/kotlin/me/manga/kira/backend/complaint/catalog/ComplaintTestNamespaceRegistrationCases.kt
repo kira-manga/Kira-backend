@@ -399,8 +399,9 @@ internal object ComplaintTestNamespaceRegistrationCases {
         activeSealRecovery: Boolean = false,
         ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
         activeFirstCutSuccessor: Boolean = false,
+        globalScanBeforeActivation: Boolean = false,
         action: (ProjectionActivationObservation, VersionBoundPersistenceConnectedFixture, ComplaintTestNamespaceRegistrationV1, CatalogSignerRotationProbeJdbc) -> Unit,
-    ) = withCompletionActivationRows(tls, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { f ->
+    ) = withCompletionActivationRows(tls, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor, globalScanBeforeActivation = globalScanBeforeActivation) { f ->
         fun expireClosedSetupPredecessor(previous: VersionBoundPersistenceConnectedFixture) {
             if (!expireClosedSetupPredecessors) return
             requireConnectionFree()
@@ -423,7 +424,7 @@ internal object ComplaintTestNamespaceRegistrationCases {
         // Same completion -> PROJECT composition as withPendingProjectionRows; shared recovery fixtures stay unchanged.
         f.rows.retainProjectionRows()
         f.http.replicateOnPut = true
-        expireClosedSetupPredecessor(tls)
+        expireClosedSetupPredecessor(f.signed.tls)
         f.signed.withFreshOwner { publishing -> // Still checks real DB-time expiry and acquires a genuine successor lease.
             val completed = f.begin(publishing)
             f.assertPending(f.deliver(completed))
@@ -448,6 +449,7 @@ internal object ComplaintTestNamespaceRegistrationCases {
                             p.advisory(p.holder(runtime), "complaint-journal-epoch", "ShareLock"),
                             "The run-only barrier releases before its successor may acquire E.")
                     }
+                    f.rows.globalPredecessor?.assertPreserved(f.rows.observer)
                     action(p, runtime, registration, probe)
                     probe.assertNoLostAssertions()
                 }

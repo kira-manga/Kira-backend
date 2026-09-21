@@ -70,6 +70,15 @@ import java.util.UUID
 
 internal enum class ActivationEvidencePrefix { GENESIS, ROTATED, INVENTORY_ROTATED, PENDING_OVERLAP }
 
+/** Same synthetic fixture P selected before either LIVE first-D or TEST intake; never a counter rewrite after capture. */
+internal fun testActivationCapacityPolicy(original: ComplaintCapacityPolicyV1, manifestPublication: Boolean): ComplaintCapacityPolicyV1 =
+    ComplaintCapacityPolicyV1.of(
+        original.hardLimit.with(ComplaintCapacityCounter.STORAGE_BYTES, 2_000_000_000),
+        original.creationLimit.with(ComplaintCapacityCounter.STORAGE_BYTES, 1_800_000_000),
+        // The opt-in two-chunk history uses the real lower-core enrollment producer501 times.
+        if (manifestPublication) 1_000 else original.dailyEnrollmentLimit,
+    )
+
 /** Existing cold pools/consumers/lanes only. No new provider, JDBC, process or concurrency harness. */
 internal fun withActivationEvidence(
     prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
@@ -112,9 +121,11 @@ internal fun withActivationEvidence(
     activeSealRecovery: Boolean = false,
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     activeFirstCutSuccessor: Boolean = false,
+    globalPredecessor: TestGlobalScanPredecessorV1? = null,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
 ) {
-    val rotations = OfflineCatalogRotationFixture.chain()
+    require(globalPredecessor == null || (prefix == ActivationEvidencePrefix.GENESIS && selectedSigner == "catalog-old"))
+    val rotations = globalPredecessor?.rotations ?: OfflineCatalogRotationFixture.chain()
     val registry = rotations.genesis.manifest.initialWriterRegistry
     val original = fullTestJournal().declaration()
     val declaration = original.copy(
@@ -139,13 +150,14 @@ internal fun withActivationEvidence(
     } else TestOwnerDeleteJournalConfigurationV1.of(declaration, ownerDeleteAll = ownerDeleteAll)
     JournalPublicationLanesV1(journal).use { lanes ->
         CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal, ordinarySealHttp,
-            if (ordinarySealHttp?.protectedIntake == true) tls else null, ordinaryDrain, activeFirstCut, activeSealRecovery, ordinaryRawHttp, activeFirstCutSuccessor).use(action)
+            if (ordinarySealHttp?.protectedIntake == true) tls else null, ordinaryDrain, activeFirstCut, activeSealRecovery, ordinaryRawHttp, activeFirstCutSuccessor,
+            globalPredecessor).use(action)
     }
 }
 
 /**
- * Manifests and complete chains below are independently assembled from existing raw fixture inputs,
- * not from the new assembler/parser/checked result. Signatures reuse genuine in-memory PSS keys and
+ * TEST manifests and legacy prefixes are independently assembled from raw fixture inputs; the
+ * opted-in G1 prefix instead retains exact actual AUTHOR/first-D/refresh bytes. Signatures reuse in-memory PSS keys and
  * the existing independent LP32 frame. Metadata remains synthetic, never an AWS/registration proof.
  */
 internal class CatalogTestRunActivationEvidenceFixture(
@@ -163,6 +175,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
     activeSealRecovery: Boolean = false,
     private val ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     activeFirstCutSuccessor: Boolean = false,
+    private val globalPredecessor: TestGlobalScanPredecessorV1? = null,
 ) : AutoCloseable {
     init {
         // The optional denial input is selected BEFORE full D and all actual protected acquisitions.
@@ -181,12 +194,12 @@ internal class CatalogTestRunActivationEvidenceFixture(
     val activeFirstCutInput = if (activeFirstCut) TestActiveFirstCutInputFixtureV1.input() else null
     val activeFirstCutSuccessorInput = if (activeFirstCutSuccessor) TestActiveFirstCutSuccessorInputFixtureV1.input() else null
     val activeSealRecoveryInput = if (activeSealRecovery) ordinaryRawHttp?.activeSealRecovery ?: TestActiveSealRecoveryInputFixtureV1.input() else null
-    val initial = OfflineTrustBundleFixture.bytes(rotations.initial)
-    val current = OfflineTrustBundleFixture.bytes(rotations.current)
-    val policy = OfflineCatalogRotationFixture.policy()
+    val initial = globalPredecessor?.initial ?: OfflineTrustBundleFixture.bytes(rotations.initial)
+    val current = globalPredecessor?.current ?: OfflineTrustBundleFixture.bytes(rotations.current)
+    val policy = globalPredecessor?.policy ?: OfflineCatalogRotationFixture.policy()
     private val inventoryChain = OfflineCatalogInventoryFixture.chain(base = rotations)
     val prefix: List<ByteArray> = when (prefixKind) {
-        ActivationEvidencePrefix.GENESIS -> rotations.bytes().take(1)
+        ActivationEvidencePrefix.GENESIS -> listOf(globalPredecessor?.envelope ?: rotations.bytes().first())
         ActivationEvidencePrefix.ROTATED -> rotations.bytes()
         ActivationEvidencePrefix.PENDING_OVERLAP -> rotations.bytes().take(2)
         ActivationEvidencePrefix.INVENTORY_ROTATED -> inventoryRotationPrefix()
@@ -204,13 +217,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         // N=501/R=10,000 needs 839,125,696 storage units across PREPARE/projection/reserve.
         // Select this synthetic P BEFORE the consumers and full D exist, never by changing frozen limits.
         val capacity = if (pools.catalogCoordinator.catalogTestRunActivation) {
-            ComplaintCapacityPolicyV1.of(
-                original.hardLimit.with(ComplaintCapacityCounter.STORAGE_BYTES, 2_000_000_000),
-                original.creationLimit.with(ComplaintCapacityCounter.STORAGE_BYTES, 1_800_000_000),
-                // The opt-in two-chunk history uses the real lower-core enrollment producer501
-                // times. Select P before full D; do not fake its paid rows or mutate frozen limits.
-                if (ordinarySealHttp?.manifestPublication == true) 1_000 else original.dailyEnrollmentLimit,
-            )
+            testActivationCapacityPolicy(original, ordinarySealHttp?.manifestPublication == true)
         } else original
         fixture.configuration(settings = boundConsumerTestSettings(
             enrollmentGlobal = ordinarySealHttp?.protectedEnrollmentGlobalPerHour ?: 2, createGlobal = createGlobal), capacity = capacity)
@@ -260,6 +267,9 @@ internal class CatalogTestRunActivationEvidenceFixture(
         readbackPolicy.requiredRetainUntilEpochSecond,
         Instant.ofEpochSecond(creation.createdAtEpochSecond).atOffset(ZoneOffset.UTC).plusYears(10).toEpochSecond(),
     )
+
+    // The genuine prefix reuses the exact already-read G1 retention; no synthetic retention extension.
+    val prefixRetainedUntil = globalPredecessor?.retainedUntil ?: retainedUntil
 
     fun process(desiredGeneration: Long = 7): VersionBoundTestNamespaceProcessV1 {
         if (intakeProcess != null) return processOn(pools, desiredGeneration)

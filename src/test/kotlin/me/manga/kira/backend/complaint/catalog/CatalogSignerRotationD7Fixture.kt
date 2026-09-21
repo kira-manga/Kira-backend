@@ -16,6 +16,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFac
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityEncoding
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapRegistryV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogChainReaderPolicy
@@ -26,6 +27,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesired
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredProcessAssemblyV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDInputsV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDTransitionV1
+import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCapacityInputV1
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCatalogChainLimitsV1
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCatalogSignerRotationInputV1
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCatalogSigningKeyInputV1
@@ -180,6 +182,16 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
 
     fun prepare(profile: String = "D7", totalAttemptMillis: Long = 30_000, beforeLease: (VersionBoundComplaintProcessConfiguration) -> Unit = {}) {
         prepareFirstD(profile, totalAttemptMillis)
+        prepareRuntime(beforeLease)
+    }
+
+    /** Genuine D3 selected before AUTHOR/first-D; no signer-author purpose or TEST process is borrowed. */
+    fun prepareEpochRotation(capacity: ComplaintCapacityPolicyV1) {
+        prepareFirstD("D3", 30_000, epochInventory = true, selectedCapacity = capacity)
+        prepareRuntime {}
+    }
+
+    private fun prepareRuntime(beforeLease: (VersionBoundComplaintProcessConfiguration) -> Unit) {
         val pin = Sha256.hex(envelope)
         startRuntime()
         genesisWire = CatalogSignerRotationReadbackHttpFixture(this)
@@ -229,9 +241,13 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
         return assembly
     }
 
-    private fun prepareFirstD(profile: String, totalAttemptMillis: Long, epochInventory: Boolean = false) {
+    private fun prepareFirstD(profile: String, totalAttemptMillis: Long, epochInventory: Boolean = false,
+        selectedCapacity: ComplaintCapacityPolicyV1? = null) {
         desired.prepare()
-        val base = desired.document
+        // Fixture P is provisioned once before the actual AUTHOR/first-D. Later TEST setup may not rewrite it.
+        val base = selectedCapacity?.let { selected -> desired.document.copy(capacity = DesiredCapacityInputV1(
+            selected.hardLimit.toLongArray().toList(), selected.creationLimit.toLongArray().toList(), selected.dailyEnrollmentLimit,
+        )) } ?: desired.document
         val capacity = ComplaintDesiredDeploymentJsonV1.parse(CatalogSignerRotationD7Inputs.bytes(base)).capacity
         val source = CatalogGenesisFreezeFixture(tls, CatalogSignerRotationD7Inputs.registry(), capacity.digestBytes())
         originalFreeze = source
@@ -249,6 +265,12 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
                     counter.storedName,
                 ),
             )
+        }
+        if (selectedCapacity != null) {
+            assertEquals(1, observer.update(
+                "UPDATE complaint_capacity_counters SET admission_utc_date = NULL, admission_count = 0, admission_daily_limit = ? " +
+                    "WHERE name = 'installation_ids'", capacity.dailyEnrollmentLimit,
+            ))
         }
         val before = desired.control()
         val author = source.invocation()
@@ -295,7 +317,7 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
     }
 
     private fun startRuntime() {
-        // Same raw acquired D7/D2 graph and D hash; controlled integration is selected before binding, never patched onto retained pools.
+        // Same raw acquired D7/D2/D3 graph and D hash; controlled integration is selected before binding, never patched onto retained pools.
         val assembly = ComplaintDesiredProcessAssemblyV1.withControlledIntegrationFixture(clock)
         runtime = assembly
         assembly.assemble(
