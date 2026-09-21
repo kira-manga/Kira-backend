@@ -29,6 +29,7 @@ import org.springframework.jdbc.core.ResultSetExtractor
 import java.io.InterruptedIOException
 import java.security.MessageDigest
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.HexFormat
 import java.util.UUID
 import java.util.concurrent.CancellationException
@@ -110,6 +111,8 @@ internal class TestRunOrdinarySealV1 private constructor(
                 TestActiveHistorySealReadbackV1.begin(this, row, history).also { historyReadback = it }.read()
             }
             bindCanonical()
+            val createdAt = (checkNotNull(capture).row ?: checkNotNull(canonicalCandidate)).binding.createdAt
+            awaitActualCreationSecond(createdAt)
             if (checkNotNull(capture).row == null) {
                 step = TestOrdinarySealStepV1.PREPARE
                 prepared = coordinator.testOrdinarySeal.execute(this)
@@ -122,7 +125,7 @@ internal class TestRunOrdinarySealV1 private constructor(
                 try {
                     val canonical = preparedRow()
                     val retain = maxOf(canonical.binding.retentionFloor, acquisition.newRetention(codecAttempt, canonical.binding.createdAt))
-                    val at = maxOf(canonical.binding.createdAt, OrdinaryJournalRetentionV1.ceilingSecond(acquisition.sampleUtc()))
+                    val at = maxOf(canonical.binding.createdAt, acquisition.sampleUtc().truncatedTo(ChronoUnit.SECONDS))
                     val wire = envelope.wireBytes()
                     frozenCandidate = try { ownRow(TestTerminalDurableRowV1.frozen(canonical, wire, retain, at)) } finally { wire.fill(0) }
                 } finally { envelope.close() }
@@ -208,6 +211,15 @@ internal class TestRunOrdinarySealV1 private constructor(
                         retained.binding.objectKey, retained.canonicalSha256, codecAttempt)
                 } finally { actual.fill(0); computed.fill(0) }
             } finally { expected.close() }
+        }
+    }
+
+    /** Real wall-clock progress only, with no SQL, provider or lane held and no future sample substitution. */
+    private fun awaitActualCreationSecond(createdAt: Instant) {
+        while (true) {
+            requireConnectionFree(); requireRunning(); requireOrdinarySeal(custody == null && phase == null && !phaseEntered)
+            if (acquisition.sampleUtc().truncatedTo(ChronoUnit.SECONDS) >= createdAt) return
+            Thread.sleep(minOf(25L, codecAttempt.remainingMillis(25).toLong(), budget.remainingMillis(25)))
         }
     }
 
