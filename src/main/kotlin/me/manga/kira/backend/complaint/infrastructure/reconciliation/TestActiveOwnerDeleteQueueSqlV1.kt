@@ -23,7 +23,31 @@ internal object TestActiveOwnerDeleteQueueSqlV1 {
     // Privacy recovery is independent of creation closure. Maintenance, scan, full D and current-owner
     // checks still apply; unchanged fingerprints also refuse control drift during this exact attempt.
     val current = """
-        $expected
+        $expected,
+        initial_sources AS MATERIALIZED (
+            SELECT i.data_scope_id, i.operation_token, i.rotation_sequence, 'V26_INITIAL'::text AS source,
+                sha256(convert_to((to_jsonb(i) || jsonb_build_object('row_xmin', i.xmin::text))::text, 'UTF8')) AS fingerprint
+            FROM complaint_test_active_seal_intents i CROSS JOIN e CROSS JOIN d
+            WHERE i.data_scope_id = e.scope OR i.object_key LIKE
+                ('complaints/journal/v1/' || d.event_writer::text || '/test/' || e.scope::text || '/seal-terminal/%')
+            ORDER BY i.rotation_sequence, i.operation_token LIMIT 15
+        ), recurrent_sources AS MATERIALIZED (
+            SELECT i.data_scope_id, i.operation_token, i.rotation_sequence, 'V31_RECURRENT'::text AS source,
+                sha256(convert_to((to_jsonb(i) || jsonb_build_object('row_xmin', i.xmin::text))::text, 'UTF8')) AS fingerprint
+            FROM complaint_test_active_recurrent_seal_intents i CROSS JOIN e CROSS JOIN d
+            WHERE i.data_scope_id = e.scope OR i.object_key LIKE
+                ('complaints/journal/v1/' || d.event_writer::text || '/test/' || e.scope::text || '/seal-terminal/%')
+            ORDER BY i.rotation_sequence, i.operation_token LIMIT 15
+        ), sources AS MATERIALIZED (
+            SELECT * FROM initial_sources UNION ALL SELECT * FROM recurrent_sources
+            ORDER BY source, rotation_sequence, operation_token LIMIT 15
+        ), archived AS MATERIALIZED (
+            SELECT h.data_scope_id, h.operation_token, h.ordinal, h.source,
+                sha256(convert_to((to_jsonb(h) || jsonb_build_object('row_xmin', h.xmin::text))::text, 'UTF8')) AS fingerprint
+            FROM complaint_test_active_checkpoint_history h CROSS JOIN e
+            WHERE h.data_scope_id = e.scope OR h.operation_token IN (SELECT operation_token FROM sources)
+            ORDER BY h.ordinal, h.operation_token LIMIT 15
+        )
         SELECT (e.scope = d.scope AND r.test_only AND r.state = 'ACTIVE' AND (${ComplaintInstallationTestRunRows.activeShape})
             AND r.accounting_version = 1 AND r.configuration_hash = e.configuration_hash AND r.installation_limit = e.installation_limit
             AND r.installation_limit > 0 AND r.enrolled_count BETWEEN 0 AND r.installation_limit
@@ -36,10 +60,25 @@ internal object TestActiveOwnerDeleteQueueSqlV1 {
             AND c.catalog_writer_generation = d.catalog_writer AND c.trust_bundle_hash = d.trust_hash
             AND c.accepted_catalog_generation = d.generation AND c.accepted_catalog_hash = d.activation_hash
             AND NOT c.maintenance_closed AND c.pending_projection_token IS NULL AND NOT c.scan_requested
-            AND ((c.publication_epoch = 1 AND c.rotation_sequence = 0 AND c.rotation_state IS NULL AND c.rotation_id IS NULL AND c.seal_state IS NULL)
+            AND (((c.publication_epoch = 1 AND c.rotation_sequence = 0 AND c.rotation_state IS NULL AND c.rotation_id IS NULL AND c.seal_state IS NULL)
                 OR (c.publication_epoch = 2 AND c.rotation_sequence = 1 AND c.rotation_state = 'CAPTURED'
                     AND c.rotation_epoch_before = 1 AND c.rotation_epoch_after = 2 AND c.seal_state = 'SEAL_VERIFIED'
                     AND c.seal_epoch = 1 AND c.seal_writer_generation = d.event_writer))
+                AND NOT EXISTS (SELECT 1 FROM recurrent_sources) AND NOT EXISTS (SELECT 1 FROM archived)
+                OR (c.rotation_sequence BETWEEN 2 AND 14 AND c.publication_epoch >= 3 AND c.rotation_state = 'CAPTURED'
+                    AND c.rotation_epoch_before = c.seal_epoch AND c.rotation_epoch_after = c.publication_epoch
+                    AND c.seal_state = 'SEAL_VERIFIED' AND c.seal_operation_token = c.rotation_id
+                    AND c.seal_writer_generation = d.event_writer AND c.publication_epoch = c.seal_epoch + 1
+                    AND c.checkpoint_result = 'SUCCESS' AND c.checkpoint_fencing_token <= c.lease_token
+                    AND c.checkpoint_cutoff_epoch = c.seal_epoch AND c.checkpoint_started_at >= c.seal_verified_at
+                    AND c.checkpoint_completed_at >= c.checkpoint_started_at AND c.checkpoint_completed_at <= c.updated_at
+                    AND c.checkpoint_completed_at <= s.sampled_at
+                    AND (SELECT count(*) FROM initial_sources) = 1
+                    AND (SELECT count(*) FROM recurrent_sources) = c.rotation_sequence - 1
+                    AND (SELECT count(*) FROM sources) = c.rotation_sequence
+                    AND (SELECT count(*) FROM archived) = c.rotation_sequence
+                    AND NOT EXISTS (SELECT 1 FROM sources i WHERE i.data_scope_id <> e.scope)
+                    AND NOT EXISTS (SELECT 1 FROM archived h WHERE h.data_scope_id <> e.scope)))
             AND c.retention_lease_owner IS NULL AND c.retention_lease_expires_at IS NULL
             AND c.lease_token BETWEEN 0 AND 9223372036854775807
             AND ((c.lease_owner IS NULL AND c.lease_expires_at IS NULL)
@@ -58,15 +97,28 @@ internal object TestActiveOwnerDeleteQueueSqlV1 {
             AND NOT EXISTS (SELECT 1 FROM complaint_test_terminal_intents t WHERE t.data_scope_id = e.scope)
             AND NOT EXISTS (SELECT 1 FROM complaint_journal_scan_runs t WHERE t.data_scope_id = e.scope)
             AND NOT EXISTS (SELECT 1 FROM complaint_journal_scan_entries t WHERE t.data_scope_id = e.scope)
-        ) IS TRUE AS valid, c.publication_epoch, c.lease_owner, c.lease_token, c.lease_expires_at, s.sampled_at,
+        ) IS TRUE AS valid, c.publication_epoch, c.rotation_sequence, c.lease_owner, c.lease_token, c.lease_expires_at, s.sampled_at,
             sha256(convert_to((to_jsonb(g) || jsonb_build_object('row_xmin', g.xmin::text))::text, 'UTF8')) AS global_fingerprint,
             sha256(convert_to((to_jsonb(r) || jsonb_build_object('row_xmin', r.xmin::text))::text, 'UTF8')) AS run_fingerprint,
-            sha256(convert_to((to_jsonb(c) - ARRAY['lease_owner','lease_token','lease_expires_at','updated_at'])::text, 'UTF8')) AS control_fingerprint
+            sha256(convert_to((to_jsonb(c) - ARRAY['lease_owner','lease_token','lease_expires_at','updated_at'])::text, 'UTF8')) AS control_fingerprint,
+            CASE WHEN c.rotation_sequence BETWEEN 2 AND 14 THEN sha256(convert_to(jsonb_build_object(
+                'sources', (SELECT jsonb_agg(to_jsonb(i) ORDER BY i.source, i.rotation_sequence, i.operation_token) FROM sources i),
+                'archives', (SELECT jsonb_agg(to_jsonb(h) ORDER BY h.ordinal, h.operation_token) FROM archived h)
+            )::text, 'UTF8')) END AS history_fingerprint
         FROM e CROSS JOIN d CROSS JOIN b CROSS JOIN j CROSS JOIN s
         LEFT JOIN complaint_test_runs r ON r.data_scope_id = e.scope
         LEFT JOIN complaint_journal_control c ON c.data_scope_id = d.scope
         LEFT JOIN complaint_journal_control g ON g.data_scope_id = $GLOBAL LIMIT 2
     """.trimIndent()
+
+    // Passive bounded source projections only. B already owns its normal control locks and lease;
+    // importing the producer's later FOR UPDATE locks or C's creation/freshness gate is forbidden.
+    val recurrentCurrent = TestActiveRecurrentSqlV1.read
+    val recurrentInitialHeaders = TestActiveRecurrentSqlV1.initialHeaders.removeSuffix(" FOR UPDATE")
+    val recurrentHeaders = TestActiveRecurrentSqlV1.recurrentHeaders.removeSuffix(" FOR UPDATE")
+    val recurrentInitialPayload = TestActiveRecurrentSqlV1.initialPayload
+    val recurrentPayload = TestActiveRecurrentSqlV1.recurrentPayload
+    val recurrentHistory = TestActiveRecurrentSqlV1.history.removeSuffix(" FOR UPDATE")
 
     val observation = """
         $expected
