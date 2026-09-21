@@ -56,6 +56,16 @@ class TestRegisteredInitialCheckpointCreateIT {
         withRegisteredInitialCheckpointCreate(it, completeCheckpoint = false, action = TestRegisteredInitialCheckpointCreateHttpCasesV1::missingCheckpointAndBootstrapOnly)
     }
 
+    @Test fun explicitLoopbackStartupServesRegisteredIdentityCountedCreateAndReceiptsWithOriginalJpa() = withFixture {
+        TestRegisteredHttpStartupCasesV1.identityCreateAndReceipts(it)
+    }
+    @Test fun explicitLoopbackStartupWaitsForHeldOriginalIngressBeforeClosingJpaAndLeavesBorrowedPoolsOpen() = withFixture {
+        TestRegisteredHttpStartupCasesV1.heldRequestDrainsBeforeJpaClose(it)
+    }
+    @Test fun originalAssemblyActuallyClosesItsRetainedLoopbackServletAndJpaBeforeNativeTeardown() = withFixture {
+        TestRegisteredHttpStartupCasesV1.assemblyClosesRetainedStartup(it)
+    }
+
     private fun withFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =
         VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, activeFirstCut = true).use { it.bind(); action(it) }
 }

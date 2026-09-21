@@ -11,6 +11,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBu
 import me.manga.kira.backend.common.infrastructure.persistence.SystemPersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConfiguration
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.config.ComplaintTestRegisteredHttpStartupV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundTestActivationConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.preferCatalogFreezeCleanup
 import me.manga.kira.backend.complaint.infrastructure.catalog.withCatalogFreezeCleanup
@@ -89,12 +90,27 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
     private var activeQueue: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1? = null
     private var assembled: VersionBoundTestNamespaceProcessV1? = null
     private var closeFailure: Throwable? = null
+    private var httpStartup: ComplaintTestRegisteredHttpStartupV1? = null
 
     val target: VersionBoundTestNamespaceProcessV1
         get() {
             requireTestDeployment(ready && !stopping, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             return checkNotNull(assembled).also { it.requireUnchangedConfiguration() }
         }
+
+    /** One explicit original-JPA/loopback startup, retained before any of its initialization. No default mount. */
+    fun beginRegisteredHttpStartup(registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
+        requireConnectionFree()
+        requireTestDeployment(caller === Thread.currentThread() && httpStartup == null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+        registration.requireActiveIdentityTarget(this)
+        requireTestDeployment(registration.process === target && target.initialCheckpointCreate != null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+        return ComplaintTestRegisteredHttpStartupV1.retained(this, registration).also { httpStartup = it }
+    }
+
+    /** Identity/caller comparison only, also valid during failed child cleanup; never launch/read authority. */
+    internal fun requireRegisteredHttpStartup(original: ComplaintTestRegisteredHttpStartupV1) {
+        requireTestDeployment(caller === Thread.currentThread() && httpStartup === original, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+    }
 
     /** Actual lifecycle owner, never another pool configuration or a way to change UNKNOWN launch. */
     internal val lifecycleOwner: PersistenceJdbcLifecycleOwner
@@ -343,6 +359,16 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             closeFailure?.let { throw it }
             return
         }
+        // Do not tear borrowed pools/trust out from under unknown JPA/servlet users. This child
+        // stops original ingress and must positively release it BEFORE any original native close.
+        try {
+            httpStartup?.let { retained -> retained.closeWithin(budget, timingFailure); retained.requireCleanupProven() }
+        } catch (problem: Throwable) {
+            stopping = true
+            val bounded = boundedTestDeploymentFailure(problem, ComplaintTestDeploymentFailureV1.CLEANUP_UNPROVEN)
+            closeFailure = bounded
+            throw bounded
+        }
         stopping = true // Permanently invalidate any retained target before stopping even one native owner.
         var failure: Throwable? = timingFailure?.let { preferCatalogFreezeCleanup(null, it) }
         fun attempt(work: () -> Unit) {
@@ -434,7 +460,7 @@ internal fun requireTestDeployment(condition: Boolean, code: ComplaintTestDeploy
     if (!condition) throw ComplaintTestDeploymentExceptionV1(code)
 }
 
-private fun boundedTestDeploymentFailure(problem: Throwable, otherwise: ComplaintTestDeploymentFailureV1): Throwable = when (problem) {
+internal fun boundedTestDeploymentFailure(problem: Throwable, otherwise: ComplaintTestDeploymentFailureV1): Throwable = when (problem) {
     is Error -> problem
     is CancellationException -> CancellationException("TEST deployment intake cancelled.")
     is InterruptedException -> {

@@ -186,6 +186,18 @@ internal class ComplaintIngressAdmission(
         }
     }
 
+    /** Stop-only shutdown of this original owner. It never asserts that an admitted request released. */
+    internal fun stopRegisteredStartupAdmission() {
+        requireConnectionFree()
+        synchronized(lock) { closed = true }
+    }
+
+    /** Stable after stop: new reservations cannot enter, but every original finally must still return. */
+    internal fun registeredStartupAdmissionReleased(): Boolean {
+        requireConnectionFree()
+        return synchronized(lock) { closed && reservations == 0 && contexts.isEmpty() }
+    }
+
     /** Validation only for the concrete HTTP bridge; never starts, renews or charges an admission. */
     internal fun requireLiveContext(context: ComplaintIngressContext) {
         requireConnectionFree()
