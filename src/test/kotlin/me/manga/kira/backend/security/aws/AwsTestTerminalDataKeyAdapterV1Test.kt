@@ -50,18 +50,28 @@ class AwsTestTerminalDataKeyAdapterV1Test {
     @Test
     fun ordinaryTestKmsGeneratesAndUnwrapsOnlyTheJournalSelectedDeletionFamilies() {
         val old = TestTerminalTestFixture().journal
-        for (allEnabled in listOf(false, true)) {
-            val journal = TestOwnerDeleteJournalConfigurationV1.of(old.declaration(), ownerDeleteAll = allEnabled)
+        val ownerKinds = listOf("OWNER_DELETE", "OWNER_DELETE_ALL")
+        val adminKinds = ownerKinds + "ADMIN_DELETE"
+        val batchKinds = adminKinds + "ADMIN_BATCH_DELETE"
+        // Literal expected families, not values inferred from the profile predicate under test.
+        val profiles = listOf(
+            old to listOf("OWNER_DELETE"),
+            TestOwnerDeleteJournalConfigurationV1.of(old.declaration(), ownerDeleteAll = true) to ownerKinds,
+            TestOwnerDeleteJournalConfigurationV1.lowerAdminErasure(old.declaration()) to adminKinds,
+            TestOwnerDeleteJournalConfigurationV1.registeredAdminErasure(old.declaration()) to adminKinds,
+            TestOwnerDeleteJournalConfigurationV1.lowerAdminBatchErasure(old.declaration()) to batchKinds,
+            TestOwnerDeleteJournalConfigurationV1.registeredAdminBatchErasure(old.declaration()) to batchKinds,
+        )
+        for ((journal, kinds) in profiles) {
             val f = TestTerminalCodecTestFixtureV1(TestTerminalTestFixture(journal))
             val http = httpFixture(f)
-            val kinds = if (allEnabled) listOf("OWNER_DELETE", "OWNER_DELETE_ALL") else listOf("OWNER_DELETE")
             AwsTestOwnerDeleteDataKeyAdapterV1.withHttpFixture(journal, CREDENTIALS, http::httpClient) { f.nanos }.use { owner ->
                 assertSame(journal, owner.journal)
                 for (kind in kinds) {
                     val context = ordinaryContext(f, kind)
                     if (kind == "OWNER_DELETE") {
                         assertEquals(ordinaryContext(TestTerminalCodecTestFixtureV1(TestTerminalTestFixture(old))), context,
-                            "Selecting the two-family J must not relabel the existing DELETE context.")
+                            "Selecting additional explicit families must not relabel the existing DELETE context.")
                     }
                     val requested = ordinaryRequest(f, context)
                     val offset = http.requests.size
@@ -89,6 +99,15 @@ class AwsTestTerminalDataKeyAdapterV1Test {
                     assertEquals(offset + 2, http.requests.size)
                     assertRequest(http.requests[offset], f, GENERATE_TARGET, context)
                     assertRequest(http.requests[offset + 1], f, DECRYPT_TARGET, context)
+                }
+                for (kind in (batchKinds + "ADMIN_BATCH_DELETE_EXTRA").filterNot { it in kinds }) {
+                    val requested = ordinaryRequest(f, ordinaryContext(f, kind))
+                    val input = TestTerminalCryptoReferenceV1.wrapped()
+                    val offset = http.requests.size
+                    rejected { owner.generate(requested) }
+                    rejected { owner.unwrap(requested, input) }
+                    assertArrayEquals(TestTerminalCryptoReferenceV1.wrapped(), input)
+                    assertEquals(offset, http.requests.size, "${journal.profile} cannot dispatch disabled family $kind.")
                 }
                 http.replies.forEach(::assertReleased)
             }

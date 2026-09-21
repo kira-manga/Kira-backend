@@ -43,6 +43,7 @@ import me.manga.kira.backend.security.adminDeleteTestRequest
 import me.manga.kira.backend.security.adminBatchDeleteTestIngress
 import me.manga.kira.backend.security.adminBatchDeleteTestJournal
 import me.manga.kira.backend.security.ownerCreateTestCapacityPolicy
+import me.manga.kira.backend.security.ownerDeleteAllTestCapacityPolicy
 import me.manga.kira.backend.security.ownerDeleteTestRouting
 import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.User
@@ -89,7 +90,7 @@ internal class ComplaintAdminDeleteFixture(
     val base = existing.base
     val observer = base.observer
     val scope = run.scope
-    val policy = ownerCreateTestCapacityPolicy()
+    val policy = if (batchEnabled) ownerDeleteAllTestCapacityPolicy() else ownerCreateTestCapacityPolicy()
     val ingress = if (batchEnabled) adminBatchDeleteTestIngress(policy, scope) else adminDeleteTestIngress(policy)
     val routing = ownerDeleteTestRouting(if (batchEnabled) adminBatchDeleteTestJournal(scope) else adminDeleteTestJournal(scope))
     val lanes = JournalPublicationLanesV1(existing.routing.journalConfiguration)
@@ -107,7 +108,7 @@ internal class ComplaintAdminDeleteFixture(
     init {
         existing.installPolicy(policy)
         stageSyntheticComparisons()
-        creator = ComplaintOwnerCreateFixture(base, run, desired)
+        creator = ComplaintOwnerCreateFixture(base, run, desired, policy)
     }
     val userJwt = AdminReadTestUserJwt()
     val decoder = ComplaintAdminJwtIdentityDecoder(scope, userJwt.decoder, userJwt.properties.clockSkew)

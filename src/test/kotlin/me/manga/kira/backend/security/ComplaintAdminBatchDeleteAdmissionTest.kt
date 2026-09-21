@@ -23,7 +23,7 @@ import java.util.UUID
 class ComplaintAdminBatchDeleteAdmissionTest {
     private val actor = UUID.randomUUID()
     private val scope = ComplaintDataScope.of(UUID.randomUUID())
-    private val policy = ownerCreateTestCapacityPolicy()
+    private val policy = ownerDeleteAllTestCapacityPolicy()
 
     @Test
     fun oneBatchMemberHasDistinctLowerable60HourlyQuotaWithCurrentPreviousDedupAndNoTargetWeight() {
@@ -50,6 +50,7 @@ class ComplaintAdminBatchDeleteAdmissionTest {
 
     @Test
     fun batchUsesSharedFiniteMembersAndPrivateOriginalTupleAndPhaseRatherThanAScalarOrForgedHandoff() {
+        assertThrows<IllegalArgumentException> { adminBatchDeleteTestIngress(capacity = ownerCreateTestCapacityPolicy()) }
         val guard = adminBatchDeleteTestIngress(members = 2, prune = 1)
         val original = tuple()
         guard.withIngress(historyTestRequest()) { context -> guard.startAdminBatchDelete(context); guard.admitAdminBatchDelete(context, original) }

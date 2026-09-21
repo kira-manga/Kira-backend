@@ -234,7 +234,15 @@ internal object ComplaintTestNamespaceRecoveryRegistrationCasesV1 {
                 val original = f.begin()
                 assertEquals(TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED,
                     original.drain(f.approval(original), f.rawEvidence, f.primaryCredentials, f.readCredentials))
-                assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, original.prepareInstallationManifest())
+                TestInstallationManifestSqlProbeV1(f, expectedDrain = original).use { probe ->
+                    try {
+                        assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, original.prepareInstallationManifest())
+                        probe.assertReleased()
+                    } catch (problem: Throwable) {
+                        runCatching { probe.reportUnexpectedFailure() }
+                        throw problem
+                    }
+                }
                 // PREPARE persists two installation reads and canonical chunks, not final run roots/counts or purge state.
                 val progress = TestTerminalJsonV1(f.registration.process.consumers.journalConfiguration)
                     .progress(TestOrdinaryDrainAccountingObservationV1(f).runBytes("permanent_denial_bytes"))

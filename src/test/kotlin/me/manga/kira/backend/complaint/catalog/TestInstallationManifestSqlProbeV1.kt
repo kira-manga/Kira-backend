@@ -13,6 +13,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationM
 import me.manga.kira.backend.complaint.infrastructure.journal.OrdinaryJournalRetentionV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestStepV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -30,7 +31,10 @@ import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
 
 /** Observe/inject failures on the actual SQL/holder only; never manufacture a producer or successful completion. */
-internal class TestInstallationManifestSqlProbeV1(private val f: TestRunOrdinaryDrainFixtureV1) : JdbcTemplate(f.registration.process.pools.catalogCoordinator.dataSource), AutoCloseable {
+internal class TestInstallationManifestSqlProbeV1(
+    private val f: TestRunOrdinaryDrainFixtureV1,
+    private val expectedDrain: TestRunOrdinaryDrainV1? = null,
+) : JdbcTemplate(f.registration.process.pools.catalogCoordinator.dataSource), AutoCloseable {
     var original: TestRunInstallationManifestV1? = null
     var before: (Call) -> Unit = {}
     var after: (Call) -> Unit = {}
@@ -73,6 +77,11 @@ internal class TestInstallationManifestSqlProbeV1(private val f: TestRunOrdinary
     private fun <T> observed(sql: String, args: Array<out Any?>, action: () -> T): T = try {
         val phase = checkNotNull(PersistencePhaseOwnership.current())
         val owner = ownedCutField(phase, "testInstallationManifest") as TestRunInstallationManifestV1
+        if (original == null && expectedDrain != null) {
+            // Passive first-SQL observation of the real convenience edge, never an issuer/substitute.
+            assertSame(expectedDrain, owner.drain)
+            original = owner
+        }
         assertSame(original, owner)
         assertSame(f.registration, owner.registration)
         assertEquals(PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE, ownedCutField(phase, "path"))

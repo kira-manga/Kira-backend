@@ -9,8 +9,9 @@ import me.manga.kira.backend.config.KiraSecurityProperties
 internal fun adminBatchDeleteTestJournal(scope: ComplaintDataScope = ownerDeleteTestJournal().scope) =
     TestOwnerDeleteJournalConfigurationV1.lowerAdminBatchErasure(ownerDeleteTestJournal(scope).declaration())
 
+/** This composed fixture also enables owner-all, so P must fit its unchanged full recovery promise. */
 internal fun adminBatchDeleteTestIngress(
-    capacity: ComplaintCapacityPolicyV1 = ownerCreateTestCapacityPolicy(),
+    capacity: ComplaintCapacityPolicyV1 = ownerDeleteAllTestCapacityPolicy(),
     scope: ComplaintDataScope = ComplaintDataScope.LIVE,
     perHour: Int = 60,
     members: Int = 1024,
