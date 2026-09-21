@@ -1,0 +1,90 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 58,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_DELETION_PROVISIONAL_CLAIM_OWNS_ITS_PNL",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentDeletionOwnClaimCannotBorrowAnyPreviousPNL",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "16b16de94e5ceb92db113fb5deeedd504a9db87e",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "recurrentDeletionOwnClaimCannotBorrowAnyPreviousPNL()"
+      ]
+    },
+    {
+      "annotation_line": 98,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_B",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineFifteenthActiveAttemptRefusesBeforeRequestChargeOrAnotherPutAndIsNeverReusedForD",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "16b16de94e5ceb92db113fb5deeedd504a9db87e",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineFifteenthActiveAttemptRefusesBeforeRequestChargeOrAnotherPutAndIsNeverReusedForD()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 2,
+  "expected_total": 2,
+  "selection_basis": {
+    "active_gates": {
+      "focused54": "35660902163:3METHODS_ACTIVE_NOT_ASSUMED_PASS"
+    },
+    "batch": "FAILED53_N15_AND_FAILED43_OWN_CLAIM",
+    "bounded_plan": "review/working/app-29-recurrent-terminal-remaining-batch-20260921-01/BATCHES.json",
+    "bounded_plan_sha256": "11cf263666871ce7603b97c3f802e1da3f9f8ac55096120d498416d3b1e03868",
+    "carryforward": "Keep prior passing evidence without replay; historical PASS is not revalidation on the corrected composition. Root owns acceptance and any affected-result decision, including54.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "REMAINING_DELETION_PROVISIONAL_CLAIM_OWNS_ITS_PNL": 1,
+      "REMAINING_RECURRENT_TERMINAL_BATCH_B": 1
+    },
+    "correction_basis": "Root-reviewed f92103ca95f49785a5baea05dfe925c12de7069b diagnostic plus own-claim RowMapper/vararg queryForObject observation and positive insertion assertion are composed in16b16de. Source review is not runtime verification.",
+    "dispatch_authority": "ROOT_ONLY",
+    "finalized_gates": {
+      "focused43": "35659002218:XML9_METHODS_8PASS_1FAIL_OWN_CLAIM_SELECTED_HERE",
+      "focused53": "35658399276:XML7_METHODS_6PASS_1FAIL_N15_SELECTED_HERE"
+    },
+    "gradle_seconds": 2400,
+    "observed_failed_method_seconds": {
+      "focused43_own_claim": 105.612,
+      "focused53_N15": 138.045,
+      "total": 243.657
+    },
+    "passing_evidence_carry": {
+      "focused36": "35635093191:10PASS",
+      "focused37": "35639268313:8PASS",
+      "focused41": "35643583997:4PASS",
+      "focused42": "35643584837:3PASS",
+      "focused46": "35655348378:7PASS_ROOT_REPORTED",
+      "focused48": "35655140899:5METHODS_CARRY_ROOT_REPORTED",
+      "focused52": "35656967972:RAW_ALL6PASS_ROOT_READBACK_PENDING",
+      "native08": "35645621713:1PASS"
+    },
+    "positive_regression_basis": "Backup author confirmed the required own-claim method already covers genuine precursor AUTH/PUT/VERIFY/B/C, three fault cuts and final successful owner/native/VERIFY/reload publication, with exactly one observed positive INSERT_PUBLICATION. No separate positive selector is necessary for this overload correction; no blanket PASS inference for newly observable freshness checks.",
+    "prerequisite": "Root reviews final54 affected result and the final reviewed composition, then alone binds identical source/tree pins and admits a free hosted slot. None is authorized by this packet.",
+    "required_source": "16b16de94e5ceb92db113fb5deeedd504a9db87e",
+    "reviewed_composition_reference": "16b16de94e5ceb92db113fb5deeedd504a9db87e:INFORMATIONAL_NOT_A_BINDING",
+    "scope": "Exact2 existing failed selectors: finalized53 N15 and finalized43 own-claim. No54 N14 or cold physical refusal replay/addition without final54 evidence, an affected correction and root decision. No new selector/harness, chain audit, timeout or retry.",
+    "slot_status": "HOLD_FOR_ROOT_FINAL54_AFFECTED_RESULT_FINAL_COMPOSITION_AND_FREE_SLOT",
+    "timing_caveat": "Finalized XML observations stop at failure and exclude gate startup; they do not bound corrected complete-path execution or establish PASS. Keep2400s work and separate180s cleanup."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineFifteenthActiveAttemptRefusesBeforeRequestChargeOrAnotherPutAndIsNeverReusedForD",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionOwnClaimCannotBorrowAnyPreviousPNL"
+  ]
+}
