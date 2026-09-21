@@ -26,6 +26,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotat
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationHistoryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationProjectionSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationSqlV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainActiveHistorySqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainActiveHistoryV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.INSERT_SIGNER_ROTATION_PREPARED
@@ -416,7 +417,7 @@ internal class CatalogSignerRotationProbeJdbc(
 
             path.testRunSealing && sql == DELIVERY_AUTHENTICATE -> "test-run-sealing-authenticate"
 
-            path.testRunSealing && sealingStep(sql) != null -> checkNotNull(sealingStep(sql))
+            path.testRunSealing && sealingStep(sql, path) != null -> checkNotNull(sealingStep(sql, path))
 
             path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION && sql == DELIVERY_AUTHENTICATE -> "test-registration-authenticate"
 
@@ -517,7 +518,7 @@ internal class CatalogSignerRotationProbeJdbc(
         }
     }
 
-    private fun sealingStep(sql: String): String? = when (sql) {
+    private fun sealingStep(sql: String, path: PersistencePhasePath): String? = when (sql) {
         TestRunSealingSqlV1.lockRun -> "test-run-sealing-run-lock"
         TestRunSealingSqlV1.sealRun -> "test-run-seal"
         TestRunSealingSqlV1.lockGlobalControl -> "test-run-sealed-global-lock"
@@ -527,7 +528,13 @@ internal class CatalogSignerRotationProbeJdbc(
         TestRunSealingSqlV1.insertAudit -> "test-run-sealed-audit"
         TestRunSealingSqlV1.lockGateState -> "test-run-sealed-gate-lock"
         sealingActiveHistorySql -> "test-run-sealed-active-history-read"
-        else -> null
+        // These exact comparison reads precede the old no-A query, but only in the paid AUDIT phase.
+        else -> if (path === PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT) when (sql) {
+            TestOrdinaryDrainActiveHistorySqlV1.sourceIdentity -> "test-run-sealed-active-source-identities"
+            TestOrdinaryDrainActiveHistorySqlV1.archiveIdentity -> "test-run-sealed-active-archive-identities"
+            TestOrdinaryDrainActiveHistorySqlV1.noRecurrent -> "test-run-sealed-no-recurrent-sources"
+            else -> null
+        } else null
     }
 
     @Suppress("CyclomaticComplexMethod") // Exact SQL-observation labels, not additional application branches.

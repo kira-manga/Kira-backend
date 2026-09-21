@@ -80,6 +80,7 @@ internal object TestRunSealingCases {
         assertEquals(listOf("test-run-sealing-authenticate", "test-run-sealing-run-lock", "test-run-seal"),
             paths.getValue(PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL).map { it.step })
         assertEquals(listOf("test-run-sealing-authenticate", "test-run-sealed-gate-lock", "test-run-sealed-gate-lock",
+            "test-run-sealed-active-source-identities", "test-run-sealed-active-archive-identities", "test-run-sealed-no-recurrent-sources",
             "test-run-sealed-active-history-read", "test-run-sealed-global-lock", "test-run-sealed-control-lock", "counters",
             "test-run-sealing-run-lock", "test-run-sealed-audit-lock", "charge:audit_rows", "charge:storage_bytes", "test-run-sealed-reserve", "test-run-sealed-audit"),
             paths.getValue(PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT).map { it.step })
