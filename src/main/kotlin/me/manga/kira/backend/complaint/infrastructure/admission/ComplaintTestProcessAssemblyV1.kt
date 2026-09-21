@@ -161,6 +161,9 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             requireTestDeployment(inputs.initialCheckpointCreate?.profile !=
                 me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1.RECURRENT_PROFILE || inputs.activeRecurrent != null,
                 ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
+            requireTestDeployment(inputs.initialCheckpointDeletion?.profile !=
+                me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointDeletionV1.RECURRENT_PROFILE || inputs.activeRecurrent != null,
+                ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
             requireTestDeployment((inputs.activeFirstCut != null) == (ordinaryPublicationCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
             requireTestDeployment((inputs.initialCheckpoint != null) == (initialCheckpointReadCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
             requireTestDeployment((inputs.activeOwnerDeleteQueue != null) == (queueRecoveryCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
@@ -344,7 +347,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             activeOwnerDeleteQueue = queue,
             initialCheckpointDeletion = inputs.initialCheckpointDeletion?.let {
                 me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointDeletionV1.fromIndependentInputs(
-                    it, pools, routing, checkNotNull(scanner), checkNotNull(ordinaryPublication),
+                    it, pools, routing, checkNotNull(scanner), checkNotNull(ordinaryPublication), recurrent,
                 )
             },
         )
