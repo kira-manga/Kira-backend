@@ -638,6 +638,7 @@ internal class TestActiveRecurrentOperationV1 private constructor(
                     if (row.getBoolean("publication_present")) {
                         p = TestActiveCutoffPublicationRowV1.read(row)
                         requireRecurrent(p.objectKey == key && checkNotNull(p.proof).version == version)
+                        if (p.state == "APPLIED") requireRecurrent(recurrentTime(row, "publication_applied_at") <= page.current.sampledAt)
                         physical.add("P"); physical.add(recurrentHash(row, "publication_fingerprint"))
                     }
                     var epoch = p?.epoch

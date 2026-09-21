@@ -55,7 +55,8 @@ internal object TestActiveRecurrentSqlV1 {
                 p.state='APPLIED' AND p.test_only=a.test_only AND p.data_scope_id=a.data_scope_id AND p.writer_generation=a.writer_generation
                 AND p.event_id=a.event_id AND p.object_key=a.object_key AND p.object_version=a.object_version
                 AND p.journal_epoch=a.journal_epoch AND p.event_kind=a.event_kind AND p.target_count=a.target_count
-                AND p.ciphertext_hash=a.ciphertext_hash AND p.applied_at=a.applied_at AND p.applied_at>=p.verified_at
+                AND p.ciphertext_hash=a.ciphertext_hash AND p.applied_at>=p.verified_at AND a.applied_at>=p.verified_at
+                AND (p.event_kind<>'OWNER_DELETE_ALL' OR p.applied_at=a.applied_at)
                 ELSE p.event_id IS NULL OR p.state='VERIFIED' END) IS TRUE AS overlap_valid,
             CASE WHEN octet_length(p.event_id)=43 THEN p.event_id END AS event_id,
             p.data_scope_id,p.test_only,p.writer_generation,p.journal_epoch,
@@ -66,7 +67,7 @@ internal object TestActiveRecurrentSqlV1 {
             CASE WHEN complaint_bytes_match(p.event_bytes,p.semantic_hash,65536) THEN p.event_bytes END AS event_bytes,
             CASE WHEN octet_length(p.semantic_hash)=32 THEN p.semantic_hash END AS semantic_hash,
             CASE WHEN octet_length(p.object_version) BETWEEN 1 AND 1024 THEN p.object_version END AS object_version,
-            p.object_created_at,p.retain_until,p.verified_at,
+            p.object_created_at,p.retain_until,p.verified_at,p.applied_at AS publication_applied_at,
             CASE WHEN octet_length(p.ciphertext_hash)=32 THEN p.ciphertext_hash END AS ciphertext_hash,
             CASE WHEN complaint_bytes_match(p.verification_bytes,p.verification_hash,65536) THEN p.verification_bytes END AS verification_bytes,
             CASE WHEN octet_length(p.verification_hash)=32 THEN p.verification_hash END AS verification_hash,
