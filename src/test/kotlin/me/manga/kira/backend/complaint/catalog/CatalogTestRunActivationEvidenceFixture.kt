@@ -51,6 +51,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadb
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveInitialCheckpointV1
 import me.manga.kira.backend.security.BoundTestComplaintConsumerFixture
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.AwsSecretVersionFixture
@@ -213,6 +214,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
     private var intakeDocument: ComplaintTestDeploymentDocumentV1? = null
     private var originalIntakeBytes: ByteArray? = null
     private var originalSecretReplies: List<ColdSecretObjectV1> = emptyList()
+    private val projectedInitialCheckpoints = mutableListOf<VersionBoundTestActiveInitialCheckpointV1>()
     /** Exact raw fixture inputs only; no acquired secret, target, registration or projection is exported. */
     internal fun coldInputBytes(): ByteArray = checkNotNull(originalIntakeBytes).copyOf()
     internal fun coldSecretObjects(): List<ColdSecretObjectV1> = originalSecretReplies.toList()
@@ -272,9 +274,23 @@ internal class CatalogTestRunActivationEvidenceFixture(
                     it, pools, native.consumers.journalRouting, checkNotNull(firstCut), checkNotNull(native.ordinarySeal),
                 )
             }
+            val checkpoint = native.initialCheckpoint?.let { original ->
+                if (pools === native.pools) original else {
+                    // The signing/PROJECT graph has different pools. Build its own cold recipe from
+                    // the original raw inputs, never rebind the assembly's actual runtime reader.
+                    val raw = checkNotNull(ordinaryRawHttp?.initialCheckpoint)
+                    val inputs = ComplaintTestDeploymentInputsV1.fromDecoded(checkNotNull(intakeDocument))
+                    check(inputs.initialCheckpoint == raw.input)
+                    VersionBoundTestActiveInitialCheckpointV1.fromIndependentInputs(
+                        raw.input, native.consumers.journalRouting, pools, checkNotNull(native.ordinarySeal),
+                        inputs.sealerMapping, raw.credentials, inputs.sealerLimits, original.clock, original.nanoTime,
+                        raw.sts, raw.kms, raw.s3,
+                    ).also { projectedInitialCheckpoints.add(it) }
+                }
+            }
             return VersionBoundTestNamespaceProcessV1.fromRetained(native.consumers, pools, 1, desiredGeneration,
                 native.databaseIdentity, native.restoreIdentity, native.publicationLanes, native.catalogReadback, selected,
-                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, activeFirstCutSuccessor = successor, initialCheckpoint = native.initialCheckpoint, activeOrdinarySealRecovery = sealRecovery, terminalDenial = native.terminalDenial)
+                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, activeFirstCutSuccessor = successor, initialCheckpoint = checkpoint, activeOrdinarySealRecovery = sealRecovery, terminalDenial = native.terminalDenial)
         }
         val writer = journal.declaration().writer
         val activation = FullTestCatalogInputs.activation(
@@ -411,7 +427,16 @@ internal class CatalogTestRunActivationEvidenceFixture(
         }
     }
 
-    override fun close() { intakeAssembly?.close() }
+    override fun close() {
+        // These extra recipes stay cold and fixture-owned. Each clears only its own read credential
+        // reference; the actual runtime reader remains exclusively owned/closed by its assembly.
+        val failures = projectedInitialCheckpoints.asReversed().mapNotNull { runCatching(it::close).exceptionOrNull() }.toMutableList()
+        runCatching { intakeAssembly?.close() }.exceptionOrNull()?.let(failures::add)
+        failures.firstOrNull()?.let { first ->
+            failures.drop(1).forEach(first::addSuppressed)
+            throw first
+        }
+    }
 
     fun assembled(): ByteArray = expected.assemble(
         OfflineCatalogInventoryChainVerifier.verifyInventoryChain(prefix.asSequence(), initial, current, policy),

@@ -20,9 +20,12 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationExcha
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestInitialAdmissionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointExceptionV1
 import me.manga.kira.backend.security.InstallationEnrollmentCredentials
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -98,7 +101,27 @@ internal class InitialAdmissionFixture(
     val observer = p.f.rows.observer
     private val identities = linkedSetOf<UUID>()
 
-    init { assertSame(assembly.target, registration.process) }
+    init {
+        val runtimeProcess = assembly.target
+        assertSame(runtimeProcess, registration.process)
+        runtimeProcess.initialCheckpoint?.let { runtimeReader ->
+            val authorProcess = p.f.rows.evidence.process
+            val authorReader = checkNotNull(authorProcess.initialCheckpoint)
+            assertNotSame(runtimeProcess.pools, authorProcess.pools)
+            assertNotSame(runtimeReader, authorReader)
+            runtimeReader.requireRetained(runtimeProcess.consumers.journalRouting, runtimeProcess.pools, runtimeProcess.ordinarySeal)
+            authorReader.requireRetained(authorProcess.consumers.journalRouting, authorProcess.pools, authorProcess.ordinarySeal)
+            // Equal cold inventories/full D never license borrowing a different graph's reader.
+            assertThrows<TestActiveInitialCheckpointExceptionV1> {
+                runtimeReader.requireRetained(authorProcess.consumers.journalRouting, authorProcess.pools, authorProcess.ordinarySeal)
+            }
+            assertThrows<TestActiveInitialCheckpointExceptionV1> {
+                authorReader.requireRetained(runtimeProcess.consumers.journalRouting, runtimeProcess.pools, runtimeProcess.ordinarySeal)
+            }
+            assertEquals(runtimeReader.inventory(), authorReader.inventory())
+            assertArrayEquals(runtimeProcess.canonicalBytes(), authorProcess.canonicalBytes())
+        }
+    }
 
     fun begin(): ComplaintTestInitialAdmissionV1 = ComplaintTestInitialAdmissionV1.withHttpFixture(
         registration, assembly, p.f.http::readClient, SignedActivationObservation.WALL_CLOCK)

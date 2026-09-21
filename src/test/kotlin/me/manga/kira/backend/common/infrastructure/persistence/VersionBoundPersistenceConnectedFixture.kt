@@ -271,7 +271,7 @@ internal class VersionBoundPersistenceConnectedFixture(
                 "$name=$state"
             }
             val afterNative = runCatching { scope.root.shutdownObservation().name }.getOrDefault("UNAVAILABLE")
-            "root=${if (testIntake != null) "INTAKE" else "PEER"} native=$nativeShutdown release=$release " +
+            "root=${if (testIntake != null) "INTAKE" else "PEER"} boundary=AFTER_ROOT_CLOSE native=$nativeShutdown release=$release " +
                 "AFTER_RELEASE native=$afterNative pools=[$poolStates]"
         }
         assertEquals(PersistencePublicTrustRelease.RELEASED, release, diagnostic)
@@ -290,16 +290,19 @@ internal class VersionBoundPersistenceConnectedFixture(
         val beforeClose = peers.map { fixture ->
             runCatching {
                 if (fixture.trustPrepared && !fixture.stoppedBeforeClose) {
-                    assertEquals(PersistencePublicTrustRelease.RETAINED, fixture.owner.releasePublicTrustAfterShutdown())
+                    val release = fixture.owner.releasePublicTrustAfterShutdown()
+                    assertEquals(PersistencePublicTrustRelease.RETAINED, release, "root=PEER boundary=BEFORE_POOL_CLOSE release=$release")
                 }
             }
         }
         val poolsClosed = peers.map { runCatching { checkNotNull(it.owner.versionBoundPools).close() } }
         if (intakes.isEmpty()) {
-            // Preserve the existing non-intake sequencing and cleanup-failure behavior.
+            // Attempt the same proven cleanup even if a reentrant caller's pre-close expectation
+            // failed. A later actual RELEASED may dispose only this root's own trust/empty parent;
+            // it never rehabilitates an earlier RETAINED or removes any original failure.
             val rootsClosed = selected.map { runCatching { it.scope.close() } }
-            requireCleanup(shutdown + beforeClose + poolsClosed + rootsClosed)
-            requireCleanup(selected.map { runCatching { it.completeClose() } })
+            val completed = selected.map { runCatching { it.completeClose() } }
+            requireCleanup(shutdown + beforeClose + poolsClosed + rootsClosed + completed)
             return
         }
         val beforeAssembly = intakes.map { fixture ->

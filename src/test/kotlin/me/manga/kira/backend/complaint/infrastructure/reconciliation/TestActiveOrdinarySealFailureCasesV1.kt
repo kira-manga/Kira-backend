@@ -21,10 +21,27 @@ import java.util.concurrent.CancellationException
 internal enum class ActiveSealProviderCut { WRONG_ROLE, VERSION, WIRE, METADATA, LOCK_MODE, RETENTION }
 internal enum class ActiveSealCompletionCut { BEFORE_COMMIT, AFTER_COMMIT, DEFERRED_COMMIT_UNKNOWN, UNRESOLVED_RELEASE }
 internal enum class ActiveSealLifetimeCut { CANCELLATION, LEASE_EXPIRED, LEASE_REPLACED, LATE_NATIVE_CLOSE }
+private enum class ActiveSealProviderPhase { SETUP, CASE, CLEANUP }
 
 /** Failure-only injection at raw HTTP/real transaction boundaries. No successful proof is supplied. */
 internal object TestActiveOrdinarySealFailureCasesV1 {
-    fun provider(tls: VersionBoundPersistenceConnectedFixture, cut: ActiveSealProviderCut) = withActiveSealFixture(tls) { f ->
+    fun provider(tls: VersionBoundPersistenceConnectedFixture, cut: ActiveSealProviderCut) {
+        var phase = ActiveSealProviderPhase.SETUP
+        try {
+            withActiveSealFixture(tls) { fixture ->
+                phase = ActiveSealProviderPhase.CASE
+                provider(fixture, cut)
+                phase = ActiveSealProviderPhase.CLEANUP
+            }
+        } catch (failure: Throwable) {
+            // Fixed labels AFTER failure, including stackless failures with suppression disabled.
+            // Never print provider/SQL material, wrap the original or turn later cleanup into proof.
+            println("ACTIVE_SEAL_PROVIDER_BOUNDARY cut=${cut.name} phase=${phase.name}")
+            throw failure
+        }
+    }
+
+    private fun provider(f: TestActiveOrdinarySealFixtureV1, cut: ActiveSealProviderCut) {
         f.native.changeSts = { stage, reply ->
             if (stage == 3 && cut === ActiveSealProviderCut.WRONG_ROLE) {
                 val changed = reply.bytes.toString(Charsets.UTF_8).replace("AROA" + "B".repeat(17), "AROA" + "C".repeat(17)).toByteArray()
