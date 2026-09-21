@@ -630,7 +630,11 @@ internal object CatalogRetainedDPrimaryCasesV1 {
         val record = checkNotNull(a.record)
         val target = record.event.complaintIds().single()
         val p = jdbc.queryForMap("SELECT * FROM complaint_journal_publications WHERE data_scope_id = ?", a.scope)
-        val n = jdbc.queryForMap("SELECT * FROM complaint_idempotency_receipts WHERE data_scope_id = ? AND operation = 'OWNER_DELETE'", a.scope)
+        // queryForMap would retain target_ids/ack_ids/ack_versions as unfreed SQL Arrays on this holder.
+        // Project every asserted receipt value; the separate full-row/xmin JSON comparisons stay intact.
+        val n = jdbc.queryForMap("SELECT state, outcome, response_status, actor_id, idempotency_key, authorized_at, publication_ref, " +
+            "external_event_id, external_epoch, external_object_version, external_ciphertext_hash, completed_at, expires_at " +
+            "FROM complaint_idempotency_receipts WHERE data_scope_id = ? AND operation = 'OWNER_DELETE'", a.scope)
         val e = jdbc.queryForMap("SELECT * FROM complaint_deletion_journal_applied WHERE data_scope_id = ?", a.scope)
         val l = jdbc.queryForMap("SELECT state, reserved_amounts::text, converted_amounts::text, converted_at " +
             "FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", a.scope)
