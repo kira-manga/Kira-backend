@@ -40,7 +40,8 @@ internal class PersistenceComplaintMaintenanceFenceV1(private val phase: Persist
             phase.requireComplaintMaintenanceFence(this, connection)
             if (observedLock != true) refuse(PersistencePhaseFailureCode.ENTRY_REFUSED)
             stage = FenceStage.READING_GATE
-            val gate = PersistenceComplaintMaintenanceGateV1.read(connection)
+            val gate = if (phase.path.catalogTestRunTerminal || phase.path === PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT)
+                PersistenceComplaintMaintenanceGateV1.readTerminal(connection) else PersistenceComplaintMaintenanceGateV1.read(connection)
             requireRemaining() // The separate gate statement and its original descendants have returned/closed.
             phase.requireComplaintMaintenanceGate(this, connection, gate)
             stage = FenceStage.GATE_OBSERVED
@@ -122,6 +123,7 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
     private val projectedUnsigned: ByteArray?,
     private val projectedHash: ByteArray?,
     private val pendingCatalog: Boolean,
+    private val terminal: TerminalFacts? = null,
 ) {
     internal fun requireUnownedOpen() {
         if (pendingTestToken != null || projectedTestClosed) throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
@@ -154,9 +156,84 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
         matchesOpenProjectedActiveRegistrationScope(scope) && projectedTestToken == token &&
             projectedUnsigned.contentEquals(unsigned) && projectedHash.contentEquals(hash)
 
+    /** Bounded read-only selector ONLY. The fresh named owner must re-admit evidence before any lease/effect. */
+    internal fun matchesTerminalCapture(token: UUID, scope: UUID): Boolean = maintenanceClosed && creationClosed &&
+        terminal?.let { it.valid && it.token == token && it.scope == scope } == true
+
+    /** Exact tuple continuation facts, not a terminal denial/Sign/native acceptance capability. */
+    internal fun matchesTerminalTuple(
+        token: UUID, scope: UUID, unsigned: ByteArray, hash: ByteArray,
+        activationToken: UUID, activationUnsigned: ByteArray, activationHash: ByteArray,
+    ): Boolean = matchesTerminalCapture(token, scope) && terminal?.let {
+        it.unsigned.contentEquals(unsigned) && it.hash.contentEquals(hash) && it.activationToken == activationToken &&
+            it.activationUnsigned.contentEquals(activationUnsigned) && it.activationHash.contentEquals(activationHash)
+    } == true
+
+    private class TerminalFacts(
+        val valid: Boolean, val token: UUID?, val scope: UUID?, val unsigned: ByteArray?, val hash: ByteArray?,
+        val activationToken: UUID?, val activationUnsigned: ByteArray?, val activationHash: ByteArray?,
+    )
+
     override fun toString(): String = "PersistenceComplaintMaintenanceGateV1(bounded-facts,no-continuation-authority)"
 
     companion object {
+        /** Only the two fixed terminal paths use this second, separately closed post-M RC observation.
+         * READ_GATE and every old predicate/default stay unchanged. No row lock or provider call. */
+        internal fun readTerminal(connection: Connection): PersistenceComplaintMaintenanceGateV1 {
+            val base = read(connection)
+            val observed = connection.prepareStatement(READ_TERMINAL_GATE).use { statement ->
+                statement.executeQuery().use { rows ->
+                    if (!rows.next()) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                    val valid = rows.getBoolean("terminal_valid").also { check(!rows.wasNull()) }
+                    val facts = TerminalFacts(valid, rows.getObject("terminal_token", UUID::class.java), rows.getObject("terminal_scope", UUID::class.java),
+                        rows.getBytes("terminal_unsigned")?.copyOf(), rows.getBytes("terminal_hash")?.copyOf(),
+                        rows.getObject("activation_token", UUID::class.java), rows.getBytes("activation_unsigned")?.copyOf(), rows.getBytes("activation_hash")?.copyOf())
+                    if (rows.next()) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                    facts
+                }
+            }
+            return PersistenceComplaintMaintenanceGateV1(base.maintenanceClosed, base.creationClosed, base.pendingTestToken, base.pendingTestScope,
+                base.pendingUnsigned, base.pendingHash, base.pendingTestPrepared, base.projectedTestClosed, base.projectedTestToken,
+                base.projectedTestScope, base.projectedUnsigned, base.projectedHash, base.pendingCatalog, observed)
+        }
+
+        private val READ_TERMINAL_GATE = """
+            SELECT (c.maintenance_closed AND c.creation_closed AND s.maintenance_closed AND s.creation_closed
+                AND t.operation_type = 'TEST_RUN_TERMINAL' AND t.test_only AND complaint_scope_valid(t.data_scope_id, t.test_only)
+                AND complaint_bytes_match(t.unsigned_bytes, t.unsigned_hash, 131072)
+                AND a.operation_type = 'TEST_RUN_ACTIVATION' AND a.test_only AND a.data_scope_id = t.data_scope_id
+                AND a.state = 'COMPLETED' AND a.projected_at IS NOT NULL AND complaint_bytes_match(a.unsigned_bytes, a.unsigned_hash, 131072)
+                AND r.test_only AND r.activation_catalog_generation = a.successor_generation AND r.activation_catalog_hash = a.envelope_hash
+                AND t.predecessor_generation = a.successor_generation AND t.predecessor_hash = a.envelope_hash
+                AND t.successor_generation = a.successor_generation + 1 AND t.catalog_writer_generation = a.catalog_writer_generation
+                AND t.catalog_writer_generation = c.catalog_writer_generation AND s.test_only
+                AND s.accepted_catalog_generation = a.successor_generation AND s.accepted_catalog_hash = a.envelope_hash
+                AND s.pending_projection_token IS NULL
+                AND ((t.state = 'PREPARED' AND t.projected_at IS NULL AND r.state = 'SEALED' AND c.pending_projection_token IS NULL
+                        AND c.accepted_catalog_generation = a.successor_generation AND c.accepted_catalog_hash = a.envelope_hash)
+                    OR (t.state = 'COMPLETED' AND c.accepted_catalog_generation = t.successor_generation AND c.accepted_catalog_hash = t.envelope_hash
+                        AND ((t.projected_at IS NULL AND r.state = 'SEALED' AND c.pending_projection_token = t.operation_token)
+                            OR (t.projected_at IS NOT NULL AND r.state = 'PURGING' AND c.pending_projection_token IS NULL))))) IS TRUE AS terminal_valid,
+                t.operation_token AS terminal_token, t.data_scope_id AS terminal_scope,
+                CASE WHEN octet_length(t.unsigned_bytes) BETWEEN 1 AND 131072 THEN t.unsigned_bytes END AS terminal_unsigned,
+                CASE WHEN octet_length(t.unsigned_hash) = 32 THEN t.unsigned_hash END AS terminal_hash,
+                a.operation_token AS activation_token,
+                CASE WHEN octet_length(a.unsigned_bytes) BETWEEN 1 AND 131072 THEN a.unsigned_bytes END AS activation_unsigned,
+                CASE WHEN octet_length(a.unsigned_hash) = 32 THEN a.unsigned_hash END AS activation_hash
+            FROM complaint_journal_control c
+            LEFT JOIN LATERAL (
+                SELECT m.* FROM complaint_catalog_mutations m
+                WHERE m.operation_type = 'TEST_RUN_TERMINAL' AND
+                    (m.state = 'PREPARED' OR (m.state = 'COMPLETED' AND m.projected_at IS NULL)
+                        OR m.successor_generation = c.accepted_catalog_generation)
+                ORDER BY m.successor_generation LIMIT 2
+            ) t ON true
+            LEFT JOIN complaint_test_runs r ON r.data_scope_id = t.data_scope_id
+            LEFT JOIN complaint_journal_control s ON s.data_scope_id = t.data_scope_id
+            LEFT JOIN complaint_catalog_mutations a ON a.successor_generation = r.activation_catalog_generation
+            WHERE c.data_scope_id = '00000000-0000-0000-0000-000000000000'::uuid
+        """.trimIndent()
+
         /** No lock acquisition is combined with this SELECT: RC must observe a snapshot taken AFTER M. */
         internal fun read(connection: Connection): PersistenceComplaintMaintenanceGateV1 = connection.prepareStatement(READ_GATE).use { statement ->
             statement.executeQuery().use { rows ->

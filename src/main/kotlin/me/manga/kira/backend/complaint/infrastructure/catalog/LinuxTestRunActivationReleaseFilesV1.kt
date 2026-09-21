@@ -31,6 +31,8 @@ import java.util.concurrent.CancellationException
  */
 internal class LinuxTestRunActivationReleaseFilesV1(private val owner: CatalogTestRunActivationReleaseCustodyV1, private val selectedRoot: Path) {
     private val allocationName = owner.allocationDirectoryName
+    private val lockFile = owner.lockFileName
+    private val rootNames = setOf(lockFile, allocationName)
     private val specs = listOf(ALLOCATION) + owner.leaves.map { Spec(it.fileName, it.maximumBytes) }
     private val leafNames = specs.flatMap { listOf(it.name, it.completenessName) }.toSet()
     private val resources = mutableListOf<Held<*>>()
@@ -69,16 +71,16 @@ internal class LinuxTestRunActivationReleaseFilesV1(private val owner: CatalogTe
 
     private fun openAllocationBytes(expected: ByteArray?, existingOnly: Boolean): CatalogTestRunActivationCustodyObservationV1 {
         val selected = rootDirectory()
-        val beforeLock = scan(selected, ROOT_NAMES)
-        requireTestActivationCustody(beforeLock.none { it != LOCK_FILE } || LOCK_FILE in beforeLock, CatalogTestRunActivationCustodyFailureV1.INCOMPLETE)
+        val beforeLock = scan(selected, rootNames)
+        requireTestActivationCustody(beforeLock.none { it != lockFile } || lockFile in beforeLock, CatalogTestRunActivationCustodyFailureV1.INCOMPLETE)
         requireTestActivationCustody(
-            !existingOnly || (allocationName in beforeLock && LOCK_FILE in beforeLock),
+            !existingOnly || (allocationName in beforeLock && lockFile in beforeLock),
             CatalogTestRunActivationCustodyFailureV1.INCOMPLETE,
         )
-        openPermanentLock(LOCK_FILE in beforeLock)
-        val names = scan(selected, ROOT_NAMES)
+        openPermanentLock(lockFile in beforeLock)
+        val names = scan(selected, rootNames)
         requireLiveLock()
-        requireTestActivationCustody(LOCK_FILE in names, CatalogTestRunActivationCustodyFailureV1.INCOMPLETE)
+        requireTestActivationCustody(lockFile in names, CatalogTestRunActivationCustodyFailureV1.INCOMPLETE)
 
         requireTestActivationCustody(!existingOnly || allocationName in names, CatalogTestRunActivationCustodyFailureV1.INCOMPLETE)
 
@@ -228,22 +230,22 @@ internal class LinuxTestRunActivationReleaseFilesV1(private val owner: CatalogTe
         val directory = rootDirectory()
         owner.requireLockClaim(this, directory.key)
         val held = if (exists) {
-            checkedFile(directory, LOCK_FILE, 0, WRITE_MODE)
-            capture { directory.stream.newByteChannel(Path.of(LOCK_FILE), READ_WRITE_OPTIONS) }
+            checkedFile(directory, lockFile, 0, WRITE_MODE)
+            capture { directory.stream.newByteChannel(Path.of(lockFile), READ_WRITE_OPTIONS) }
         } else {
             try {
                 capture {
-                    directory.stream.newByteChannel(Path.of(LOCK_FILE), NEW_LOCK_OPTIONS, PosixFilePermissions.asFileAttribute(WRITE_PERMISSIONS))
+                    directory.stream.newByteChannel(Path.of(lockFile), NEW_LOCK_OPTIONS, PosixFilePermissions.asFileAttribute(WRITE_PERMISSIONS))
                 }
             } catch (_: FileAlreadyExistsException) {
                 // Only a known CREATE_NEW collision may open an existing lock; never retry an uncertain open.
                 checkDirectories()
-                checkedFile(directory, LOCK_FILE, 0, WRITE_MODE)
-                capture { directory.stream.newByteChannel(Path.of(LOCK_FILE), READ_WRITE_OPTIONS) }
+                checkedFile(directory, lockFile, 0, WRITE_MODE)
+                capture { directory.stream.newByteChannel(Path.of(lockFile), READ_WRITE_OPTIONS) }
             }
         }
         lockChannel = fileChannel(held)
-        checkedFile(directory, LOCK_FILE, 0, WRITE_MODE)
+        checkedFile(directory, lockFile, 0, WRITE_MODE)
         owner.checkpoint(this)
         requireTestActivationCustody(resources.size < MAX_RESOURCES, CatalogTestRunActivationCustodyFailureV1.INVALID_STATE)
         val lockHeld = Held<FileLock>()
@@ -266,17 +268,17 @@ internal class LinuxTestRunActivationReleaseFilesV1(private val owner: CatalogTe
                 held.channel() === lockChannel && lockChannel?.isOpen == true,
             CatalogTestRunActivationCustodyFailureV1.LOCK_UNAVAILABLE,
         )
-        checkedFile(rootDirectory(), LOCK_FILE, 0, WRITE_MODE)
+        checkedFile(rootDirectory(), lockFile, 0, WRITE_MODE)
     }
 
     private fun readInventory(expectedAllocation: ByteArray?): Map<String, ByteArray> {
         requireLiveLock()
         checkDirectories()
-        val expectedRootNames = setOf(LOCK_FILE, allocationName)
-        requireTestActivationCustody(scan(rootDirectory(), ROOT_NAMES) == expectedRootNames, CatalogTestRunActivationCustodyFailureV1.INCOMPLETE)
+        val expectedRootNames = setOf(lockFile, allocationName)
+        requireTestActivationCustody(scan(rootDirectory(), rootNames) == expectedRootNames, CatalogTestRunActivationCustodyFailureV1.INCOMPLETE)
         val names = scan(allocationDirectory(), leafNames)
         requireTestActivationCustody(
-            ALLOCATION.name in names && ALLOCATION.completenessName in names && names.containsAll(fileKeys.keys.filter { it != LOCK_FILE }),
+            ALLOCATION.name in names && ALLOCATION.completenessName in names && names.containsAll(fileKeys.keys.filter { it != lockFile }),
             CatalogTestRunActivationCustodyFailureV1.INCOMPLETE,
         )
         val result = mutableMapOf<String, ByteArray>()
@@ -451,7 +453,6 @@ internal class LinuxTestRunActivationReleaseFilesV1(private val owner: CatalogTe
         private const val READ_MODE = 0x100 // 0400
         private const val MODE_MASK = 0xfff // Include sticky/setgid/setuid; not just rwx permissions.
         private const val UNTRUSTED_WRITE_BITS = 0x12 // 0022
-        private const val LOCK_FILE = "test-run-activation.lock"
         private const val COMPLETENESS_BYTES = 4 + 64 // Big-endian nonnegative length, then lowercase ASCII SHA-256.
         private val DIRECTORY_PERMISSIONS = PosixFilePermissions.fromString("rwx------")
         private val WRITE_PERMISSIONS = PosixFilePermissions.fromString("rw-------")
@@ -461,7 +462,6 @@ internal class LinuxTestRunActivationReleaseFilesV1(private val owner: CatalogTe
         private val NEW_FILE_OPTIONS = setOf<OpenOption>(CREATE_NEW, WRITE, NOFOLLOW_LINKS)
         private val NEW_LOCK_OPTIONS = setOf<OpenOption>(CREATE_NEW, READ, WRITE, NOFOLLOW_LINKS)
         private val DOT = Path.of(".")
-        private val ROOT_NAMES = setOf(LOCK_FILE, "test-run-activation")
         private val ALLOCATION = Spec("allocation", 4096)
     }
 }

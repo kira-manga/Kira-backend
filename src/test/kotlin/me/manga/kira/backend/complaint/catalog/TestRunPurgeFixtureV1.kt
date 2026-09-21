@@ -137,9 +137,12 @@ internal class TestRunPurgeFixtureV1(
     private val deletion = TestOrdinaryDrainSqlProbeV1(p, runtime, deletion = true)
     private val coordinator = TestOrdinaryDrainSqlProbeV1(p, runtime)
     private val raw = listOf("synthetic-unused-ordinary-denial:$scope".toByteArray(), "synthetic-unused-one-second-bound:$scope".toByteArray())
+    private var retainedOrdinaryApproval: ByteArray? = null
     private var expectUnreturnedNativeClose = false
     private var expectedUnreturnedPublicationOwners = 1L
     val rawEvidence get() = raw.map(ByteArray::copyOf)
+    /** Exact external bytes used by the genuine drain, not a randomized re-sign or a successful-D factory. */
+    val ordinaryApproval: ByteArray get() = checkNotNull(retainedOrdinaryApproval).copyOf()
     private val beforeBoundary = sealHttp.boundary
     private val beforeNative = sealHttp.nativeBoundary
     private val templates = listOf<Any>(runtime.pools.catalogCoordinator.testOrdinaryDrain, runtime.pools.catalogCoordinator.testOrdinarySeal).map { executor ->
@@ -197,13 +200,16 @@ internal class TestRunPurgeFixtureV1(
         val cutoff = checkNotNull(observer.queryForObject("SELECT publication_epoch FROM complaint_journal_control WHERE data_scope_id = ?", Long::class.java, scope))
         val deniedAt = Instant.now().minusSeconds(2).epochSecond
         fun digest(bytes: ByteArray) = TestTerminalEvidenceDigestV1(Sha256.hex(bytes), bytes.size.toLong())
-        return inputs.approval(TestOrdinaryDenialStatementV1(1, input.purpose, input.minimumApprovalVersion, input.authorityGrant,
+        val approval = inputs.approval(TestOrdinaryDenialStatementV1(1, input.purpose, input.minimumApprovalVersion, input.authorityGrant,
             input.implementationAcceptance, input.evidenceRetentionPolicy, input.environment, context.dataScopeId,
             context.activationCatalogGeneration, context.activationCatalogSha256, context.configurationSha256, context.terminalEncodingSha256,
             registration.process.catalogActivation.initialWriterRegistrySha256, input.writerGeneration, input.databaseIdentity, input.restoreIdentity,
             1, cutoff, input.bucket, input.accountId, input.region, journal.ordinaryPrefix, role.roleId,
             TestTerminalPolicyRefV1(role.policy.policyId, role.policy.version, role.policy.sha256), deniedAt, deniedAt, 1, 0,
             sealHttp.horizon.epochSecond, digest(raw[1]), listOf(TestOrdinaryDeniedPathV1("synthetic-unused-path", role.roleId, deniedAt, deniedAt, digest(raw[0])))), input.keyId)
+        retainedOrdinaryApproval?.fill(0)
+        retainedOrdinaryApproval = approval.copyOf()
+        return approval
     }
 
     fun assertDatabaseReleased() {
@@ -279,6 +285,7 @@ internal class TestRunPurgeFixtureV1(
                 } catch (problem: Throwable) { connection.rollback(); throw problem }
             }
             raw.forEach { it.fill(0) }
+            retainedOrdinaryApproval?.fill(0)
         }
     }
 }

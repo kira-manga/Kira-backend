@@ -32,9 +32,13 @@ internal class CatalogGenesisPublishHttpFixture(
     overlapRetainUntil: Long? = null,
     prefixBytes: List<ByteArray>? = null,
     prefixRetainUntil: Long? = null,
+    // Optional exact metadata from an ACTUAL earlier publisher. Defaults preserve old fixtures.
+    prefixVersions: List<String>? = null,
+    prefixRetentions: List<Long>? = null,
 ) {
     private val retainedPrefix = if (prefixBytes != null) {
-        prefixBytes.mapIndexed { index, bytes -> RetainedCopy(bytes.copyOf(), "catalog-version-${index + 1}", checkNotNull(prefixRetainUntil)) }
+        prefixBytes.mapIndexed { index, bytes -> RetainedCopy(bytes.copyOf(),
+            prefixVersions?.get(index) ?: "catalog-version-${index + 1}", prefixRetentions?.get(index) ?: checkNotNull(prefixRetainUntil)) }
     } else {
         listOfNotNull(
             predecessorBytes?.let { RetainedCopy(it.copyOf(), S3CatalogReadbackFixture.VERSION, checkNotNull(predecessorRetainUntil)) },
@@ -77,6 +81,8 @@ internal class CatalogGenesisPublishHttpFixture(
         check((overlapBytes == null) == (overlapRetainUntil == null) && (overlapBytes == null || predecessorBytes != null))
         check((prefixBytes == null) == (prefixRetainUntil == null))
         check(prefixBytes == null || (prefixBytes.isNotEmpty() && predecessorBytes == null && overlapBytes == null))
+        check(prefixVersions == null || prefixBytes != null && prefixVersions.size == prefixBytes.size && prefixVersions.all { it.isNotEmpty() && it != "null" })
+        check(prefixRetentions == null || prefixBytes != null && prefixRetentions.size == prefixBytes.size)
         put.respond = { request -> preserveAssertions { putReply(request).observeLifecycle() } }
         read.respond = { request -> preserveAssertions { readReply(request).observeLifecycle().apply { beforeCall = ::connectionFreeObservation } } }
     }

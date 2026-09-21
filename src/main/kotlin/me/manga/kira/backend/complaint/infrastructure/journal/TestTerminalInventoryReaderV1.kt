@@ -1,6 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.journal
 
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableStateV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalListedVersionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.TestOrdinaryInventoryS3ClientV1
@@ -23,13 +24,24 @@ import java.util.concurrent.atomic.AtomicReference
  * for BOTH passes (at most 2R / 2B); wire/plaintext/key/native-exchange resources are not retained.
  * The enclosing original owns denial/current SQL/cut/accounting, not this reader or its DTOs.
  */
-internal class TestTerminalInventoryReaderV1 private constructor(private val original: TestRunTerminalQuiescenceV1) : AutoCloseable {
-    internal val routing = original.routing
+internal class TestTerminalInventoryReaderV1 private constructor(
+    private val original: TestRunTerminalQuiescenceV1?,
+    private val catalog: CatalogTestRunTerminalV1? = null,
+) : AutoCloseable {
+    init { requireJournalPublication((original == null) != (catalog == null)) }
+    internal val routing = original?.routing ?: checkNotNull(catalog).routing
     internal val sealTerminalPrefix = routing.journalConfiguration.sealTerminalPrefix
-    private val acquisition = original.acquisition
+    private val acquisition = original?.acquisition ?: checkNotNull(catalog).acquisition
+    // D already owns the entire configured scan budget. The separate catalog original also has
+    // catalog work in its total, so its terminal pair needs a nonrenewable configured scan cap.
+    private val budget = original?.budget ?: checkNotNull(catalog).budget.capped(
+        routing.journalConfiguration.declaration().limits.deadlines.scanMillis.toLong())
+    private val runContext = original?.runContext ?: checkNotNull(catalog).runContext
+    private val epoch = original?.epoch ?: checkNotNull(catalog).epoch
+    private val writer = original?.writer ?: checkNotNull(catalog).writer
     private val codec = TestTerminalCodecV1.fromRetained(routing, acquisition.nanoTime)
-    private val expected = original.targets.associateBy { it.objectRef.objectKey }
-    private val maximumPages = Math.addExact(original.maximumVersions, 1L)
+    private val expected = (original?.targets ?: checkNotNull(catalog).terminalTargets()).associateBy { it.objectRef.objectKey }
+    private val maximumPages = Math.addExact(routing.journalConfiguration.declaration().limits.capacity.maximumRetainedVersions, 1L)
     private val busy = AtomicBoolean()
     private val closed = AtomicBoolean()
     private val failure = AtomicReference<Throwable?>()
@@ -45,13 +57,14 @@ internal class TestTerminalInventoryReaderV1 private constructor(private val ori
         requireJournalPublication(stage === Stage.READY && pass in 1..2 && pass == completedPasses + 1)
         stage = Stage.BEGIN_PASS
         val started = acquisition.sampleUtc()
-        original.beginInventoryPass(this, pass, started)
+        if (original != null) original.beginInventoryPass(this, pass, started)
+        else checkNotNull(catalog).beginTerminalInventoryPass(this, pass, started)
         val observed = ArrayList<TestPostTerminalInventoryEntryV1>(expected.size)
         val seen = HashSet<String>(expected.size)
-        val fold = TestPostTerminalInventoryFoldV1(routing.journalConfiguration, original.runContext, original.epoch, expected.size.toLong())
+        val fold = TestPostTerminalInventoryFoldV1(routing.journalConfiguration, runContext, epoch, expected.size.toLong())
         withJournalPublicationCleanup({
             stage = Stage.ACQUISITION
-            passAttempt = codec.startAttempt(TestTerminalCodecKindV1.EPOCH_SEAL, original.budget)
+            passAttempt = codec.startAttempt(TestTerminalCodecKindV1.EPOCH_SEAL, budget)
             val native = acquisition.construct(this)
             requireJournalPublication(graph.compareAndSet(null, native)) // Retain BEFORE any HTTP/SDK opening.
             native.acquireOwned(this)
@@ -71,12 +84,13 @@ internal class TestTerminalInventoryReaderV1 private constructor(private val ori
                     // Only native exchange/byte/key cleanup is required before SQL; idle concrete clients
                     // stay retained in this pass graph. No native call executes with a DB connection held.
                     stage = Stage.SQL_READ
-                    val row = original.expectedRow(this, listed.key, listed.version)
+                    val row = if (original != null) original.expectedRow(this, listed.key, listed.version)
+                        else checkNotNull(catalog).expectedTerminalRow(this, listed.key, listed.version)
                     stage = Stage.INVENTORY
                     val read = try {
                         requireJournalPublication(row.state === TestTerminalDurableStateV1.WIRE_FROZEN && row.binding.objectKey == listed.key &&
                             row.binding.objectId == target.id && row.canonicalSha256 == target.objectRef.canonicalSha256 && row.wireSha256 == target.objectRef.ciphertextSha256)
-                        val attempt = codec.startAttempt(target.kind, original.budget).also { codecAttempt = it }
+                        val attempt = codec.startAttempt(target.kind, budget).also { codecAttempt = it }
                         attempt.bindTerminalInventory(this)
                         val canonical = row.canonicalBytes()
                         val content = try { codec.restoreCanonical(target.kind, canonical, row.binding.routingKeyId, listed.key, row.canonicalSha256, attempt) }
@@ -93,7 +107,7 @@ internal class TestTerminalInventoryReaderV1 private constructor(private val ori
                                     requireJournalPublication(decoded.content === content && decoded.wireSha256 == target.objectRef.ciphertextSha256)
                                     acquisition.verifyRetention(facts.first, facts.second, checkNotNull(row.retainUntil))
                                     requireNativeRead()
-                                    Observed(this, TestPostTerminalInventoryEntryV1(original.writer, target.kind, target.startEpoch, target.endEpoch,
+                                    Observed(this, TestPostTerminalInventoryEntryV1(writer, target.kind, target.startEpoch, target.endEpoch,
                                         if (target.kind === TestTerminalCodecKindV1.EPOCH_SEAL) null else target.id, target.objectRef,
                                         listed.size, facts.first, checkNotNull(row.retainUntil), facts.second))
                                 }, { native.releaseKeys(this) })
@@ -104,7 +118,10 @@ internal class TestTerminalInventoryReaderV1 private constructor(private val ori
                     if (pass == 2) requireJournalPublication(read.entry == checkNotNull(entries[0])[observed.size], JournalPublicationFailureV1.INVALID_READBACK)
                     observed.add(read.entry)
                     currentReadback = read; stage = Stage.STAGING
-                    try { original.stageInventoryVersion(this, pass, read) }
+                    try {
+                        if (original != null) original.stageInventoryVersion(this, pass, read)
+                        else checkNotNull(catalog).stageTerminalInventoryVersion(this, pass, read)
+                    }
                     finally { currentReadback = null; stage = Stage.INVENTORY }
                 }
                 cursor = page.next ?: break
@@ -116,7 +133,8 @@ internal class TestTerminalInventoryReaderV1 private constructor(private val ori
         val finished = acquisition.sampleUtc()
         requireJournalPublication(finished >= started && graph.get() == null)
         entries[pass - 1] = observed.toList(); completedPasses = pass; stage = Stage.PASS_RELEASED
-        original.completeInventoryPass(this, pass, finished, summary)
+        if (original != null) original.completeInventoryPass(this, pass, finished, summary)
+        else checkNotNull(catalog).completeTerminalInventoryPass(this, pass, finished, summary)
         requireReader(); stage = Stage.READY; passAttempt = null
     }
 
@@ -155,20 +173,39 @@ internal class TestTerminalInventoryReaderV1 private constructor(private val ori
     }
     /** Complete private native metadata, also usable INSIDE this same original's later SQL boundary. */
     internal fun comparisonEntries(owner: TestRunTerminalQuiescenceV1, pass: Int): List<TestPostTerminalInventoryEntryV1> {
-        original.requireRunning(); failure.get()?.let { throw it }
+        checkNotNull(original).requireRunning(); failure.get()?.let { throw it }
         requireJournalPublication(original === owner && pass in 1..2 && completedPasses >= pass && graph.get() == null &&
             stage in setOf(Stage.PASS_RELEASED, Stage.READY, Stage.CLOSED))
         return checkNotNull(entries[pass - 1]).toList()
     }
     internal fun requireRetiredPair(owner: TestRunTerminalQuiescenceV1) {
-        requireConnectionFree(); original.requireRunning(); failure.get()?.let { throw it }
+        requireConnectionFree(); checkNotNull(original).requireRunning(); failure.get()?.let { throw it }
         requireJournalPublication(original === owner && closed.get() && stage === Stage.CLOSED && !busy.get() && graph.get() == null &&
             completedPasses == 2 && entries[0] == entries[1] && entries[0]?.size == expected.size)
     }
+    internal fun requireCompletedCatalogPass(owner: CatalogTestRunTerminalV1, pass: Int) {
+        requireReader(); requireJournalPublication(original == null && catalog === owner && pass in 1..2 && completedPasses >= pass &&
+            graph.get() == null && stage in setOf(Stage.PASS_RELEASED, Stage.READY))
+    }
+    internal fun catalogComparisonEntries(owner: CatalogTestRunTerminalV1, pass: Int): List<TestPostTerminalInventoryEntryV1> {
+        owner.requireRunning(); failure.get()?.let { throw it }
+        requireJournalPublication(original == null && catalog === owner && pass in 1..2 && completedPasses >= pass && graph.get() == null &&
+            stage in setOf(Stage.PASS_RELEASED, Stage.READY, Stage.CLOSED))
+        return checkNotNull(entries[pass - 1]).toList()
+    }
+    internal fun requireRetiredCatalogPair(owner: CatalogTestRunTerminalV1) {
+        requireConnectionFree(); owner.requireRunning(); failure.get()?.let { throw it }
+        requireJournalPublication(original == null && catalog === owner && closed.get() && stage === Stage.CLOSED && !busy.get() && graph.get() == null &&
+            completedPasses == 2 && entries[0] == entries[1] && entries[0]?.size == expected.size)
+    }
+    private fun requireCatalogObserved(owner: CatalogTestRunTerminalV1, observed: Observed) {
+        requireReader(); requireJournalPublication(original == null && catalog === owner && currentReadback === observed && stage === Stage.STAGING && codecAttempt == null)
+    }
     private fun requireReader() {
         requireConnectionFree(); failure.get()?.let { throw it }
-        requireJournalPublication(!closed.get()); original.requireInventoryReader(this)
-        original.budget.remainingMillis(1)
+        requireJournalPublication(!closed.get())
+        if (original != null) original.requireInventoryReader(this) else checkNotNull(catalog).requireTerminalInventoryReader(this)
+        budget.remainingMillis(1)
     }
     private fun requireObserved(owner: TestRunTerminalQuiescenceV1, observed: Observed) {
         requireReader(); requireJournalPublication(original === owner && currentReadback === observed && stage === Stage.STAGING && codecAttempt == null)
@@ -205,11 +242,16 @@ internal class TestTerminalInventoryReaderV1 private constructor(private val ori
     private class Observed(private val reader: TestTerminalInventoryReaderV1,
         override val entry: TestPostTerminalInventoryEntryV1) : TestTerminalInventoryReadbackV1 {
         override fun requireOriginal(original: TestRunTerminalQuiescenceV1) = reader.requireObserved(original, this)
+        override fun requireCatalog(original: CatalogTestRunTerminalV1) = reader.requireCatalogObserved(original, this)
         override fun toString(): String = "TestTerminalInventoryReadbackV1(actual-native,redacted,no-cut-authority)"
     }
     private enum class Stage { READY, BEGIN_PASS, ACQUISITION, INVENTORY, SQL_READ, STAGING, PASS_RELEASED, CLOSED, FAILED }
     override fun toString(): String = "TestTerminalInventoryReaderV1(whole-prefix,native-only,redacted)"
     companion object {
+        internal fun beginCatalog(original: CatalogTestRunTerminalV1): TestTerminalInventoryReaderV1 {
+            requireConnectionFree(); original.requireTerminalInventoryStart()
+            return TestTerminalInventoryReaderV1(null, original)
+        }
         internal fun begin(original: TestRunTerminalQuiescenceV1): TestTerminalInventoryReaderV1 {
             requireConnectionFree(); original.requireInventoryStart()
             return TestTerminalInventoryReaderV1(original)
@@ -220,4 +262,5 @@ internal class TestTerminalInventoryReaderV1 private constructor(private val ori
 internal sealed interface TestTerminalInventoryReadbackV1 {
     val entry: TestPostTerminalInventoryEntryV1
     fun requireOriginal(original: TestRunTerminalQuiescenceV1)
+    fun requireCatalog(original: CatalogTestRunTerminalV1)
 }

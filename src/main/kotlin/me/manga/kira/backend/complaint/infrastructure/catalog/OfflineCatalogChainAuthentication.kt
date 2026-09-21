@@ -20,11 +20,14 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogInventoryMan
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogRotationManifestV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationManifestV3
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationSyntaxV3
+import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunTerminalManifestV4
+import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunTerminalSyntaxV4
 import me.manga.kira.backend.complaint.domain.catalog.OfflineRequiredSignerV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleException
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleFailure
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
 import me.manga.kira.backend.complaint.domain.catalog.requireOfflineTrustBundle
+import me.manga.kira.backend.complaint.domain.catalog.snapshot
 import me.manga.kira.backend.complaint.parsing.catalog.OfflineTrustBundleParser
 import java.security.interfaces.RSAPublicKey
 
@@ -46,6 +49,8 @@ internal class OfflineCatalogChainAuthentication private constructor(
         private set
     private val seenSignerIds = mutableSetOf(initialSigner.keyId)
     private var testRunActivationAppended = false
+    private var testRunActivation: OfflineCatalogTestRunActivationManifestV3? = null
+    private var testRunTerminalAppended = false
 
     fun append(
         claims: CatalogGenerationAuthenticationClaims,
@@ -85,6 +90,30 @@ internal class OfflineCatalogChainAuthentication private constructor(
         latestApproval = manifest.approvals.maxOf { it.approvedAtEpochSecond }
         tail = CatalogTailEvidence(manifest.generation, Sha256.hex(manifestBytes), Sha256.hex(envelopeBytes), manifest.catalogWriterGenerationId)
         testRunActivationAppended = true
+        testRunActivation = manifest.snapshot()
+    }
+
+    /** Only the distinct contiguous V3 -> V4 reader can use this nonempty-history transition. */
+    fun appendTestRunTerminal(
+        manifest: OfflineCatalogTestRunTerminalManifestV4,
+        signatures: List<OfflineCatalogGenesisSignatureV1>,
+        manifestBytes: ByteArray,
+        envelopeBytes: ByteArray,
+        policy: OfflineCatalogChainReaderPolicy,
+    ) {
+        requireOfflineTrustBundle(testRunActivationAppended && !testRunTerminalAppended)
+        val activation = testRunActivation ?: throw OfflineTrustBundleException(OfflineTrustBundleFailure.INVALID_DOCUMENT)
+        OfflineCatalogTestRunTerminalSyntaxV4.requireActivation(manifest, activation, tail.envelopeSha256)
+        validatePredecessor(manifest.operationToken, manifest.generation, manifest.previousEnvelopeSha256, manifest.initialTrustBundleEnvelopeSha256)
+        requireOfflineTrustBundle(manifest.initialWriterRegistry == registry && manifest.oldestRestoreTimeEpochSecond == oldestRestoreTimeEpochSecond)
+        validateWriterAndApprovals(manifest.catalogWriterGenerationId, manifest.creation, manifest.approvals, manifest.requiredSignerPolicy, policy)
+        val stable = rotation as? CatalogRotationState.Stable
+        requireOfflineTrustBundle(stable != null && manifest.requiredSignerPolicy.mode == "SINGLE" &&
+            manifest.requiredSignerPolicy.members == listOf(stable.active))
+        verifySignatures(manifest.requiredSignerPolicy, signatures, manifestBytes)
+        latestApproval = manifest.approvals.maxOf { it.approvedAtEpochSecond }
+        tail = CatalogTailEvidence(manifest.generation, Sha256.hex(manifestBytes), Sha256.hex(envelopeBytes), manifest.catalogWriterGenerationId)
+        testRunTerminalAppended = true
     }
 
     fun finish() {

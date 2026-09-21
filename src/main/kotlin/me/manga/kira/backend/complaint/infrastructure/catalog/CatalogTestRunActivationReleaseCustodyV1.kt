@@ -26,8 +26,10 @@ internal class CatalogTestRunActivationReleaseCustodyV1 private constructor(
     root: Path,
     private var allocationBytes: ByteArray?,
     private val originalBudget: PersistenceTimeBudget,
+    private val allocationKind: Allocation = Allocation.ACTIVATION,
 ) : AutoCloseable {
-    internal val allocationDirectoryName: String = "test-run-activation"
+    internal val allocationDirectoryName: String = allocationKind.directory
+    internal val lockFileName: String = allocationKind.lock
     internal val leaves: List<CatalogTestRunActivationReleaseLeafV1> = CatalogTestRunActivationReleaseLeafV1.entries.toList()
     private val caller = Thread.currentThread()
     private val files = LinuxTestRunActivationReleaseFilesV1(this, root)
@@ -189,6 +191,12 @@ internal class CatalogTestRunActivationReleaseCustodyV1 private constructor(
 
     private enum class State { RETAINED, OPENING, OPEN, FAILED, CLOSED }
 
+    /** Closed byte-custody alternatives, not lifecycle/Sign/PUT/continuation authority. */
+    private enum class Allocation(val directory: String, val lock: String) {
+        ACTIVATION("test-run-activation", "test-run-activation.lock"),
+        TERMINAL("test-run-terminal", "test-run-terminal.lock"),
+    }
+
     companion object {
         private const val BUDGET_CEILING_MILLIS = 30_000L
         private const val MAX_ACTIVE_ROOTS = 16
@@ -218,6 +226,33 @@ internal class CatalogTestRunActivationReleaseCustodyV1 private constructor(
                 CatalogTestRunActivationCustodyFailureV1.INVALID_INPUT,
             )
             return CatalogTestRunActivationReleaseCustodyV1(root, null, originalBudget)
+        }
+
+        /** Separate provisioned root; identical secure byte mechanism, never activation allocation adoption. */
+        internal fun retainTerminal(
+            original: CatalogTestRunTerminalV1, root: Path, allocationBytes: ByteArray,
+        ): CatalogTestRunActivationReleaseCustodyV1 {
+            original.requireReleaseRetention(existing = false)
+            requireTestActivationCustody(
+                root.fileSystem === FileSystems.getDefault() && root.isAbsolute && root == root.normalize() &&
+                    root.nameCount in 1..MAX_PATH_DEPTH && root.toString().length <= MAX_PATH_CHARS &&
+                    allocationBytes.size in 1..4096,
+                CatalogTestRunActivationCustodyFailureV1.INVALID_INPUT,
+            )
+            return CatalogTestRunActivationReleaseCustodyV1(root, allocationBytes.copyOf(), original.budget, Allocation.TERMINAL)
+        }
+
+        /** Existing exact terminal allocation only; neither missing files nor a token authorize repair. */
+        internal fun retainExistingTerminal(
+            original: CatalogTestRunTerminalV1, root: Path,
+        ): CatalogTestRunActivationReleaseCustodyV1 {
+            original.requireReleaseRetention(existing = true)
+            requireTestActivationCustody(
+                root.fileSystem === FileSystems.getDefault() && root.isAbsolute && root == root.normalize() &&
+                    root.nameCount in 1..MAX_PATH_DEPTH && root.toString().length <= MAX_PATH_CHARS,
+                CatalogTestRunActivationCustodyFailureV1.INVALID_INPUT,
+            )
+            return CatalogTestRunActivationReleaseCustodyV1(root, null, original.budget, Allocation.TERMINAL)
         }
 
         internal fun preserveInterruption(failure: Throwable) {

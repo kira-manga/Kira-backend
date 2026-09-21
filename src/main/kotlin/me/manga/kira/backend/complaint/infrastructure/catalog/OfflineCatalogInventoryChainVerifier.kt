@@ -129,7 +129,7 @@ internal object OfflineCatalogInventoryChainVerifier {
         )
     }
 
-    private fun appendPrefix(
+    internal fun appendPrefix(
         envelope: OfflineCatalogRotationEnvelopeV1,
         bytes: ByteArray,
         state: OfflineCatalogChainAuthentication,
@@ -148,7 +148,7 @@ internal object OfflineCatalogInventoryChainVerifier {
         state.append(manifest.authenticationClaims(), envelope.signatures, manifestBytes, bytes, policy)
     }
 
-    private fun appendInventory(
+    internal fun appendInventory(
         envelope: OfflineCatalogInventoryEnvelopeV2,
         bytes: ByteArray,
         state: OfflineCatalogChainAuthentication,

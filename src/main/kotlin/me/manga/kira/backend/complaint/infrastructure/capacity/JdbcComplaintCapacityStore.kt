@@ -72,6 +72,8 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotat
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationKindV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationProjectionCountersV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalOperationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalPreflightOperationV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealOperationV1
@@ -143,6 +145,17 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
     internal fun lockForCatalogTestRunActivation(operation: CatalogTestRunActivationOperationV1): LockedCatalogTestRunActivation =
         LockedCatalogTestRunActivation.lock(this, operation)
+
+    internal fun lockForCatalogTestRunTerminal(operation: CatalogTestRunTerminalOperationV1): LockedCatalogTestRunTerminal =
+        LockedCatalogTestRunTerminal.lock(this, operation)
+
+    /** Separate read-only P/L preflight. Cannot select a catalog mutation or obtain any spending capability. */
+    internal fun lockForTestRunTerminalCatalogPreflight(operation: CatalogTestRunTerminalPreflightOperationV1): CatalogTestRunActivationProjectionCountersV1 {
+        operation.beginCounterLock(jdbc)
+        val result = projectionCounters(readLockedCounters())
+        operation.requireCounterRead(jdbc)
+        return result
+    }
 
     /** Fixed registration read only. No settlement/update capability is returned. */
     internal fun lockForTestNamespaceRegistration(operation: TestNamespaceRegistrationOperationV1): CatalogTestRunActivationProjectionCountersV1 {
@@ -1020,6 +1033,59 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }
+            }
+        }
+    }
+
+    /** Terminal prepaid conversion only. Every no-op/replay preserves all physical counter fingerprints. */
+    internal class LockedCatalogTestRunTerminal private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: CatalogTestRunTerminalOperationV1,
+        private val rows: LockedCounters,
+        private val physicalBefore: CatalogTestRunActivationProjectionCountersV1,
+    ) {
+        private var issued = false
+        private var settled: CatalogTestRunActivationProjectionCountersV1? = null
+        fun belongsTo(candidate: CatalogTestRunTerminalOperationV1): Boolean = operation === candidate
+        fun settledFor(candidate: CatalogTestRunTerminalOperationV1): Boolean = belongsTo(candidate) && settled != null
+        fun before(candidate: CatalogTestRunTerminalOperationV1): CatalogTestRunActivationProjectionCountersV1 {
+            check(candidate === operation); operation.requireCounterRead(this, store.jdbc); return physicalBefore
+        }
+        fun settle(candidate: CatalogTestRunTerminalOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                operation.requireCounterTransfer(this, store.jdbc); issued = true
+                val before = rows.ledger.balance
+                val after = operation.settleLockedLedger(store.jdbc, rows.ledger, rows.daily, checkNotNull(store.expectedPolicyDigest)).balance
+                check(after.free == before.free && after.recoveryReserved == before.recoveryReserved)
+                for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                    operation.requireCounterTransfer(this, store.jdbc)
+                    if (before.actual[counter] == after.actual[counter] && before.testReserved[counter] == after.testReserved[counter]) continue
+                    check(store.jdbc.update(TEST_RESERVE_COUNTER,
+                        after.actual[counter], after.recoveryReserved[counter], after.testReserved[counter], counter.storedName,
+                        before.free[counter], before.actual[counter], before.recoveryReserved[counter], before.testReserved[counter]) == 1)
+                }
+                operation.requireCounterTransfer(this, store.jdbc)
+                val observed = store.projectionCounters(store.readCounters(READ_COUNTERS))
+                observed.requireSettled(physicalBefore, after)
+                if (before == after) observed.requireSame(physicalBefore)
+                operation.requireCounterTransfer(this, store.jdbc); settled = observed
+            } catch (problem: Throwable) { operation.failed(problem) }
+        }
+        fun reread(candidate: CatalogTestRunTerminalOperationV1): CatalogTestRunActivationProjectionCountersV1 {
+            try {
+                check(candidate === operation && settled != null); operation.requireCounterRead(this, store.jdbc)
+                val observed = store.projectionCounters(store.readCounters(READ_COUNTERS))
+                observed.requireSame(checkNotNull(settled)); operation.requireCounterRead(this, store.jdbc); return observed
+            } catch (problem: Throwable) { operation.failed(problem) }
+        }
+        companion object {
+            fun lock(store: JdbcComplaintCapacityStore, operation: CatalogTestRunTerminalOperationV1): LockedCatalogTestRunTerminal {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    val rows = store.readLockedCounters()
+                    return LockedCatalogTestRunTerminal(store, operation, rows, store.projectionCounters(rows))
+                } catch (problem: Throwable) { operation.failed(problem) }
             }
         }
     }

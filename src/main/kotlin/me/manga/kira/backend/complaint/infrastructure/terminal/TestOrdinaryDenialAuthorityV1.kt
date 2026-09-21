@@ -4,6 +4,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.manga.kira.backend.common.CanonicalJson
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalV1
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
@@ -57,6 +58,26 @@ internal class TestOrdinaryDenialAuthorityPolicyV1 private constructor(
     ): AdmittedOrdinaryDenialV1 {
         requireConnectionFree()
         original.requireAuthority(this)
+        val (body, evidence) = verify(approval, rawEvidence)
+        original.requireDenialContext(body)
+        original.requireAuthority(this)
+        return Admitted(original, this, body, evidence)
+    }
+
+    /** Exact externally re-supplied closure for the separate catalog original; never fabricates a drain/quiescence admission. */
+    internal fun readmitCatalog(
+        original: CatalogTestRunTerminalV1, approval: ByteArray, rawEvidence: List<ByteArray>,
+    ): AdmittedCatalogOrdinaryDenialV1 {
+        requireConnectionFree()
+        original.requireOrdinaryAuthority(this)
+        val (body, evidence) = verify(approval, rawEvidence)
+        original.requireOrdinaryDenialContext(body, evidence)
+        original.requireOrdinaryAuthority(this)
+        return CatalogAdmitted(original, this, body, evidence)
+    }
+
+    /** Cryptographic/closed-body validation only; the two fixed callers separately bind their actual original. */
+    private fun verify(approval: ByteArray, rawEvidence: List<ByteArray>): Pair<TestOrdinaryDenialStatementV1, TestTerminalEvidenceDigestV1> {
         val count = rawEvidence.size
         require(approval.size in 1..MAX_ARTIFACT_BYTES && count in 2..17) { REFUSAL }
         val input = approval.copyOf()
@@ -89,7 +110,6 @@ internal class TestOrdinaryDenialAuthorityPolicyV1 private constructor(
             val frame = frame(declaration.keyId, canonicalBody)
             try { OfflineTrustBundleCrypto.verify(key, frame, signature) }
             finally { signature.fill(0); frame.fill(0); canonicalBody.fill(0) }
-            original.requireDenialContext(body)
             validateTimes(body)
             require(body.effectivePaths.size in 1..MAX_PATHS && body.effectivePaths.zipWithNext().all { (a, b) -> a.pathId < b.pathId }) { REFUSAL }
             body.effectivePaths.forEach {
@@ -101,8 +121,7 @@ internal class TestOrdinaryDenialAuthorityPolicyV1 private constructor(
             require(references.size == raw.size && references.map { it.sha256 }.distinct().size == references.size) { REFUSAL }
             val actual = raw.map { TestTerminalEvidenceDigestV1(Sha256.hex(it), it.size.toLong()) }
             require(actual.distinct().size == actual.size && actual.toSet() == references.toSet()) { REFUSAL }
-            original.requireAuthority(this)
-            return Admitted(original, this, body, TestTerminalEvidenceDigestV1(Sha256.hex(input), input.size.toLong()))
+            return body to TestTerminalEvidenceDigestV1(Sha256.hex(input), input.size.toLong())
         } finally { input.fill(0); raw.forEach { it.fill(0) } }
     }
 
@@ -123,6 +142,22 @@ internal class TestOrdinaryDenialAuthorityPolicyV1 private constructor(
             maxOf(statement.denialEffectiveAtEpochSecond, statement.lastSessionExpiryEpochSecond), statement.acceptedRequestBoundSeconds),
             Math.multiplyExact(2L, statement.utcUncertaintySeconds)))
         override fun toString(): String = "AdmittedOrdinaryDenialV1(original-only,redacted)"
+    }
+
+    private class CatalogAdmitted(
+        private val original: CatalogTestRunTerminalV1,
+        private val policy: TestOrdinaryDenialAuthorityPolicyV1,
+        override val statement: TestOrdinaryDenialStatementV1,
+        override val policyEvidence: TestTerminalEvidenceDigestV1,
+    ) : AdmittedCatalogOrdinaryDenialV1 {
+        override fun requireOriginal(candidate: CatalogTestRunTerminalV1) {
+            require(candidate === original) { REFUSAL }
+            original.requireOrdinaryAuthority(policy)
+        }
+        override fun firstStartAfter(): Instant = Instant.ofEpochSecond(Math.addExact(Math.addExact(
+            maxOf(statement.denialEffectiveAtEpochSecond, statement.lastSessionExpiryEpochSecond), statement.acceptedRequestBoundSeconds),
+            Math.multiplyExact(2L, statement.utcUncertaintySeconds)))
+        override fun toString(): String = "AdmittedCatalogOrdinaryDenialV1(original-only,redacted)"
     }
 
     companion object {
@@ -179,5 +214,13 @@ internal sealed interface AdmittedOrdinaryDenialV1 {
     val statement: TestOrdinaryDenialStatementV1
     val policyEvidence: TestTerminalEvidenceDigestV1
     fun requireOriginal(candidate: TestRunOrdinaryDrainV1)
+    fun firstStartAfter(): Instant
+}
+
+/** Fresh genuine catalog re-admission only. No SQL digest, old admitted wrapper or copied cut implements it. */
+internal sealed interface AdmittedCatalogOrdinaryDenialV1 {
+    val statement: TestOrdinaryDenialStatementV1
+    val policyEvidence: TestTerminalEvidenceDigestV1
+    fun requireOriginal(candidate: CatalogTestRunTerminalV1)
     fun firstStartAfter(): Instant
 }

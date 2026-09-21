@@ -83,6 +83,17 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_TEST_TERMINAL_QUIESCENCE,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
         )
+        val terminalCatalog = setOf(
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_CAPTURE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_ACQUIRE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PREPARE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_SIGNATURE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_COMPLETE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PROJECT,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELEASE,
+        )
+        val terminalCatalogPreflight = PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT
         val registration = setOf(
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
@@ -109,20 +120,24 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_RELEASE,
         )
         val initialCheckpoint = setOf(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT)
-        val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + initialAdmission + sealing + activeFirstCut + activeSeal + activeFirstCutSuccessor + initialCheckpoint + activeSealRecovery
-        assertEquals(126, PersistencePhasePath.entries.size)
+        val activeQueue = setOf(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE)
+        val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + terminalCatalog + terminalCatalogPreflight +
+            registration + initialAdmission + sealing + activeFirstCut + activeSeal + activeFirstCutSuccessor + initialCheckpoint + activeSealRecovery + activeQueue
+        assertEquals(136, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
         assertEquals(3, adminWriters.size)
         assertEquals(3, adminDeletionWriters.size)
         assertEquals(7, terminalWriters.size)
+        assertEquals(8, terminalCatalog.size)
         assertEquals(3, registration.size)
         assertEquals(2, initialAdmission.size)
         assertEquals(3, activeFirstCut.size)
         assertEquals(2, activeSeal.size)
         assertEquals(1, activeSealRecovery.size)
         assertEquals(3, activeFirstCutSuccessor.size)
-        assertEquals(81, writers.size)
+        assertEquals(1, activeQueue.size)
+        assertEquals(91, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,
@@ -182,6 +197,10 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         assertEquals(42, (oldObservations + adminObservations + terminalObservations + snapshot).size)
         assertEquals(oldObservations + adminObservations + terminalObservations + snapshot, PersistencePhasePath.entries.filter { !it.source && !it.complaintMaintenanceWriter }.toSet())
         assertEquals(testWriters + snapshot, PersistencePhasePath.entries.filter { it.catalogTestRunActivation }.toSet())
+        assertEquals(terminalCatalog, PersistencePhasePath.entries.filter { it.catalogTestRunTerminal }.toSet())
+        assertFalse(terminalCatalog.any { it.readOnly || it.catalogTestRunActivation || it.testRunSealing })
+        // Writable transaction permits SELECT FOR UPDATE; it does not grant preflight DML or a catalog selector.
+        assertFalse(terminalCatalogPreflight.readOnly || terminalCatalogPreflight.catalogTestRunTerminal || terminalCatalogPreflight.catalogTestRunActivation)
         assertTrue(snapshot.readOnly)
         assertFalse(testWriters.any { it.readOnly })
         assertFalse(adminWriters.any { it.readOnly })

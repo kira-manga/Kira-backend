@@ -7,6 +7,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettin
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalogReadbackConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundTestActivationConfigurationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalPreparedRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.security.ComplaintOwnerDeleteAllAdmissionPolicy
 import me.manga.kira.backend.security.VersionBoundTestComplaintConsumerConfigurationV1
@@ -135,6 +136,13 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         requireConnectionFree()
         requireRegistrationTarget()
         requireRegistration(original.process === this && original.assembly.target === this && registrationClaimed.compareAndSet(false, true))
+    }
+
+    /** Separately original-owned PREPARED recovery consumes the same fresh-process claim, never a registration capability. */
+    internal fun claimTerminalPreparedRecovery(original: CatalogTestRunTerminalPreparedRecoveryV1) {
+        requireConnectionFree()
+        requireRegistrationTarget()
+        requireRegistration(original.process === this && registrationClaimed.compareAndSet(false, true))
     }
 
     private fun requireOwners() {

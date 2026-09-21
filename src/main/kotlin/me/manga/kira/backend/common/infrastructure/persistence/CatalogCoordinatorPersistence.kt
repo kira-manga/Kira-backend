@@ -28,6 +28,8 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestO
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestInstallationManifestPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestInstallationManifestPublicationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestTerminalQuiescencePhaseExecutorV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogTestRunTerminalPhaseExecutorV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestRunTerminalCatalogPreflightPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestRunPurgePhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestTerminalEpochSealPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestOrdinaryDrainPhaseExecutorV1
@@ -85,6 +87,10 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val testInstallationManifestPublication: ComplaintTestInstallationManifestPublicationPhaseExecutorV1 get() = checkNotNull(testInstallationManifestPublicationExecutor)
     private var testTerminalQuiescenceExecutor: ComplaintTestTerminalQuiescencePhaseExecutorV1? = null
     internal val testTerminalQuiescence: ComplaintTestTerminalQuiescencePhaseExecutorV1 get() = checkNotNull(testTerminalQuiescenceExecutor)
+    private var testRunTerminalCatalogExecutor: ComplaintCatalogTestRunTerminalPhaseExecutorV1? = null
+    private var testRunTerminalCatalogPreflightExecutor: ComplaintTestRunTerminalCatalogPreflightPhaseExecutorV1? = null
+    internal val testRunTerminalCatalog: ComplaintCatalogTestRunTerminalPhaseExecutorV1 get() = checkNotNull(testRunTerminalCatalogExecutor)
+    internal val testRunTerminalCatalogPreflight: ComplaintTestRunTerminalCatalogPreflightPhaseExecutorV1 get() = checkNotNull(testRunTerminalCatalogPreflightExecutor)
     private var testRunPurgeExecutor: ComplaintTestRunPurgePhaseExecutorV1? = null
     internal val testRunPurge: ComplaintTestRunPurgePhaseExecutorV1 get() = checkNotNull(testRunPurgeExecutor)
     private var testTerminalEpochSealExecutor: ComplaintTestTerminalEpochSealPhaseExecutorV1? = null
@@ -186,6 +192,8 @@ internal class CatalogCoordinatorPersistence private constructor(
         testRunPurgeExecutor = ComplaintTestRunPurgePhaseExecutorV1(this)
         testTerminalEpochSealExecutor = ComplaintTestTerminalEpochSealPhaseExecutorV1(this)
         testTerminalQuiescenceExecutor = ComplaintTestTerminalQuiescencePhaseExecutorV1(this)
+        testRunTerminalCatalogExecutor = ComplaintCatalogTestRunTerminalPhaseExecutorV1(this)
+        testRunTerminalCatalogPreflightExecutor = ComplaintTestRunTerminalCatalogPreflightPhaseExecutorV1(this)
         testOrdinaryDrainExecutor = ComplaintTestOrdinaryDrainPhaseExecutorV1(this)
         projectedHeadExecutor = ComplaintCatalogProjectedHeadPhaseExecutor(this, jdbc)
         leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)

@@ -46,6 +46,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
     private val testInitialCheckpoint: TestActiveInitialCheckpointV1? = null,
     private val testActiveQueue: TestActiveOwnerDeleteQueueV1? = null,
     private val testActiveSealRecovery: TestActiveOrdinarySealRecoveryV1? = null,
+    private val testTerminal: CatalogTestRunTerminalV1? = null,
 ) : SdkHttpClient {
     constructor(owner: CatalogSignerRotationFreezeAttemptV1, budget: PersistenceTimeBudget) : this(owner, null, budget)
     internal constructor(owner: CatalogSignerRotationPreparedRecoveryV1, budget: PersistenceTimeBudget) : this(null, owner, budget)
@@ -53,6 +54,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
     internal constructor(owner: CatalogSignerRotationDeliveryV1, budget: PersistenceTimeBudget) : this(null, null, budget, delivery = owner)
     internal constructor(owner: CatalogSignerRotationActivationV1, budget: PersistenceTimeBudget) : this(null, null, budget, activation = owner)
     internal constructor(owner: CatalogTestRunActivationV1, budget: PersistenceTimeBudget) : this(null, null, budget, testActivation = owner)
+    internal constructor(owner: CatalogTestRunTerminalV1, budget: PersistenceTimeBudget) : this(null, null, budget, testTerminal = owner)
     internal constructor(owner: ComplaintTestNamespaceRegistrationAttemptV1, budget: PersistenceTimeBudget) : this(null, null, budget, testRegistration = owner)
     internal constructor(owner: ComplaintTestInitialAdmissionV1, budget: PersistenceTimeBudget) : this(null, null, budget, initialAdmission = owner)
     internal constructor(owner: TestActiveFirstCutV1, budget: PersistenceTimeBudget) : this(null, null, budget, activeFirstCut = owner)
@@ -133,6 +135,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
             delivery != null -> delivery.requireProviderRunning()
             activation != null -> activation.requireProviderRunning()
             testActivation != null -> testActivation.requireProviderRunning()
+            testTerminal != null -> testTerminal.requireProviderRunning()
             testRegistration != null -> testRegistration.requireProviderRunning()
             initialAdmission != null -> initialAdmission.requireProviderRunning()
             activeFirstCut != null -> activeFirstCut.requireProviderRunning()
@@ -157,6 +160,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
         delivery?.observeFailure(failure)
         activation?.observeFailure(failure)
         testActivation?.observeFailure(failure)
+        testTerminal?.observeFailure(failure)
         testRegistration?.observeFailure(failure)
         initialAdmission?.observeFailure(failure)
         activeFirstCut?.observeFailure(failure)
@@ -337,6 +341,8 @@ internal class CatalogSignerRotationReadbackHttpPairV1 private constructor(
     internal constructor(owner: CatalogSignerRotationActivationV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
     internal constructor(owner: CatalogTestRunActivationV1, budget: PersistenceTimeBudget) :
+        this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
+    internal constructor(owner: CatalogTestRunTerminalV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
     internal constructor(owner: ComplaintTestInitialAdmissionV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))

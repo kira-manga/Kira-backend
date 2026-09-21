@@ -34,6 +34,8 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPubl
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalKindV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
@@ -139,6 +141,12 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterTestInstallationManifestVerify(original: TestRunInstallationManifestPublicationV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_VERIFY, testInstallationManifestPublication = original)
+
+    internal fun enterCatalogTestRunTerminal(original: CatalogTestRunTerminalV1, kind: CatalogTestRunTerminalKindV1): PersistencePhaseContext =
+        enter(kind.path, testRunTerminalCatalog = original)
+
+    internal fun enterTestRunTerminalCatalogPreflight(original: CatalogTestRunTerminalV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT, testRunTerminalCatalog = original)
 
     internal fun enterTestTerminalQuiescence(original: TestRunTerminalQuiescenceV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_TERMINAL_QUIESCENCE, testTerminalQuiescence = original)
@@ -567,6 +575,7 @@ internal class PersistencePhaseOwnership private constructor(
         testActiveQueue: TestActiveOwnerDeleteQueueV1? = null,
         testActiveSealRecovery: TestActiveOrdinarySealRecoveryV1? = null,
         testTerminalQuiescence: TestRunTerminalQuiescenceV1? = null,
+        testRunTerminalCatalog: CatalogTestRunTerminalV1? = null,
     ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
@@ -581,6 +590,9 @@ internal class PersistencePhaseOwnership private constructor(
         requireSignerRotationDeliveryEntry(path, signerRotationDelivery)
         requireSignerRotationActivationEntry(path, signerRotationActivation)
         requireTestRunActivationEntry(path, testRunActivation)
+        if ((path.catalogTestRunTerminal || path === PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT) != (testRunTerminalCatalog != null)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
         if ((path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION) != (testRegistration != null)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
@@ -684,6 +696,7 @@ internal class PersistencePhaseOwnership private constructor(
         testRunPurge?.requirePhaseEntry(this, path)
         testTerminalEpochSeal?.requirePhaseEntry(this, path)
         testTerminalQuiescence?.requirePhaseEntry(this, path)
+        testRunTerminalCatalog?.requirePhaseEntry(this, path)
         testRunOwnerDelete?.requirePhaseEntry(this, path)
         testRunOwnerDeleteAll?.requirePhaseEntry(this, path)
         testRunAdminDelete?.requirePhaseEntry(this, path)
@@ -718,6 +731,7 @@ internal class PersistencePhaseOwnership private constructor(
         val testInstallationManifestWork = testInstallationManifest?.budget?.capped(2_000)
         val testInstallationManifestPublicationWork = testInstallationManifestPublication?.phaseBudget()?.capped(2_000)
         val testTerminalQuiescenceWork = testTerminalQuiescence?.phaseBudget()?.capped(2_000)
+        val testRunTerminalCatalogWork = testRunTerminalCatalog?.budget?.capped(2_000)
         val testRunPurgeWork = testRunPurge?.phaseBudget()?.capped(2_000)
         val testTerminalEpochSealWork = testTerminalEpochSeal?.phaseBudget()?.capped(2_000)
         val testRunOwnerDeleteWork = testRunOwnerDelete?.budget?.capped(2_000)
@@ -816,6 +830,8 @@ internal class PersistencePhaseOwnership private constructor(
                 testActiveOrdinarySealRecoveryWork = testActiveOrdinarySealRecoveryWork,
                 testTerminalQuiescence = testTerminalQuiescence,
                 testTerminalQuiescenceWork = testTerminalQuiescenceWork,
+                testRunTerminalCatalog = testRunTerminalCatalog,
+                testRunTerminalCatalogWork = testRunTerminalCatalogWork,
             )
             phase = prepared
             // Retain before any publication/permit effect, including entry failures that never return a phase to the executor.
@@ -842,6 +858,7 @@ internal class PersistencePhaseOwnership private constructor(
             testRunPurge?.retainPhase(prepared)
             testTerminalEpochSeal?.retainPhase(prepared)
             testTerminalQuiescence?.retainPhase(prepared)
+            testRunTerminalCatalog?.retainPhase(prepared)
             testRunOwnerDelete?.retainPhase(prepared)
             testRunOwnerDeleteAll?.retainPhase(prepared)
             testRunAdminDelete?.retainPhase(prepared)
@@ -876,6 +893,7 @@ internal class PersistencePhaseOwnership private constructor(
             testRunPurge?.observeFailure(failure)
             testTerminalEpochSeal?.observeFailure(failure)
             testTerminalQuiescence?.observeFailure(failure)
+            testRunTerminalCatalog?.observeFailure(failure)
             testRunOwnerDelete?.observeFailure(failure)
             testRunOwnerDeleteAll?.observeFailure(failure)
             testRunAdminDelete?.observeFailure(failure)
@@ -905,6 +923,7 @@ internal class PersistencePhaseOwnership private constructor(
                 testInstallationManifestPublication?.observeFailure(cleanup)
                 testRunPurge?.observeFailure(cleanup)
                 testTerminalEpochSeal?.observeFailure(cleanup)
+                testRunTerminalCatalog?.observeFailure(cleanup)
                 testRunOwnerDelete?.observeFailure(cleanup)
                 testRunOwnerDeleteAll?.observeFailure(cleanup)
                 testRunAdminDelete?.observeFailure(cleanup)
@@ -933,6 +952,7 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { testInstallationManifestPublication?.observePhaseCleanup(it) }
                 phase?.let { testRunPurge?.observePhaseCleanup(it) }
                 phase?.let { testTerminalEpochSeal?.observePhaseCleanup(it) }
+                phase?.let { testRunTerminalCatalog?.observePhaseCleanup(it) }
                 phase?.let { testRunOwnerDelete?.observePhaseCleanup(it) }
                 phase?.let { testRunOwnerDeleteAll?.observePhaseCleanup(it) }
                 phase?.let { testRunAdminDelete?.observePhaseCleanup(it) }
@@ -1169,6 +1189,15 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
                 PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
                 PersistencePhasePath.COMPLAINT_TEST_TERMINAL_QUIESCENCE,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_CAPTURE,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_ACQUIRE,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PREPARE,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELOAD,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_SIGNATURE,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_COMPLETE,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PROJECT,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELEASE,
+                PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY,
                 PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
@@ -1375,6 +1404,15 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
             PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
             PersistencePhasePath.COMPLAINT_TEST_TERMINAL_QUIESCENCE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_CAPTURE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_ACQUIRE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PREPARE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_SIGNATURE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_COMPLETE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PROJECT,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELEASE,
+            PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT,
             PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
@@ -1562,6 +1600,15 @@ internal enum class PersistencePhasePath {
     COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
     COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
     COMPLAINT_TEST_TERMINAL_QUIESCENCE,
+    COMPLAINT_CATALOG_TEST_RUN_TERMINAL_CAPTURE,
+    COMPLAINT_CATALOG_TEST_RUN_TERMINAL_ACQUIRE,
+    COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PREPARE,
+    COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELOAD,
+    COMPLAINT_CATALOG_TEST_RUN_TERMINAL_SIGNATURE,
+    COMPLAINT_CATALOG_TEST_RUN_TERMINAL_COMPLETE,
+    COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PROJECT,
+    COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELEASE,
+    COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT,
     COMPLAINT_TEST_RUN_PURGE_VERIFY,
     COMPLAINT_TEST_ORDINARY_DRAIN,
     COMPLAINT_CATALOG_GENESIS_PREPARE,
@@ -1632,6 +1679,17 @@ internal enum class PersistencePhasePath {
     internal val testRunSealing: Boolean
         get() = this === COMPLAINT_TEST_RUN_SEAL || this === COMPLAINT_TEST_RUN_SEALED_AUDIT
 
+    /** Fixed scoped terminal catalog paths. Preflight remains a separately typed boundary. */
+    internal val catalogTestRunTerminal: Boolean
+        get() = this === COMPLAINT_CATALOG_TEST_RUN_TERMINAL_CAPTURE ||
+            this === COMPLAINT_CATALOG_TEST_RUN_TERMINAL_ACQUIRE ||
+            this === COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PREPARE ||
+            this === COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELOAD ||
+            this === COMPLAINT_CATALOG_TEST_RUN_TERMINAL_SIGNATURE ||
+            this === COMPLAINT_CATALOG_TEST_RUN_TERMINAL_COMPLETE ||
+            this === COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PROJECT ||
+            this === COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELEASE
+
     internal val catalogTestRunActivation: Boolean
         get() = this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE ||
             this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD ||
@@ -1670,6 +1728,15 @@ internal enum class PersistencePhasePath {
             COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
             COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
             COMPLAINT_TEST_TERMINAL_QUIESCENCE,
+            COMPLAINT_CATALOG_TEST_RUN_TERMINAL_CAPTURE,
+            COMPLAINT_CATALOG_TEST_RUN_TERMINAL_ACQUIRE,
+            COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PREPARE,
+            COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELOAD,
+            COMPLAINT_CATALOG_TEST_RUN_TERMINAL_SIGNATURE,
+            COMPLAINT_CATALOG_TEST_RUN_TERMINAL_COMPLETE,
+            COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PROJECT,
+            COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELEASE,
+            COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT,
             COMPLAINT_TEST_ORDINARY_DRAIN,
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,

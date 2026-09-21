@@ -28,6 +28,19 @@ import java.util.concurrent.atomic.AtomicReference
 internal class CatalogReadbackRefreshCustodyV1 {
     private val active = AtomicReference<Any?>() // Closed typed refresh/first-overlap owners share one slot; never a caller-selected engine.
 
+    internal fun reserveTestTerminal(original: CatalogTestRunTerminalV1) {
+        requireConnectionFree(); original.requireCustody(this)
+        requireCatalogReadback(active.compareAndSet(null, original), CatalogReadbackFailure.LIMIT_EXCEEDED)
+    }
+    internal fun requireTestTerminal(original: CatalogTestRunTerminalV1) {
+        original.requireCustody(this)
+        requireCatalogReadback(active.get() === original, CatalogReadbackFailure.INVALID_POLICY)
+    }
+    internal fun releaseTestTerminalAfterCleanup(original: CatalogTestRunTerminalV1) {
+        requireConnectionFree(); original.requireActualCleanup()
+        requireCatalogReadback(active.compareAndSet(original, null), CatalogReadbackFailure.CLOSE_FAILURE)
+    }
+
     internal fun reserveSignerRotation(attempt: CatalogSignerRotationFreezeAttemptV1) {
         requireConnectionFree()
         attempt.requireCustody(this)

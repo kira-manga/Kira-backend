@@ -1,6 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.terminal
 
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalV1
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceGateV1
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcParticipantRole
@@ -66,6 +67,8 @@ internal class TestRunTerminalQuiescenceV1 private constructor(internal val term
     private var started = false
     private var finished = false
     private var completed = false
+    private var catalogChild: CatalogTestRunTerminalV1? = null
+    private var catalogClaimed = false
     private var cleanupUncertain = false
     private var phaseEntered = false
     private var phase: PersistencePhaseContext? = null
@@ -158,6 +161,27 @@ internal class TestRunTerminalQuiescenceV1 private constructor(internal val term
         return checkNotNull(paid)
     }
     internal fun authenticatedCut(): TestTerminalCompletedCutV1 = authenticatedProgress().completedCuts().last()
+
+    /** First-only genuine completed child. This does not revive D's expired budget/lease or any failed original. */
+    internal fun beginTerminalCatalog(): CatalogTestRunTerminalV1 {
+        authenticatedProgress()
+        requireQuiescence(!catalogClaimed && catalogChild == null)
+        catalogClaimed = true // A failed constructor is still a spent first claim.
+        return CatalogTestRunTerminalV1.begin(this)
+    }
+
+    internal fun retainCatalogChild(child: CatalogTestRunTerminalV1) {
+        authenticatedProgress()
+        requireQuiescence(catalogClaimed && catalogChild == null)
+        catalogChild = child
+    }
+
+    /** Historical predecessor identity only, callable under the child's fresh holder without provider work. */
+    internal fun requireCatalogChild(child: CatalogTestRunTerminalV1) {
+        throwIfSignalled()
+        requireQuiescence(caller === Thread.currentThread() && started && finished && completed && !cleanupUncertain &&
+            phase == null && !phaseEntered && catalogClaimed && catalogChild === child)
+    }
 
     private fun execute(next: TestTerminalQuiescenceStepV1): TestTerminalQuiescenceOperationV1 {
         requireConnectionFree(); requireRunning(); requireQuiescence(phase == null && !phaseEntered)
