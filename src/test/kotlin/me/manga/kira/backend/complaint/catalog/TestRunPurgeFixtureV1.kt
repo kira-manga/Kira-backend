@@ -87,7 +87,7 @@ internal fun withUnusedPurgeRun(tls: VersionBoundPersistenceConnectedFixture, sh
                         finally { http.boundary = boundary; http.nativeBoundary = nativeBoundary }
                     }
                     assertEquals(beforeInventory, f.inventoryRequests.size, "Purge current SQL cannot reuse the retired ordinary native reader.")
-                    f.assertReleased()
+                    f.assertFinishedPurge()
                 }
             }
         }
@@ -112,6 +112,7 @@ internal class TestRunPurgeFixtureV1(
     private val deletion = TestOrdinaryDrainSqlProbeV1(p, runtime, deletion = true)
     private val coordinator = TestOrdinaryDrainSqlProbeV1(p, runtime)
     private val raw = listOf("synthetic-unused-ordinary-denial:$scope".toByteArray(), "synthetic-unused-one-second-bound:$scope".toByteArray())
+    private var expectUnreturnedNativeClose = false
     val rawEvidence get() = raw.map(ByteArray::copyOf)
     private val beforeBoundary = sealHttp.boundary
     private val beforeNative = sealHttp.nativeBoundary
@@ -181,12 +182,26 @@ internal class TestRunPurgeFixtureV1(
         assertEquals(0, runtime.pools.catalogCoordinator.activeSnapshotOwners())
         coordinator.assertPhysicallyReleased(); deletion.assertPhysicallyReleased()
     }
-    fun assertReleased() {
-        assertDatabaseReleased(); coordinator.assertReleased(); deletion.assertReleased(); sealHttp.assertDisposed()
+    fun assertReleased() = assertDisposed(expectUnreturnedClose = false)
+
+    /** Negative-only teardown: retain the failed native close and its J owner, never call it released. */
+    fun expectUnreturnedNativeCloseForTeardown() {
+        assertTrue(!expectUnreturnedNativeClose)
+        assertDisposed(expectUnreturnedClose = true)
+        expectUnreturnedNativeClose = true
+    }
+
+    fun assertFinishedPurge() = assertDisposed(expectUnreturnedClose = expectUnreturnedNativeClose)
+
+    private fun assertDisposed(expectUnreturnedClose: Boolean) {
+        assertDatabaseReleased(); coordinator.assertReleased(); deletion.assertReleased()
+        sealHttp.assertDisposed(requireReturnedClose = !expectUnreturnedClose)
         assertEquals(inventoryCreated, inventoryClosed)
         assertEquals(inventoryKeys.createdClients, inventoryKeys.returnedClientCloses)
         inventoryRequests.forEach { request -> assertEquals(1, request.calls); assertEquals(1, request.aborts); assertEquals(1, checkNotNull(request.reply).closes) }
-        assertEquals(0L, registration.process.publicationLanes.activeOwners().totalOwners)
+        if (expectUnreturnedClose) assertEquals(1, sealHttp.s3Closed - sealHttp.s3CloseReturned +
+            sealHttp.sts.closedClients - sealHttp.sts.returnedClientCloses + sealHttp.kms.closedClients - sealHttp.kms.returnedClientCloses)
+        assertEquals(if (expectUnreturnedClose) 1L else 0L, registration.process.publicationLanes.activeOwners().totalOwners)
     }
     fun <T> raw(action: (Connection) -> T): T = checkNotNull(observer.dataSource).connection.use(action)
 
@@ -198,7 +213,7 @@ internal class TestRunPurgeFixtureV1(
     }
 
     override fun close() {
-        try { assertReleased() }
+        try { assertFinishedPurge() }
         finally {
             sealHttp.boundary = beforeBoundary; sealHttp.nativeBoundary = beforeNative
             templates.forEach { (executor, field, _) -> assertSame(coordinator, field.get(executor)) }

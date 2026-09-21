@@ -61,6 +61,22 @@ class TestRunPurgePublicationIT {
         completion(TestRunPurgeStepV1.PREPARE, TestRegistrationCompletionCut.UNRESOLVED_RELEASE)
 
     @Test
+    fun freezeRollbackKeepsPaidCanonicalWinnerAndFreshOriginalGeneratesWireOnce() =
+        completion(TestRunPurgeStepV1.FREEZE, TestRegistrationCompletionCut.BEFORE_COMMIT)
+
+    @Test
+    fun lostFreezeAcknowledgmentPreservesWireAndRejectsAcknowledgedRetentionBelowTheLaterPutLock() =
+        completion(TestRunPurgeStepV1.FREEZE, TestRegistrationCompletionCut.AFTER_COMMIT)
+
+    @Test
+    fun deferredFreezeCommitFailureRemainsUnknownWithCanonicalPaymentAndNoS3() =
+        completion(TestRunPurgeStepV1.FREEZE, TestRegistrationCompletionCut.DEFERRED_COMMIT_UNKNOWN)
+
+    @Test
+    fun unresolvedFreezeCleanupRetainsNativeOwnerUntilActualRetirementWithoutRehabilitatingOriginal() =
+        completion(TestRunPurgeStepV1.FREEZE, TestRegistrationCompletionCut.UNRESOLVED_RELEASE)
+
+    @Test
     fun verifyRollbackLeavesFrozenPreparedWinnerAndFreshOriginalPerformsReadbackOnly() =
         completion(TestRunPurgeStepV1.VERIFY, TestRegistrationCompletionCut.BEFORE_COMMIT)
 
@@ -75,6 +91,26 @@ class TestRunPurgePublicationIT {
     @Test
     fun unresolvedVerifyCleanupQuarantinesOriginalUntilActualReleaseAndStillRequiresFreshLease() =
         completion(TestRunPurgeStepV1.VERIFY, TestRegistrationCompletionCut.UNRESOLVED_RELEASE)
+
+    @Test
+    fun throwingPurgeNativeCloseRetainsJAndRefusesVerifyReplacementAndSuccessfulShutdown() = withFixture {
+        TestRunPurgePublicationCasesV1.failedNativeCloseKeepsLane(it)
+    }
+
+    @Test
+    fun changedCurrentInstallationSourceBeforePrepareRollsBackWithoutPaymentOrProviders() = withFixture {
+        TestRunPurgePublicationCasesV1.sourceDrift(it, TestRunPurgeStepV1.PREPARE)
+    }
+
+    @Test
+    fun changedCurrentInstallationSourceAtCompleteCannotPromoteTheAlreadyVerifiedPublicationToSuccess() = withFixture {
+        TestRunPurgePublicationCasesV1.sourceDrift(it, TestRunPurgeStepV1.COMPLETE)
+    }
+
+    @Test
+    fun foreignScopeOrPrefixAndUnsupportedAppliedFamiliesAreRejectedRatherThanFilteredFromPurge() = withFixture {
+        TestRunPurgePublicationCasesV1.foreignAndUnsupportedRelations(it)
+    }
 
     private fun completion(step: TestRunPurgeStepV1, cut: TestRegistrationCompletionCut) =
         withFixture { TestRunPurgePublicationCasesV1.completion(it, step, cut) }
