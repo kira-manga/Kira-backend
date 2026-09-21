@@ -154,19 +154,27 @@ internal object TestActiveRecurrentRecoveryCasesV1 {
                     } }
             }
             val domain = f.domainImage(); val initial = f.immutableImage().getValue("complaint_test_active_seal_intents")
+            val initialCheckpoint = (f.control().getValue("checkpoint_bytes") as ByteArray).copyOf()
             try {
                 assertThrows<TestActiveRecurrentExceptionV1> { f.checkpoint() }
                 f.assertReleased(); assertTrue(changed); assertTrue(f.applyCalls.isEmpty())
-                assertNull(f.control()["checkpoint_result"]); assertNull(f.history().last()["checkpoint_bytes"])
+                assertNull(f.control()["checkpoint_result"])
                 assertEquals(initial, f.immutableImage().getValue("complaint_test_active_seal_intents"))
                 assertFalse(f.probe.calls.any { it.step == TestActiveRecurrentStepV1.SUCCESS })
+                // REQUEST archives INITIAL; only VERIFY adds the uncheckpointed recurrent row.
+                val history = f.history()
                 if (cut in setOf(RecurrentRetainedAllInventoryCut.MISSING_ALIAS, RecurrentRetainedAllInventoryCut.ALIAS_VERSION)) {
+                    assertEquals(2, history.size); assertEquals("V31_RECURRENT", history.last()["source"])
+                    assertNull(history.last()["checkpoint_bytes"])
                     assertEquals(domain, f.domainImage()); assertTrue(f.raw.order.contains("PASS1")); assertFalse(f.raw.order.contains("PASS2"))
                 } else {
+                    assertEquals(1, history.size)
                     assertTrue(f.raw.order.isEmpty() && f.scans().isEmpty(), "Conflicting overlap/foreign row/physical drift cannot freeze or scan a manifest.")
                     assertEquals("RESERVED", f.intents().single()["state"])
                     assertFalse(f.probe.calls.any { it.step == TestActiveRecurrentStepV1.CANONICAL })
                 }
+                assertEquals("V26_INITIAL", history.first()["source"])
+                assertArrayEquals(initialCheckpoint, history.first()["checkpoint_bytes"] as ByteArray)
             } finally {
                 // Restore only the explicitly foreign row for disposable fixture teardown; no retry.
                 if (cut == RecurrentRetainedAllInventoryCut.FOREIGN_ALIAS)
