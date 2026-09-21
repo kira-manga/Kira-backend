@@ -1,0 +1,149 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 88,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_EDIT_success_and_exact_replay",
+      "expected_invocations_from_annotation": 1,
+      "method": "explicitEditStartupUpdatesOnlyOwnReportAndReplaysHistoricalVersionBeforeClosedControls",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "789fe24df21b50b9b3c7a17767dbac388470c8ee",
+      "source_sha256": "ce71b9338f86dab8cda85ec8dfded84b87c2a573670f970902053949149731cb",
+      "xml_names": [
+        "explicitEditStartupUpdatesOnlyOwnReportAndReplaysHistoricalVersionBeforeClosedControls()"
+      ]
+    },
+    {
+      "annotation_line": 94,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_EDIT_ownership_system_notice_boundary",
+      "expected_invocations_from_annotation": 1,
+      "method": "explicitEditStartupRejectsForeignReportAndSystemNoticeWithoutLockingTheirResourcesOrContent",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "789fe24df21b50b9b3c7a17767dbac388470c8ee",
+      "source_sha256": "ce71b9338f86dab8cda85ec8dfded84b87c2a573670f970902053949149731cb",
+      "xml_names": [
+        "explicitEditStartupRejectsForeignReportAndSystemNoticeWithoutLockingTheirResourcesOrContent()"
+      ]
+    },
+    {
+      "annotation_line": 64,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "corrected_report_scope_oracle_and_ALL_comparison_identity_four_families",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRegisteredFamiliesApplyTheOriginalNativePutAndAckOnlyAfterCommittedReleasedApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "789fe24df21b50b9b3c7a17767dbac388470c8ee",
+      "source_sha256": "57897f83630e3e979f3a0646be0f3665d50e17ea407a9d5f0efc3d4b6f8472de",
+      "xml_names": [
+        "genuineRegisteredFamiliesApplyTheOriginalNativePutAndAckOnlyAfterCommittedReleasedApply()"
+      ]
+    },
+    {
+      "annotation_line": 128,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "corrected_counter_ceiling_fixture_retaining_Y_T_four_families",
+      "expected_invocations_from_annotation": 1,
+      "method": "creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "789fe24df21b50b9b3c7a17767dbac388470c8ee",
+      "source_sha256": "57897f83630e3e979f3a0646be0f3665d50e17ea407a9d5f0efc3d4b6f8472de",
+      "xml_names": [
+        "creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom()"
+      ]
+    },
+    {
+      "annotation_line": 172,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_ALL_PREPARED_actual_native_verify_apply_and_readonly_redelivery",
+      "expected_invocations_from_annotation": 1,
+      "method": "allPreparedNativePutIsVerifiedOnlyFromTheCurrentReleasedQueueReadback",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "789fe24df21b50b9b3c7a17767dbac388470c8ee",
+      "source_sha256": "57897f83630e3e979f3a0646be0f3665d50e17ea407a9d5f0efc3d4b6f8472de",
+      "xml_names": [
+        "allPreparedNativePutIsVerifiedOnlyFromTheCurrentReleasedQueueReadback()"
+      ]
+    },
+    {
+      "annotation_line": 588,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "critical_real_unknown_final_settlement_with_corrected_content_oracle_four_families",
+      "expected_invocations_from_annotation": 1,
+      "method": "priorSafeApplyAndAckRemainTruthfulWhenFinalSettlementCommitIsUnknown",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "789fe24df21b50b9b3c7a17767dbac388470c8ee",
+      "source_sha256": "57897f83630e3e979f3a0646be0f3665d50e17ea407a9d5f0efc3d4b6f8472de",
+      "xml_names": [
+        "priorSafeApplyAndAckRemainTruthfulWhenFinalSettlementCommitIsUnknown()"
+      ]
+    },
+    {
+      "annotation_line": 108,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test",
+      "cohort": "cheap_new_EDIT_original_profile_isolation",
+      "expected_invocations_from_annotation": 1,
+      "method": "editSelectionHasSeparateBornWithProvenanceAndNeitherOlderProfileCanUpgradeItsPoolPin",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointCreateColdInputsV1Test.kt",
+      "source_head": "789fe24df21b50b9b3c7a17767dbac388470c8ee",
+      "source_sha256": "47a627b177744773407b4e19c511ee6212e59ae10bba2f27cc7ef19b6f4481c5",
+      "xml_names": [
+        "editSelectionHasSeparateBornWithProvenanceAndNeitherOlderProfileCanUpgradeItsPoolPin()"
+      ]
+    },
+    {
+      "annotation_line": 33,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "single_legacy_terminal_diagnostic_prerequisite_not_descendant_matrix",
+      "expected_invocations_from_annotation": 1,
+      "method": "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "789fe24df21b50b9b3c7a17767dbac388470c8ee",
+      "source_sha256": "f5e3876b2e0d726460b83908e69a3fca73545ccd54a3e7e06cdc0e7dcb40bbf7",
+      "xml_names": [
+        "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 8,
+  "expected_total": 8,
+  "selection_basis": {
+    "cohorts": {
+      "cheap_new_EDIT_original_profile_isolation": 1,
+      "corrected_counter_ceiling_fixture_retaining_Y_T_four_families": 1,
+      "corrected_report_scope_oracle_and_ALL_comparison_identity_four_families": 1,
+      "critical_real_unknown_final_settlement_with_corrected_content_oracle_four_families": 1,
+      "new_ALL_PREPARED_actual_native_verify_apply_and_readonly_redelivery": 1,
+      "new_registered_EDIT_ownership_system_notice_boundary": 1,
+      "new_registered_EDIT_success_and_exact_replay": 1,
+      "single_legacy_terminal_diagnostic_prerequisite_not_descendant_matrix": 1
+    },
+    "previous_run": "35573059100",
+    "scope": "Actual89 timed out after compilation and partial real execution; targeted corrected prerequisites/new contracts only, not a full rerun. Carryforward retains all failed/unfinished/deferred requirements."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "f5e3876b2e0d726460b83908e69a3fca73545ccd54a3e7e06cdc0e7dcb40bbf7",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointCreateColdInputsV1Test.kt": "47a627b177744773407b4e19c511ee6212e59ae10bba2f27cc7ef19b6f4481c5",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt": "57897f83630e3e979f3a0646be0f3665d50e17ea407a9d5f0efc3d4b6f8472de",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt": "ce71b9338f86dab8cda85ec8dfded84b87c2a573670f970902053949149731cb"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT": 4,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT": 2
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.genuineRegisteredFamiliesApplyTheOriginalNativePutAndAckOnlyAfterCommittedReleasedApply",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.priorSafeApplyAndAckRemainTruthfulWhenFinalSettlementCommitIsUnknown",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.allPreparedNativePutIsVerifiedOnlyFromTheCurrentReleasedQueueReadback",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.explicitEditStartupUpdatesOnlyOwnReportAndReplaysHistoricalVersionBeforeClosedControls",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.explicitEditStartupRejectsForeignReportAndSystemNoticeWithoutLockingTheirResourcesOrContent",
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test.editSelectionHasSeparateBornWithProvenanceAndNeitherOlderProfileCanUpgradeItsPoolPin",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging"
+  ]
+}
