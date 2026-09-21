@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveCheckpointHistoryV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentJsonV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentStorageV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableStateV1
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyRows
