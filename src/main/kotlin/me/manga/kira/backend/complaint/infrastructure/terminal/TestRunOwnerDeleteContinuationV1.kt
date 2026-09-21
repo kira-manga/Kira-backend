@@ -206,6 +206,17 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
             retainedOperation == null && sealedAt != null && selectedChild == null && selectedLocator == null)
     }
 
+    /** Current original-owned SELECT comparison only; never request/RELOAD/APPLY admission. */
+    internal fun freshDrainSelectionControls(operation: ComplaintOwnerDeleteRegisteredSelectionOperation,
+        selectedJdbc: JdbcTemplate, selectedGraph: TestOwnerDeleteLocalGraphV1): Boolean {
+        requirePersistence(ownership, selectedJdbc, selectedGraph)
+        requireContinuation(stage === Stage.SELECT && locator == null && selectedBy == null &&
+            retainedOperation === operation && operation.original === this && controlsChecked && phaseEntered &&
+            phase === PersistencePhaseOwnership.current() && selectedChild == null && selectedLocator == null)
+        val original = drainBy ?: return false
+        return original.freshPrimarySelectionControls(this, selectedJdbc)
+    }
+
     private fun publishAndVerify(work: CommittedTestOwnerDeleteWork.Prepared): CommittedTestOwnerDeleteVerificationV1 {
         requirePreparedReload()
         requireReleasedReload()

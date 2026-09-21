@@ -39,7 +39,10 @@ internal class ComplaintOwnerDeleteRegisteredSelectionOperation private construc
     private fun execute(capacity: JdbcComplaintCapacityStore) {
         retained()
         val controls = TestOwnerDeleteControlBindingV1(graph)
-        controls.lock(jdbc, authorizing = false)
+        // Only this actual registered selector may compare a fresh closed drain predecessor.
+        // AUTH/RELOAD/APPLY keep the historical control reader; an empty page is not quiescence.
+        val freshDrain = original.freshDrainSelectionControls(this, jdbc, graph)
+        if (!freshDrain) controls.lock(jdbc, authorizing = false)
         stage = Stage.COUNTERS_READY
         capacity.lockForRegisteredOwnerDeleteSelection(this)
         check(stage === Stage.COUNTERS)
@@ -54,6 +57,12 @@ internal class ComplaintOwnerDeleteRegisteredSelectionOperation private construc
             checkNotNull(row.getObject("actor_id", UUID::class.java)) to checkNotNull(row.getObject("idempotency_key", UUID::class.java))
         }, graph.writer, graph.routing.journalConfiguration.scope.id)
         check(found.size <= OwnerDeletePersistenceSql.REGISTERED_PRIMARY_PAGE_LIMIT + 1 && found.distinct().size == found.size)
+        if (freshDrain) {
+            // This narrow no-history exception cannot issue a continuation for a pending primary.
+            // In particular it must not filter a malformed, orphan or unexpected row into emptiness.
+            check(found.isEmpty())
+            check(original.freshDrainSelectionControls(this, jdbc, graph))
+        }
         locators = found
         retained()
         stage = Stage.COMPLETE

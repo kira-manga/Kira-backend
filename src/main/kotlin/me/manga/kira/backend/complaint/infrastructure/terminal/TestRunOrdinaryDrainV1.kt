@@ -630,6 +630,31 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     internal fun requirePrimaryContinuation(original: TestRunOwnerDeleteContinuationV1) {
         requireRunning(); requireDrain(step === TestOrdinaryDrainStepV1.PRIMARIES && primaryContinuation === original && phase == null)
     }
+
+    /**
+     * The released OPEN owns this exact selector. Only its fresh epoch-one, wholly absent-history
+     * shape can skip the historical healthy reader, and only to observe a bounded EMPTY page.
+     * Current full-D identities/closed gates, the preserved request and the original live lease are
+     * still read on the child's already-fenced holder. No lease or failure ownership is transferred.
+     */
+    internal fun freshPrimarySelectionControls(original: TestRunOwnerDeleteContinuationV1, jdbc: JdbcTemplate): Boolean {
+        requirePrimaryContinuation(original)
+        requireDrain(jdbc === deletionJdbc && !phaseEntered && allContinuation == null && adminContinuation == null)
+        val captured = checkNotNull(capturedControl)
+        if (captured.sequence != 0L || captured.epoch != 1L || captured.previousSealEpoch != 0L) return false
+        requireDrain(checkNotNull(retainedRun).progress == null && captured.cutoff == 1L && leaseToken > 0)
+        TestOrdinaryDrainPersistenceV1.lockControlIdentities(jdbc, this)
+        val current = jdbc.query(TestOrdinaryDrainSqlV1.control, { row, _ ->
+            requireDrain(TestOrdinaryDrainRowsV1.boolean(row, "scan_requested"))
+            TestOrdinaryDrainRowsV1.Control(row)
+        }, scope).single()
+        requireCapturedControl(current) // The unchanged predicate requires every absent history field.
+        requireDrain(current.sequence == 0L && current.epoch == 1L && current.previousSealEpoch == 0L)
+        TestOrdinaryDrainPersistenceV1.requireLease(jdbc, this)
+        requirePrimaryContinuation(original)
+        return true
+    }
+
     internal fun retainPrimaryContinuation(original: TestRunOwnerDeleteAllContinuationV1, candidate: ComplaintTestNamespaceRegistrationV1,
         ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
         requireConnectionFree(); requireRunning()

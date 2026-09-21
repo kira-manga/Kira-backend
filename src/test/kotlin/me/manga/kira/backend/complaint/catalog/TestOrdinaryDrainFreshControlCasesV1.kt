@@ -1,9 +1,15 @@
 package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
+import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainStepV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealSqlV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingSqlV1
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -54,6 +60,20 @@ internal object TestOrdinaryDrainFreshControlCasesV1 {
             original.drain(ByteArray(0), f.rawEvidence, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
         }
         assertEquals(TestOrdinaryDrainStepV1.ADMISSION, original.step, "Refusal must follow the actual fresh range capture.")
+        // Read the actual retained probe; no phase/original is constructed or injected. The fresh
+        // exception is SELECT-only and both current comparisons bracket the unfiltered page.
+        val deletion = ownedCutField(f, "deletion") as TestOrdinaryDrainSqlProbeV1
+        val calls = deletion.calls
+        val selected = calls.indices.single { calls[it].sql == OwnerDeletePersistenceSql.SELECT_REGISTERED_PRIMARY_PAGE }
+        val controls = calls.indices.filter { calls[it].sql == TestOrdinaryDrainSqlV1.control }
+        val leases = calls.indices.filter { calls[it].sql == TestOrdinarySealSqlV1.lease }
+        assertEquals(2, controls.size)
+        assertEquals(2, leases.size)
+        assertTrue(controls[0] < leases[0] && leases[0] < selected && selected < controls[1] && controls[1] < leases[1])
+        assertTrue(calls.indices.single { calls[it].sql == TestRunSealingSqlV1.lockRun } in (leases[0] + 1) until selected)
+        assertTrue(calls.all { it.path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD && it.primaryOriginal != null })
+        assertEquals(PersistenceDatabaseOutcome.COMMITTED, calls.map { it.phase }.distinct().single().databaseOutcome())
+        f.assertNoPreviousHistory()
         assertTrue(f.observer.queryForObject("SELECT rotation_sequence = 1 AND rotation_state = 'CAPTURED' " +
             "AND scan_requested AND publication_epoch = 2 AND rotation_epoch_before = 1 " +
             "FROM complaint_journal_control WHERE data_scope_id = ?", Boolean::class.java, f.scope) == true)
