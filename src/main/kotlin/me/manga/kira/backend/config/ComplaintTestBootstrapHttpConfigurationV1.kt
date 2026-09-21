@@ -1,6 +1,5 @@
 package me.manga.kira.backend.config
 
-import me.manga.kira.backend.complaint.api.ComplaintInstallationBootstrapHttpHandler
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -24,5 +23,5 @@ internal class ComplaintTestBootstrapHttpConfigurationV1 {
 
     @Bean
     fun complaintTestBootstrapHandlerMapping(composition: ComplaintTestBootstrapHttpCompositionV1): SimpleUrlHandlerMapping =
-        SimpleUrlHandlerMapping(mapOf(ComplaintInstallationBootstrapHttpHandler.PATH to composition.handler), -1)
+        SimpleUrlHandlerMapping(composition.mappedPaths.associateWith { composition.handler }, -1)
 }

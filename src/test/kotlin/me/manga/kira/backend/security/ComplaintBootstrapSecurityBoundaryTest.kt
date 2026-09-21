@@ -22,21 +22,23 @@ class ComplaintBootstrapSecurityBoundaryTest {
         assertEquals(1, f.context.getBeansOfType(SecurityFilterChain::class.java).size)
         for (path in listOf(ComplaintInstallationBootstrapHttpHandler.PATH, "/api/v1/installations", "/api/v1/installations/session",
             "/api/v1/installations/me", "/api/v1/installations/delete-all", "/api/v1/complaints", "/api/v1/complaint-operations/status", "/api/v1/admin/complaints/search")) {
-            val response = f.mvc.perform { servlet ->
-                object : MockHttpServletRequest(servlet, "GET", path) {
-                    override fun getInputStream(): ServletInputStream = error("Disabled route buffered input")
-                }.apply {
-                    servletPath = path
-                    addHeader("Authorization", "malformed")
-                    addHeader("Authorization", "Bearer second")
-                    addHeader("Content-Length", Long.MAX_VALUE.toString())
-                    queryString = "private=not-read"
-                }
-            }.andReturn().response
-            assertEquals(404, response.status, path)
-            assertEquals("1", response.getHeader("X-Kira-Complaint-Contract"))
-            assertEquals("no-store, no-transform", response.getHeader("Cache-Control"))
-            assertNull(response.getHeader("WWW-Authenticate"))
+            for (method in listOf("GET", "POST")) {
+                val response = f.mvc.perform { servlet ->
+                    object : MockHttpServletRequest(servlet, method, path) {
+                        override fun getInputStream(): ServletInputStream = error("Disabled route buffered input")
+                    }.apply {
+                        servletPath = path
+                        addHeader("Authorization", "malformed")
+                        addHeader("Authorization", "Bearer second")
+                        addHeader("Content-Length", Long.MAX_VALUE.toString())
+                        queryString = "private=not-read"
+                    }
+                }.andReturn().response
+                assertEquals(404, response.status, "$method $path")
+                assertEquals("1", response.getHeader("X-Kira-Complaint-Contract"))
+                assertEquals("no-store, no-transform", response.getHeader("Cache-Control"))
+                assertNull(response.getHeader("WWW-Authenticate"))
+            }
         }
         verifyNoInteractions(f.users)
     }

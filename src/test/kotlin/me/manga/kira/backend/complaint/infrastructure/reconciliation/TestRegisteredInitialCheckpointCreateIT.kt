@@ -10,7 +10,8 @@ import org.junit.jupiter.api.parallel.ExecutionMode
 
 /**
  * SOURCE ONLY / NOT_COMPILED / NOT_RUN. Actual PG/TLS and genuine registered native fixture chain;
- * only raw provider HTTP is substituted. Initial-only CREATE, not recurrence/reply/health/queue or HTTP activation.
+ * only raw provider HTTP is substituted. Initial-only CREATE and explicit subset HTTP composition,
+ * not recurrence/reply/health/queue, default activation or deployment.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
@@ -44,6 +45,15 @@ class TestRegisteredInitialCheckpointCreateIT {
     }
     @Test fun rollbackUnknownCommitAndCommittedTailFailureNeverReleaseAnUnprovedOriginalResult() = withFixture {
         withRegisteredInitialCheckpointCreate(it, action = TestRegisteredInitialCheckpointCreateRaceCasesV1::completionFailures)
+    }
+    @Test fun registeredHttpSubsetUsesOneIngressForBootstrapIdentityCreateAndCurrentReceiptStatus() = withFixture {
+        withRegisteredInitialCheckpointCreate(it, action = TestRegisteredInitialCheckpointCreateHttpCasesV1::identityCreateAndReceipts)
+    }
+    @Test fun registeredHttpSubsetDeniesUnimplementedAliasesBeforeBodyAndRejectsUnboundResources() = withFixture {
+        withRegisteredInitialCheckpointCreate(it, action = TestRegisteredInitialCheckpointCreateHttpCasesV1::exactSubsetAndResources)
+    }
+    @Test fun registeredHttpSubsetCannotCreateBeforeCheckpointAndBootstrapOnlyNeverExpands() = withFixture {
+        withRegisteredInitialCheckpointCreate(it, completeCheckpoint = false, action = TestRegisteredInitialCheckpointCreateHttpCasesV1::missingCheckpointAndBootstrapOnly)
     }
 
     private fun withFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =

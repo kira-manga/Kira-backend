@@ -41,6 +41,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
     private val bridge: ComplaintHttpIngressBridge,
     private val core: Core?,
     private val bootstrap: ComplaintInstallationBootstrapHttpHandler?,
+    private val initialCreate: InitialCreate? = null,
 ) {
     /** Existing explicit core construction is unchanged; bootstrap is an optional concrete producer, not a ready flag. */
     constructor(
@@ -59,6 +60,8 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
     ) : this(bridge, Core(authentication, installations, me, history, create, deleteAll, detail, reply, edit, delete), bootstrap)
 
     init {
+        require(core == null || initialCreate == null)
+        initialCreate?.let { require(!it.create.hasDeleteStatus() && !it.create.hasEditStatus()) { "Complaint CREATE subset refused." } }
         core?.let {
             require(it.create.hasDeleteStatus() == (it.delete != null)) { "Complaint delete/status composition refused." }
             if (it.delete != null) require(it.create.usesDeleteStatus(it.delete)) { "Complaint delete/status composition refused." }
@@ -73,6 +76,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
     private val denied = AccessDeniedHandler { request, response, _ ->
         ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.FORBIDDEN)
     }
+    private val authentication: ComplaintInstallationBearerAuthenticator? get() = core?.authentication ?: initialCreate?.authentication
 
     fun build(http: HttpSecurity): SecurityFilterChain {
         http.securityMatcher(ComplaintInstallationRoutes)
@@ -96,8 +100,8 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
             resource.bearerTokenResolver(ComplaintInstallationBearerResolver)
             resource.authenticationManagerResolver { request ->
                 AuthenticationManager { candidate ->
-                    val authentication = core?.authentication ?: throw InvalidBearerTokenException("Installation credential refused.")
-                    authentication.authenticate(bridge.authenticationContext(request), candidate)
+                    val selected = authentication ?: throw InvalidBearerTokenException("Installation credential refused.")
+                    selected.authenticate(bridge.authenticationContext(request), candidate)
                 }
             }
             resource.authenticationEntryPoint(entryPoint)
@@ -120,25 +124,26 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
         if (!implemented(request)) {
             ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.NOT_FOUND)
         } else if (ComplaintInstallationRoutes.requiresBearer(request) &&
-            core?.authentication?.belongsTo(context, SecurityContextHolder.getContext().authentication) != true
+            authentication?.belongsTo(context, SecurityContextHolder.getContext().authentication) != true
         ) {
             ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.UNAUTHORIZED)
         } else {
             when (ComplaintInstallationRoutes.path(request)) {
                 ComplaintInstallationRoutes.BOOTSTRAP -> checkNotNull(bootstrap).handleWithinIngress(request, response, context)
 
-                ComplaintInstallationRoutes.ENROLLMENT, ComplaintInstallationRoutes.SESSION -> checkNotNull(core).installations.handleWithinIngress(request, response, context)
+                ComplaintInstallationRoutes.ENROLLMENT, ComplaintInstallationRoutes.SESSION ->
+                    checkNotNull(core?.installations ?: initialCreate?.installations).handleWithinIngress(request, response, context)
 
                 ComplaintInstallationRoutes.ME -> checkNotNull(core).me.handleWithinIngress(request, response, context)
 
-                ComplaintInstallationRoutes.STATUS -> checkNotNull(core).create.handleWithinIngress(request, response, context)
+                ComplaintInstallationRoutes.STATUS -> checkNotNull(core?.create ?: initialCreate?.create).handleWithinIngress(request, response, context)
 
                 ComplaintInstallationRoutes.DELETE_ALL -> checkNotNull(core?.deleteAll).handleWithinIngress(request, response, context)
 
                 ComplaintInstallationRoutes.HISTORY -> if (request.method == "GET") {
                     checkNotNull(core).history.handleWithinIngress(request, response, context)
                 } else {
-                    checkNotNull(core).create.handleWithinIngress(request, response, context)
+                    checkNotNull(core?.create ?: initialCreate?.create).handleWithinIngress(request, response, context)
                 }
 
                 else -> if (ComplaintInstallationRoutes.isReply(request)) {
@@ -157,7 +162,8 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
     override fun toString(): String = "ComplaintInstallationSecurityChainFactory(dormant,explicit-TEST-only)"
 
     /** Concrete optional composition only; no public readiness flag can open this route. */
-    private fun implemented(request: HttpServletRequest): Boolean = (core != null && ComplaintInstallationRoutes.implemented(request)) ||
+    internal fun implemented(request: HttpServletRequest): Boolean = (core != null && ComplaintInstallationRoutes.implemented(request)) ||
+        (initialCreate != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) in INITIAL_CREATE_PATHS) ||
         (bootstrap != null && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.BOOTSTRAP) ||
         (core?.deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
         (core?.reply != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
@@ -195,10 +201,26 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
         val delete: ComplaintOwnerDeleteHttpHandler?,
     )
 
+    /** Fixed narrower tuple: no me/history or optional mutation handlers can enter this composition. */
+    private class InitialCreate(
+        val authentication: ComplaintInstallationBearerAuthenticator,
+        val installations: ComplaintInstallationHttpHandler,
+        val create: ComplaintOwnerCreateHttpHandler,
+    )
+
     companion object {
+        private val INITIAL_CREATE_PATHS = setOf(ComplaintInstallationRoutes.ENROLLMENT, ComplaintInstallationRoutes.SESSION,
+            ComplaintInstallationRoutes.HISTORY, ComplaintInstallationRoutes.STATUS)
+
         /** Does not fabricate core handlers or enable any non-bootstrap route. Registration belongs to its concrete assembly. */
         fun bootstrapOnly(bridge: ComplaintHttpIngressBridge, bootstrap: ComplaintInstallationBootstrapHttpHandler): ComplaintInstallationSecurityChainFactory =
             ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap)
+
+        /** Concrete handlers come from the registered assembly; this route selection itself issues no authority. */
+        fun registeredCreateSubset(bridge: ComplaintHttpIngressBridge, bootstrap: ComplaintInstallationBootstrapHttpHandler,
+            authentication: ComplaintInstallationBearerAuthenticator, installations: ComplaintInstallationHttpHandler,
+            create: ComplaintOwnerCreateHttpHandler): ComplaintInstallationSecurityChainFactory =
+            ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap, InitialCreate(authentication, installations, create))
     }
 }
 
