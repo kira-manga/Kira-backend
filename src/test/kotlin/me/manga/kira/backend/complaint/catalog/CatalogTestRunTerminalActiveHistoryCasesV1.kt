@@ -16,6 +16,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityChargesV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDenialPrefixV1
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyRows
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalActiveHistorySqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalPreconditionV1
@@ -37,6 +38,7 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
 import org.springframework.jdbc.core.JdbcTemplate
@@ -309,6 +311,153 @@ internal object CatalogTestRunTerminalActiveHistoryCasesV1 {
             }
             b.assertExpectedAppliedObjects()
         }
+
+    /** Alias-only B -> real SEALED run -> a fresh registered original. This is neither a second
+     * queue delivery nor an HTTP-authentication test, and never calls the terminal D/E producers. */
+    fun registeredPendingAllAfterAlias(tls: VersionBoundPersistenceConnectedFixture, prepared: Boolean) =
+        withSealedNonemptyActiveHistoryTerminalRun(tls, TerminalCatalogQueueHistoryV1.SETTLED,
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, !prepared,
+            if (prepared) TerminalCatalogAllRecoveryHistoryV1.HISTORICAL_ALIAS_BEFORE_PRIMARY_VERIFY
+            else TerminalCatalogAllRecoveryHistoryV1.HISTORICAL_ALIAS_BEFORE_PRIMARY_COMPLETION,
+            completeHistoricalPrimary = false) { f, a, queue, _, historical ->
+            val b = checkNotNull(queue); val alias = checkNotNull(historical); val charge = TerminalCatalogAllLiteralChargesV1
+            assertEquals(if (prepared) "PREPARED" else "VERIFIED", a.publication()["state"])
+            assertEquals("AUTHORIZED_DELETE", b.receipt()["state"]); assertEquals(b.proofBeforeQueue, b.publicationProof())
+            assertEquals(b.receiptBeforeQueue, b.receiptIdentity()); assertSame(alias.stored, b.raw.deliveredStored)
+            assertEquals(1, b.raw.ackRequests.size); b.assertExpectedAppliedObjects()
+            val firstDeletion = checkNotNull(b.observer.queryForObject("SELECT applied_at FROM complaint_deletion_journal_applied " +
+                "WHERE object_key = ? AND object_version = ?", Timestamp::class.java, alias.stored.key, alias.stored.version)).toInstant()
+            val reserve = b.observer.queryForMap("SELECT state, reserved_amounts::text, converted_amounts::text, converted_at " +
+                "FROM complaint_recovery_capacity_reservations WHERE event_id = ?", b.record.event.route.eventId)
+            assertEquals("PARTIAL", reserve["state"]); assertEquals(firstDeletion, (reserve["converted_at"] as Timestamp).toInstant())
+            assertEquals(charge.promise.toLongArray().joinToString(",", "{", "}"), reserve["reserved_amounts"])
+            assertEquals(charge.applied.toLongArray().joinToString(",", "{", "}"), reserve["converted_amounts"])
+            fun reservationIdentity() = b.observer.queryForObject("SELECT (to_jsonb(l) - ARRAY['state','converted_amounts','converted_at'])::text " +
+                "FROM complaint_recovery_capacity_reservations l WHERE event_id = ?", String::class.java, b.record.event.route.eventId)
+            fun publicationIdentity() = b.observer.queryForObject("SELECT (to_jsonb(p) - ARRAY['state','object_version','ciphertext_hash'," +
+                "'object_created_at','retain_until','verified_at','verification_bytes','verification_hash','applied_at'])::text " +
+                "FROM complaint_journal_publications p WHERE event_id = ?", String::class.java, b.record.event.route.eventId)
+            val y = reservationIdentity(); val primaryIdentity = publicationIdentity()
+            val before = terminalCatalogAllComparisonRows(f.observer, f.scope); val counters = b.counters()
+            CatalogTerminalHistoryDrainProbeV1(f, a).use { probe ->
+                val native = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, b.record, probe::assertReleased)
+                try {
+                    probe.completePendingAll(prepared, native::primaryClient, native.keys::httpClient)
+                    if (prepared) native.assertPrimaryReadback() else native.assertUnused()
+                    val delta = charge.appliedEvent + charge.audit // Exactly 1 E + 1 audit = 98,304 bytes, no content refund.
+                    assertAllHistoryTransfer(counters, b.counters(), use = delta)
+                    val after = terminalCatalogAllComparisonRows(f.observer, f.scope)
+                    val changed = setOf("installation_deletion_receipts", "complaint_journal_publications", "complaint_deletion_journal_applied",
+                        "complaint_recovery_capacity_reservations", "audit", "counters")
+                    assertEquals(before - changed, after - changed,
+                        "First domain D, verifier D+192h, both versions and all domain/run/queue/control xmin are immutable.")
+                    assertEquals(y, reservationIdentity()); assertEquals(primaryIdentity, publicationIdentity())
+                    assertEquals(b.receiptBeforeQueue, b.receiptIdentity())
+                    if (!prepared) assertEquals(b.proofBeforeQueue, b.publicationProof(), "VERIFIED resume cannot rewrite its original proof or retention.")
+                    val oldApplied = before.getValue("complaint_deletion_journal_applied").single()
+                    assertEquals(2, after.getValue("complaint_deletion_journal_applied").size)
+                    assertTrue(oldApplied in after.getValue("complaint_deletion_journal_applied"), "Alias E, including xmin, is not rewritten.")
+                    assertEquals(before.getValue("audit").size + 1, after.getValue("audit").size)
+                    assertEquals(before.getValue("audit"), after.getValue("audit").dropLast(1), "Every existing SYSTEM alias/removal audit stays byte-for-byte/xmin unchanged.")
+                    b.expectAppliedObjects(alias.stored, b.record.stored); b.assertExpectedAppliedObjects()
+                    val times = assertRetainedAllHistory(b, charge.applied + delta)
+                    assertEquals(firstDeletion, times.d); assertTrue(times.a <= times.d && times.d < times.t); assertEquals(times.t, times.r)
+                    if (prepared) assertTrue(times.d < times.v && times.v <= times.t, "Primary's own released readback supplies the later V, not alias R.")
+                    else assertTrue(times.v < times.d)
+                    assertTrue(times.verifierExpiry < times.receiptExpiry)
+                    val summary = b.observer.queryForMap("SELECT created_at, xmin::text AS stamp, " +
+                        "(actor_user_id IS NULL AND complaint_actor_kind = 'INSTALLATION' AND entity_type = 'complaint_scope' AND entity_id = ? " +
+                        "AND detail = jsonb_build_object('version', ?::bigint, 'removed', 0, 'reconstructed', 0)) AS exact " +
+                        "FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_INSTALLATION_DELETED'",
+                        b.scope.toString(), b.record.event.tuple.credentialVersion + 1L, b.scope)
+                    assertEquals(true, summary["exact"]); assertEquals(times.t, (summary["created_at"] as Timestamp).toInstant())
+                    val appliedStamp = b.observer.queryForObject("SELECT xmin::text FROM complaint_deletion_journal_applied WHERE object_key = ? AND object_version = ?",
+                        String::class.java, b.record.stored.key, b.record.stored.version)
+                    assertEquals(appliedStamp, summary["stamp"], "Existing counted audit adapter inserts on this primary APPLY transaction, not an ordinary/JPA holder.")
+                    for ((table, key) in listOf("installation_deletion_receipts" to "publication_ref", "complaint_journal_publications" to "event_id",
+                        "complaint_recovery_capacity_reservations" to "event_id")) {
+                        assertEquals(appliedStamp, b.observer.queryForObject("SELECT xmin::text FROM $table WHERE $key = ?", String::class.java, b.record.event.route.eventId))
+                    }
+                    assertEquals(1L, b.observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_RECOVERY_APPLIED'", Long::class.java, b.scope))
+                    probe.replayAll() // Fresh registered completed replay; the first original was already proven consumed before SQL.
+                    assertEquals(after, terminalCatalogAllComparisonRows(f.observer, f.scope), "C's completed-family replay performs no writes or refreshes.")
+                    assertEquals(times, assertRetainedAllHistory(b, charge.applied + delta)); b.assertExpectedAppliedObjects()
+                    assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
+                } finally { native.assertClosed() }
+            }
+        }
+
+    /** Fresh genuine PREPARED history for each corruption, then an actual registered RELOAD.
+     * These committed negative inputs are disposable; none seed successful proof or history. */
+    fun registeredPendingAllAliasReloadRefusals(tls: VersionBoundPersistenceConnectedFixture) {
+        for (fault in listOf(PendingAllFault.MISSING_E, PendingAllFault.UNKNOWN_U, PendingAllFault.SUMMARY_REMOVED, PendingAllFault.MISSING_VERIFIER)) {
+            withSealedNonemptyActiveHistoryTerminalRun(tls, TerminalCatalogQueueHistoryV1.SETTLED,
+                ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, false, TerminalCatalogAllRecoveryHistoryV1.HISTORICAL_ALIAS_BEFORE_PRIMARY_VERIFY,
+                completeHistoricalPrimary = false) { f, a, queue, _, _ ->
+                val b = checkNotNull(queue); val before = terminalCatalogAllComparisonRows(f.observer, f.scope)
+                b.adversarialTransaction { corruptPendingAll(it, a, fault) }
+                val damaged = terminalCatalogAllComparisonRows(f.observer, f.scope)
+                assertNotEquals(before, damaged, fault.name); assertEquals(before - fault.table, damaged - fault.table)
+                CatalogTerminalHistoryDrainProbeV1(f, a).use { probe ->
+                    val native = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, b.record, probe::assertReleased)
+                    try {
+                        val expected = if (fault === PendingAllFault.MISSING_VERIFIER) OwnerDeleteAllApplySql.test(a.process.consumers.journalConfiguration.scope).LOCK_CREDENTIAL
+                            else TestOrdinaryDrainSqlV1.appliedFamily
+                        probe.refusePendingAll(expected, native::primaryClient, native.keys::httpClient)
+                        native.assertUnused()
+                        assertEquals(damaged, terminalCatalogAllComparisonRows(f.observer, f.scope), "Refused RELOAD cannot publish, complete, repair, refund or alter any xmin: ${fault.name}")
+                        assertEquals("PREPARED", a.publication()["state"]); assertEquals("AUTHORIZED_DELETE", b.receipt()["state"])
+                        assertEquals(b.proofBeforeQueue, b.publicationProof())
+                        assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
+                    } finally { native.assertClosed() }
+                }
+            }
+        }
+    }
+
+    /** Both faults occur inside a real APPLY after a valid VERIFIED RELOAD has committed and
+     * released. Actual rollback restores their bytes/xmin too; no spent original is reset. */
+    fun registeredPendingAllAliasApplyRefusals(tls: VersionBoundPersistenceConnectedFixture) {
+        for (fault in listOf(PendingAllFault.MISSING_E, PendingAllFault.CHANGED_VERIFIER)) {
+            withSealedNonemptyActiveHistoryTerminalRun(tls, TerminalCatalogQueueHistoryV1.SETTLED,
+                ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, true, TerminalCatalogAllRecoveryHistoryV1.HISTORICAL_ALIAS_BEFORE_PRIMARY_COMPLETION,
+                completeHistoricalPrimary = false) { f, a, queue, _, _ ->
+                val b = checkNotNull(queue); val before = terminalCatalogAllComparisonRows(f.observer, f.scope)
+                CatalogTerminalHistoryDrainProbeV1(f, a).use { probe ->
+                    val native = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, b.record, probe::assertReleased)
+                    try {
+                        probe.refusePendingAll(TestOrdinaryDrainSqlV1.appliedFamily, native::primaryClient, native.keys::httpClient) { jdbc ->
+                            corruptPendingAll(jdbc, a, fault)
+                            val damaged = jdbc.queryForList("SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM ${fault.table} t " +
+                                "WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text", String::class.java, f.scope)
+                            assertNotEquals(before.getValue(fault.table), damaged, fault.name)
+                        }
+                        native.assertUnused()
+                        assertEquals(before, terminalCatalogAllComparisonRows(f.observer, f.scope), "Real APPLY rollback preserves all N/P/E/Y/U/domain/audit/counter bytes and xmin: ${fault.name}")
+                        assertEquals("VERIFIED", a.publication()["state"]); assertEquals("AUTHORIZED_DELETE", b.receipt()["state"])
+                        assertEquals(b.proofBeforeQueue, b.publicationProof()); b.assertExpectedAppliedObjects()
+                        assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
+                    } finally { native.assertClosed() }
+                }
+            }
+        }
+    }
+
+    private enum class PendingAllFault(val table: String) {
+        MISSING_E("complaint_deletion_journal_applied"), UNKNOWN_U("complaint_recovery_capacity_reservations"), SUMMARY_REMOVED("audit"),
+        MISSING_VERIFIER("app_installations"), CHANGED_VERIFIER("app_installations"),
+    }
+
+    private fun corruptPendingAll(jdbc: JdbcTemplate, a: TestRegisteredInitialCheckpointDeletionFixtureV1, fault: PendingAllFault) {
+        when (fault) {
+            PendingAllFault.MISSING_E -> corruptAllComparison(jdbc, a, AllFault.MISSING_E)
+            PendingAllFault.UNKNOWN_U -> corruptAllComparison(jdbc, a, AllFault.UNKNOWN_U)
+            PendingAllFault.SUMMARY_REMOVED -> corruptAllComparison(jdbc, a, AllFault.SUMMARY_REMOVED)
+            PendingAllFault.MISSING_VERIFIER -> assertEquals(1, jdbc.update("DELETE FROM app_installations WHERE id = ? AND data_scope_id = ?", a.actor.id, a.scope))
+            PendingAllFault.CHANGED_VERIFIER -> assertEquals(1, jdbc.update("UPDATE app_installations SET secret_verifier = " +
+                "set_byte(secret_verifier, 0, get_byte(secret_verifier, 0) # 1) WHERE id = ? AND data_scope_id = ?", a.actor.id, a.scope))
+        }
+    }
 
     fun allRetainedTimelineRefuses(tls: VersionBoundPersistenceConnectedFixture) = allComparisonRefusals(tls, listOf(
         AllFault.A_AFTER_T, AllFault.V_AFTER_T, AllFault.R_BEFORE_T, AllFault.R_UNACCOUNTED_AFTER_T,

@@ -24,6 +24,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode
  * Retained-N/P/L ALL PREPARED/VERIFIED queue -> registered privacy replay -> D/E is separate from HTTP authentication.
  * Reconstructed/later-domain/historical-alias ALL histories stop at registered comparison/replay or ordinary D,
  * not E. The missing-bookkeeping dataset deliberately does not claim consistent-restore closure.
+ * Alias-only pending ALL cases use a fresh registered primary completion and replay after real sealing, without D/E.
  * No full ACTIVE recurrence, erasure, PURGED or supported-maximum-N qualification.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -93,6 +94,10 @@ class CatalogTestRunTerminalIT {
     @Test fun allLaterDomainAndResourceRepairPreservePrimaryCompletionAndBothRetryWindows() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allRecoveredChronology(it, reconstructed = false) }
     @Test fun historicalPreparedAllAliasBeforePrimaryVerifyReplaysAndDrainsWithoutChangingEitherExpiry() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allHistoricalChronology(it, prepared = true) }
     @Test fun historicalVerifiedAllAliasBeforePrimaryCompletionReplaysAndDrainsWithoutChangingEitherExpiry() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allHistoricalChronology(it, prepared = false) }
+    @Test fun registeredPreparedAllPrimaryCompletesAfterHistoricalAliasWithoutRefreshingFirstVerifier() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.registeredPendingAllAfterAlias(it, prepared = true) }
+    @Test fun registeredVerifiedAllPrimaryCompletesAfterHistoricalAliasWithoutChangingProofOrDomain() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.registeredPendingAllAfterAlias(it, prepared = false) }
+    @Test fun registeredPendingAllAfterAliasRefusesUnbackedFamilyBeforePublication() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.registeredPendingAllAliasReloadRefusals(it) }
+    @Test fun registeredPendingAllAfterAliasRevalidatesFamilyAndVerifierAtApply() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.registeredPendingAllAliasApplyRefusals(it) }
     @Test fun allRetainedFamilyTimelineOrAccountingMismatchRefusesWithoutConsumerMutation() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allRetainedTimelineRefuses(it) }
     // Expiry half is pure boundary-policy coverage; only missing verifier is an actual registered original refusal.
     @Test fun allRegisteredFamilyReplayRefusesMissingOrIndependentlyExpiredVerifier() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allRegisteredReplayRefusals(it) }

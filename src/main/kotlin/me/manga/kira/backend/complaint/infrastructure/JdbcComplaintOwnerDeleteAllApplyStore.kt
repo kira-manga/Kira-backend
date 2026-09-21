@@ -245,6 +245,9 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     private var retainedVerification: OwnerDeleteAllApplyRows.Verification? = null
     private var completedFamily: TestOrdinaryDrainPersistenceV1.AllPrimary? = null
     private val registeredReplay get() = replay && controls.testGraph?.recoveryRegistration != null
+    private var pendingAliasVerifierExpiry: Instant? = null
+    private val registeredPendingAfterAlias get() = pendingAliasVerifierExpiry != null
+    private val domainAlreadyErased get() = replay || registeredPendingAfterAlias
 
     fun belongsTo(selected: PersistencePhaseContext): Boolean = phase === selected
     fun completedFor(selected: PersistencePhaseContext): Boolean = belongsTo(selected) && stage === Stage.COMPLETE &&
@@ -300,11 +303,16 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         val identity = observed.event.tuple.actorId
         val installation = jdbc.query(sql.LOCK_INSTALLATION, { row, _ -> OwnerDeleteAllApplyRows.installation(row) }, identity).single()
         val credential = jdbc.query(sql.LOCK_CREDENTIAL, { row, _ -> OwnerDeleteAllApplyRows.credential(row) }, identity).single()
+        if (!replay && controls.testGraph?.recoveryRegistration != null && checkNotNull(recovery).state == "PARTIAL") {
+            pendingAliasVerifierExpiry = TestOrdinaryDrainAllPersistenceV1.requirePendingAliasFacts(
+                jdbc, routing, observed.event, receipt, checkNotNull(recovery), databaseNow())
+        }
         requirePair(installation, credential, receipt)
         current = jdbc.query(sql.OWNER_TARGETS, { row, _ -> row.getObject(1, UUID::class.java) }, identity)
-        check(current.size <= 100 && current.distinct().size == current.size && (!replay || current.isEmpty()))
+        check(current.size <= 100 && current.distinct().size == current.size && (!domainAlreadyErased || current.isEmpty()))
         val now = databaseNow()
         requireRetention(now)
+        check(pendingAliasVerifierExpiry?.isAfter(now) != false)
         check(checkNotNull(recovery).convertedAt?.isAfter(now) != true)
         completion = if (replay) checkNotNull(receipt.completedAt) else now
         expiry = if (replay) checkNotNull(receipt.expiresAt) else now.plus(RETRY_RETENTION)
@@ -326,7 +334,8 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
             stage = Stage.SETTLING
             paid.settle(this)
         } else {
-            erase(content, credential)
+            if (registeredPendingAfterAlias) check(content.isEmpty() && removed.isEmpty() && reconstructed == 0)
+            else erase(content, credential)
             stage = Stage.SETTLING
             paid.settle(this)
             complete(receipt)
@@ -854,12 +863,12 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         receipt: OwnerDeleteAllApplyRows.Receipt,
     ) {
         requireRetained()
-        val expected = if (replay) "DELETED" else "DELETION_PENDING"
+        val expected = if (domainAlreadyErased) "DELETED" else "DELETION_PENDING"
         check(installation.state == expected && credential.state == expected)
-        check(credential.credentialVersion == if (replay) nextCredentialVersion() else observed.credentialVersion)
-        check(credential.rowVersion > 0 && (!replay || credential.rowVersion > 1))
+        check(credential.credentialVersion == if (domainAlreadyErased) nextCredentialVersion() else observed.credentialVersion)
+        check(credential.rowVersion > 0 && (!domainAlreadyErased || credential.rowVersion > 1))
         check(MessageDigest.isEqual(credential.verifier, primary().verifier))
-        if (registeredReplay) {
+        if (registeredReplay || registeredPendingAfterAlias) {
             val deletedAt = checkNotNull(installation.terminalAt)
             check(credential.deletedAt == deletedAt && credential.expiresAt == deletedAt.plus(RETRY_RETENTION))
         } else check(installation.terminalAt == receipt.completedAt && credential.deletedAt == receipt.completedAt && credential.expiresAt == receipt.expiresAt)
@@ -875,11 +884,12 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
             requireRetained()
             val found = jdbc.query(sql.LOCK_RESOURCE, { row, _ -> OwnerDeleteAllApplyRows.resource(row) }, id).singleOrNull()
             if (found != null) {
-                check(found.id == id && found.deletedAt?.isAfter(completedFamily?.recovery?.lastAppliedAt ?: checkNotNull(completion)) != true)
-                check(!replay || found.state == "DELETED")
+                val last = completedFamily?.recovery?.lastAppliedAt ?: if (registeredPendingAfterAlias) checkNotNull(recovery).convertedAt else completion
+                check(found.id == id && found.deletedAt?.isAfter(checkNotNull(last)) != true)
+                check(!domainAlreadyErased || found.state == "DELETED")
                 found
             } else {
-                check(!replay && id in eventIds && id !in current)
+                check(!domainAlreadyErased && id in eventIds && id !in current)
                 requireFutureUse(reconstructed + 1, current.size)
                 checkWrite()
                 val time = Timestamp.from(checkNotNull(completion))
@@ -921,7 +931,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         )
         check(decision is InstallationRecoveryDecision.Apply && !decision.reserveIdentityCapacity)
         check(decision.identityState === InstallationIdentityState.DELETED && decision.contentEffect === RecoveryContentEffect.ERASE_ALL_OWNED_CONTENT)
-        check(decision.credentialEffect === if (replay) RecoveryCredentialEffect.PRESERVE else RecoveryCredentialEffect.COMPLETE_DELETE_ALL)
+        check(decision.credentialEffect === if (domainAlreadyErased) RecoveryCredentialEffect.PRESERVE else RecoveryCredentialEffect.COMPLETE_DELETE_ALL)
     }
 
     private fun erase(content: List<OwnerDeleteAllApplyRows.Content>, credential: OwnerDeleteAllApplyRows.Credential) {
@@ -1017,7 +1027,9 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         requireRetained()
         check(jdbc.queryForObject(sql.NO_OWNED_CONTENT, Boolean::class.java, observed.event.tuple.actorId) == true)
         check(jdbc.queryForObject(sql.ALL_TOMBSTONED, Long::class.java, uuidArray(resources.map { it.id })) == resources.size.toLong())
-        requireRetention(databaseNow())
+        val now = databaseNow()
+        requireRetention(now)
+        check(pendingAliasVerifierExpiry?.isAfter(now) != false) // D+192h, never the new receipt's T+192h.
         requireRetained()
     }
 

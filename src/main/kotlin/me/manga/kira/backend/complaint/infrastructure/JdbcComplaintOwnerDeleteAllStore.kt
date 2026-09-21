@@ -278,7 +278,8 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         stage = Stage.RELOAD_RESERVATION
         val reserve = jdbc.query(appliedSql.LOCK_RECOVERY, { result, _ -> OwnerDeleteAllApplyRows.recovery(result) }, receipt.reference).single()
         check(reserve.promise == OwnerDeleteAllCapacityCharges.RECOVERY && reserve.used.fitsWithin(reserve.promise))
-        check(reserve.state == if (receipt.state == "COMPLETED") "PARTIAL" else "RESERVED")
+        val pendingAfterAlias = receipt.state == "AUTHORIZED_DELETE" && reserve.state == "PARTIAL"
+        check(reserve.state == if (receipt.state == "COMPLETED" || pendingAfterAlias) "PARTIAL" else "RESERVED")
         if (receipt.state == "COMPLETED") check((OwnerDeleteAllCapacityCharges.APPLIED + ComplaintCapacityCharges.AUDIT).fitsWithin(reserve.used))
         registeredRecovery = reserve.remaining
         stage = Stage.COUNTERS_READY
@@ -286,12 +287,12 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         stage = Stage.DOMAIN
         controls.lockRun(jdbc, false)
         registered.requireEarlierAuthorization(receipt.authorizedAt)
-        val expectedState = if (receipt.state == "COMPLETED") "DELETED" else "DELETION_PENDING"
+        val expectedState = if (receipt.state == "COMPLETED" || pendingAfterAlias) "DELETED" else "DELETION_PENDING"
         val installation = jdbc.query(appliedSql.LOCK_INSTALLATION, { result, _ -> OwnerDeleteAllApplyRows.installation(result) }, registered.actorId).single()
         val credential = jdbc.query(appliedSql.LOCK_CREDENTIAL, { result, _ -> OwnerDeleteAllApplyRows.credential(result) }, registered.actorId).single()
         check(installation.state == expectedState && credential.state == expectedState &&
             credential.credentialVersion == if (expectedState == "DELETED") Math.addExact(receipt.version, 1) else receipt.version)
-        if (receipt.state == "COMPLETED") {
+        if (receipt.state == "COMPLETED" || pendingAfterAlias) {
             val deletedAt = checkNotNull(installation.terminalAt)
             check(credential.deletedAt == deletedAt && credential.expiresAt == deletedAt.plus(java.time.Duration.ofHours(192)))
         } else check(installation.terminalAt == null && credential.deletedAt == null && credential.expiresAt == null)
@@ -305,7 +306,10 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
             val retained = TestOrdinaryDrainAllPersistenceV1.requireCompletedReplayFacts(jdbc, routing, event)
             check(retained.recovery.promise == reserve.promise && retained.recovery.used == reserve.used &&
                 retained.recovery.lastAppliedAt == reserve.convertedAt)
-        } else persistedProof?.let { check(!receipt.authorizedAt.isAfter(it.verifiedAt)) }
+        } else {
+            persistedProof?.let { check(!receipt.authorizedAt.isAfter(it.verifiedAt)) }
+            if (pendingAfterAlias) TestOrdinaryDrainAllPersistenceV1.requirePendingAliasFacts(jdbc, routing, event, receipt, reserve, now)
+        }
         verifier = credential.verifier.copyOf()
         requireRetained()
         stage = Stage.COMPLETE

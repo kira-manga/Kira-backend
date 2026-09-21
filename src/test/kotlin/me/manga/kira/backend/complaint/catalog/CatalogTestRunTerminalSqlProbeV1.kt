@@ -13,6 +13,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllVerificationSql
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalActiveHistorySqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalPreflightSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalProjectionSqlV1
@@ -245,9 +246,9 @@ internal class CatalogTerminalHistorySealingProbeV1(private val f: TestRunPurgeF
 }
 
 /**
- * Scoped observer for genuine A -> D. Registration already pins A's deletion owner/template;
+ * Scoped observer for genuine A -> D and explicit registered primaries. Registration pins A's deletion owner/template;
  * unlike the legacy empty helper, this cannot substitute a new pair. Only passive callbacks on
- * that exact JdbcTemplate change. B's queue-only callbacks are restored, not reused for D SQL.
+ * that exact JdbcTemplate change. B's queue-only callbacks are restored, not reused for continuation SQL.
  * Reflection observes actual originals/holders and installs the coordinator's passive template;
  * it never writes completion, phase authority, a lease, native proof or an admitted input.
  */
@@ -257,15 +258,18 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
     private val beforeDeletion = a.deletion.before
     private val afterDeletion = a.deletion.after
     private val calls = mutableListOf<TestRegisteredInitialDeletionSqlCallV1>()
+    private val returnedCalls = mutableListOf<TestRegisteredInitialDeletionSqlCallV1>()
     private val owners = linkedMapOf<PersistencePhaseContext, TestRunOwnerDeleteContinuationV1>()
     private val allOwners = linkedMapOf<PersistencePhaseContext, TestRunOwnerDeleteAllContinuationV1>()
     private val inventoryOwners = linkedMapOf<PersistencePhaseContext, TestRunOrdinaryDrainV1>()
     private val inventoryLocators = linkedMapOf<PersistencePhaseContext, Pair<String, String>>()
-    private val refusedAll = mutableSetOf<TestRunOwnerDeleteAllContinuationV1>()
+    private val refusedAll = linkedMapOf<TestRunOwnerDeleteAllContinuationV1, PersistencePhasePath>()
+    private val preparedAll = mutableSetOf<TestRunOwnerDeleteAllContinuationV1>()
+    private var pendingApplyFault: ((JdbcTemplate) -> Unit)? = null
     private val mutation = Regex("\\b(?:UPDATE|INSERT|DELETE)\\s+(?:INTO\\s+|FROM\\s+)?(?:complaint_|installation_|app_|audit_)")
     private val assertion = AtomicReference<AssertionError?>()
     private var original: TestRunOrdinaryDrainV1? = null
-    private var allReplay: TestRunOwnerDeleteAllContinuationV1? = null
+    private var allOriginal: TestRunOwnerDeleteAllContinuationV1? = null
     private val templates = listOf<Any>(f.runtime.pools.catalogCoordinator.testOrdinaryDrain,
         f.runtime.pools.catalogCoordinator.testOrdinarySeal).map { executor ->
         val field = executor.javaClass.getDeclaredField("jdbc").apply { check(trySetAccessible()) }
@@ -275,7 +279,7 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
         requireConnectionFree(); a.assertReleased(); assertSame(a.runtime, f.runtime); assertSame(a.registration, f.registration)
         templates.forEach { (executor, field, previous) -> assertSame(coordinator.dataSource, previous.dataSource); field.set(executor, coordinator) }
         a.deletion.before = ::observeDeletion
-        a.deletion.after = {} // A's generic holder/result probe remains installed and still observes every call.
+        a.deletion.after = { returnedCalls.add(it) } // Same generic holder/result observer; no substituted JDBC result.
     }
 
     /** Internal registered privacy caller, not an authenticated HTTP request or a new primary. */
@@ -289,11 +293,62 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
         assertNoAllReplayMutation(start); assertConsumed(replay)
     }
 
+    /** An actual pending primary, not a replay: optional own native VERIFY, then one N/P/E/U
+     * completion. Raw audit insertion uses this same holder; cases compare its row and xmin. */
+    fun completePendingAll(prepared: Boolean, s3: () -> SdkHttpClient, kms: () -> SdkHttpClient) {
+        val start = calls.size
+        val owner = freshAll(s3, kms, prepared)
+        assertEquals(204, owner.complete().responseStatus)
+        assertReleased()
+        val expected = listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD) +
+            (if (prepared) listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY) else emptyList()) +
+            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY
+        assertEquals(expected, calls.drop(start).map { it.phase to it.path }.distinct().map { it.second })
+        val sql = OwnerDeleteAllApplySql.test(a.process.consumers.journalConfiguration.scope)
+        val verified = OwnerDeleteAllVerificationSql.test(a.process.consumers.journalConfiguration.scope).RECORD_VERIFIED
+        val counter = """
+            UPDATE complaint_capacity_counters
+            SET free_units = ?, actual_units = ?, recovery_reserved_units = ?, updated_at = now()
+            WHERE name = ? AND free_units = ? AND actual_units = ? AND recovery_reserved_units = ? AND test_reserved_units = ?
+        """.trimIndent()
+        val writes = calls.drop(start).filter { mutation.containsMatchIn(it.sql) }
+        assertEquals((if (prepared) listOf(verified) else emptyList()) + List(3) { counter } +
+            listOf(sql.RECORD_PROGRESS, sql.COMPLETE_RECEIPT, sql.MARK_APPLIED, sql.INSERT_APPLIED), writes.map { it.sql },
+            "Only own VERIFY, three literal changed counters and exact original L/N/P/E may mutate; never domain, refund, new Y or queue SQL.")
+        writes.forEach { assertEquals(if (it.sql == verified) PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY
+            else PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY, it.path) }
+        assertConsumed(owner)
+    }
+
+    /** Negative inputs only. APPLY faults execute through the already-held original template,
+     * after a proven released/COMMITTED RELOAD. They roll back with that APPLY, not a new owner. */
+    fun refusePendingAll(expectedRead: String, s3: () -> SdkHttpClient, kms: () -> SdkHttpClient,
+        atApply: ((JdbcTemplate) -> Unit)? = null) {
+        val start = calls.size; val returnedStart = returnedCalls.size
+        val failedPath = if (atApply == null) PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD else PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY
+        val owner = freshAll(s3, kms).also { refusedAll[it] = failedPath }
+        var injected = 0
+        check(pendingApplyFault == null)
+        if (atApply != null) pendingApplyFault = { jdbc -> injected++; atApply(jdbc) }
+        try { assertThrows<TestRunOwnerDeleteAllExceptionV1> { owner.complete() } }
+        finally { pendingApplyFault = null }
+        assertEquals(if (atApply == null) 0 else 1, injected)
+        val selected = calls.drop(start)
+        assertEquals(listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD) +
+            (if (atApply == null) emptyList() else listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY)),
+            selected.map { it.phase to it.path }.distinct().map { it.second })
+        assertTrue(selected.any { it.path === failedPath && it.sql == expectedRead }, "The actual failed phase must reach the intended retained lookup/comparison.")
+        assertEquals(selected, returnedCalls.drop(returnedStart),
+            "Every actual SQL dispatch returned normally; an SQL/mapper error is not the refusal oracle.")
+        assertTrue(selected.none { mutation.containsMatchIn(it.sql) }, "The refused original cannot complete, spend or repair anything.")
+        assertReleased(); assertConsumed(owner)
+    }
+
     /** A distinct failed original: missing credential is read under the normal N/P/L/counter/domain
      * order. Only its RELOAD rolls back; this never weakens successful-original COMMITTED checks. */
     fun refuseMissingAllVerifier() {
         val start = calls.size
-        val replay = freshAllReplay().also { refusedAll.add(it) }
+        val replay = freshAllReplay().also { refusedAll[it] = PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD }
         assertThrows<TestRunOwnerDeleteAllExceptionV1> { replay.complete() }
         assertReleased()
         assertEquals(listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD),
@@ -303,13 +358,18 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
         assertNoAllReplayMutation(start); assertConsumed(replay)
     }
 
-    private fun freshAllReplay(): TestRunOwnerDeleteAllContinuationV1 {
+    private fun freshAllReplay(): TestRunOwnerDeleteAllContinuationV1 = freshAll(
+        { error("Completed registered ALL replay must not open S3 or republish.") },
+        { error("Completed registered ALL replay must not open KMS or re-encrypt.") })
+
+    private fun freshAll(s3: () -> SdkHttpClient, kms: () -> SdkHttpClient, prepared: Boolean = false): TestRunOwnerDeleteAllContinuationV1 {
         requireConnectionFree(); check(original == null)
         assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, a.family)
         return TestRunPreparedOwnerDeleteAllV1.withHttpFixture(a.registration, a.deletionOwner, a.deletion, a.audit,
-            a.actor.id, a.key, AwsJournalKmsFixture.CREDENTIALS,
-            { error("Completed registered ALL replay must not open S3 or republish.") },
-            { error("Completed registered ALL replay must not open KMS or re-encrypt.") }, Clock.systemUTC(), System::nanoTime).also { allReplay = it }
+            a.actor.id, a.key, AwsJournalKmsFixture.CREDENTIALS, s3, kms, Clock.systemUTC(), System::nanoTime).also {
+            allOriginal = it
+            if (prepared) preparedAll.add(it)
+        }
     }
 
     private fun assertNoAllReplayMutation(start: Int) {
@@ -350,11 +410,12 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
             if (mutation.containsMatchIn(call.sql)) assertEquals(TestOrdinaryDrainSqlV1.markApplied, call.sql,
                 "Already-applied inventory versions may mark only the two paid scan rows, never E/domain/U again.")
         } else if (all != null) {
-            assertSame(checkNotNull(allReplay), all); assertNull(original)
+            assertSame(checkNotNull(allOriginal), all); assertNull(original)
             assertNull(ownedCutField(all, "drainBy")); assertSame(a.registration, ownedCutField(all, "registration"))
             assertSame(a.deletionOwner, ownedCutField(all, "ownership")); assertSame(a.deletion, ownedCutField(all, "jdbc"))
-            assertSame(checkNotNull(allReplay).budget, all.budget)
-            assertTrue(call.path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY))
+            assertSame(checkNotNull(allOriginal).budget, all.budget)
+            assertTrue(call.path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY) ||
+                all in preparedAll && call.path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY)
             assertNull(ownedCutField(call.phase, "testRunOwnerDelete"))
             assertSame(all, allOwners.getOrPut(call.phase) { all })
         } else {
@@ -380,6 +441,18 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
         val observation = a.deletion.observations.getValue(call.phase)
         assertSame(observation.lease, ownedPoolLease(connection)); assertFalse(observation.lease.completion.quiescent())
         calls.add(call)
+        if (all != null && call.path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY &&
+            call.sql == OwnerDeleteAllApplySql.test(a.process.consumers.journalConfiguration.scope).LOCK_RECEIPTS) {
+            pendingApplyFault?.let { fault ->
+                pendingApplyFault = null
+                val reload = calls.filter { allOwners[it.phase] === all && it.path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD }.map { it.phase }.distinct().single()
+                assertEquals(PersistenceDatabaseOutcome.COMMITTED, reload.databaseOutcome())
+                assertTrue(reload.testRunOwnerDeleteAllCleanupProven(all)); assertTrue(a.deletion.observations.getValue(reload).lease.completion.quiescent())
+                fault(a.deletion) // Existing observer's reentrancy guard: real fault SQL on this holder, no fake product result.
+                assertEquals(setOf(source), TransactionSynchronizationManager.getResourceMap().keys)
+                assertSame(connection, (TransactionSynchronizationManager.getResource(source) as ConnectionHolder).connection)
+            }
+        }
         Unit
     } catch (problem: AssertionError) { assertion.compareAndSet(null, problem); throw problem }
 
@@ -392,7 +465,8 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
         allOwners.forEach { (phase, owner) ->
             assertTrue(a.deletion.observations.getValue(phase).lease.completion.quiescent())
             assertTrue(phase.testRunOwnerDeleteAllCleanupProven(owner))
-            assertEquals(if (owner in refusedAll) PersistenceDatabaseOutcome.ROLLED_BACK else PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+            val failed = refusedAll[owner] === ownedCutField(phase, "path")
+            assertEquals(if (failed) PersistenceDatabaseOutcome.ROLLED_BACK else PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
         }
         inventoryOwners.forEach { (phase, drain) ->
             assertTrue(a.deletion.observations.getValue(phase).lease.completion.quiescent())

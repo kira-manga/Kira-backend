@@ -1,11 +1,15 @@
 package me.manga.kira.backend.complaint.infrastructure.terminal
 
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
+import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyRows
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllInventorySqlV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
+import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
 import java.sql.Timestamp
@@ -37,6 +41,57 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
         return value
     }
 
+    /** Registered N/P/L are already locked and their exact original event/proof checked by the
+     * caller. Pending N has no T: compare only retained aliases, never invent a completed Primary.
+     * The returned first verifier expiry is a comparison for this original's final time check. */
+    fun requirePendingAliasFacts(jdbc: JdbcTemplate, binding: OwnerDeleteAllJournalBindingV1,
+        event: OwnerDeleteAllJournalEventV1, receipt: OwnerDeleteAllApplyRows.Receipt,
+        reserve: OwnerDeleteAllApplyRows.Recovery, now: Instant): Instant {
+        requireDrain(event.belongsTo(binding))
+        val facts = TestOrdinaryDrainPersistenceV1.FamilyFacts(checkNotNull(binding.test), event.tuple.epoch)
+        val retained = binding.testEvent(event)
+        facts.requireEvent(retained)
+        val tuple = retained.tuple
+        requireDrain(receipt.key == tuple.operationKey && receipt.version == tuple.credentialVersion &&
+            receipt.reference == event.route.eventId && receipt.fingerprint.contentEquals(tuple.fingerprintBytes()) &&
+            receipt.state == "AUTHORIZED_DELETE" && receipt.external == null && receipt.completedAt == null && receipt.expiresAt == null &&
+            receipt.createdAt <= receipt.authorizedAt)
+        requireDrain(reserve.eventId == receipt.reference && reserve.state == "PARTIAL" && reserve.promise == OwnerDeleteAllCapacityCharges.RECOVERY &&
+            reserve.used.fitsWithin(reserve.promise) && (OwnerDeleteAllCapacityCharges.APPLIED + ComplaintCapacityCharges.AUDIT).fitsWithin(reserve.remaining))
+        val last = checkNotNull(reserve.convertedAt)
+        requireDrain(receipt.authorizedAt <= last && last <= now)
+        val routes = facts.routing.derive(tuple).candidates()
+        requireDrain(routes.size == 4)
+        val family = jdbc.query(TestOrdinaryDrainSqlV1.appliedFamily, { row, _ ->
+            TestOrdinaryDrainPersistenceV1.Applied.readFacts(row, facts, hasTime = true)
+        }, routes.joinToString(",", "{", "}") { it.eventId })
+        requireDrain(family.size in 1..3 && family.map { it.eventId }.distinct().size == family.size &&
+            family.map { it.key }.distinct().size == family.size)
+        family.forEach { applied ->
+            val route = routes.single { it.eventId == applied.eventId }
+            requireDrain(route != retained.route && applied.key == route.objectKey && applied.epoch == tuple.epoch &&
+                applied.kind == "OWNER_DELETE_ALL" && applied.targetCount == retained.complaintIds().size &&
+                checkNotNull(applied.at) in receipt.authorizedAt..last)
+        }
+        requireDrain(jdbc.queryForObject("SELECT NOT EXISTS (SELECT 1 FROM complaint_deletion_journal_applied WHERE object_key = ?)",
+            Boolean::class.java, retained.route.objectKey) == true) // No primary version, including a misassociated E outside the family query.
+        // V belongs to the primary's own native proof. It may follow the last alias R; only the
+        // eventual primary T must follow V. An alias E or summary never supplies that proof.
+        val domain = requireDomainFacts(jdbc, facts, retained, receipt.authorizedAt, last, reserve.used, lockDomain = false)
+        val expiry = checkNotNull(domain.verifierExpiry)
+        requireDrain(expiry.isAfter(now))
+        val summaries = readRecoverySummaries(jdbc, facts, retained, receipt.authorizedAt, last)
+        requireDrain(summaries.size == family.size && summaries.map { it.eventId }.distinct().size == summaries.size &&
+            summaries.map { it.at }.distinct().size == summaries.size && summaries.maxOf { it.at } == last &&
+            summaries.any { it.at == domain.deletedAt })
+        summaries.forEach { summary ->
+            requireDrain(family.count { it.eventId == summary.eventId && it.at == summary.at } == 1)
+            requireRemovalAudits(jdbc, facts, summary, "SYSTEM")
+        }
+        requireUse(reserve.used, family.size, domain, summaries)
+        return expiry
+    }
+
     private fun requireCompletedFacts(jdbc: JdbcTemplate, facts: TestOrdinaryDrainPersistenceV1.FamilyFacts,
         value: TestOrdinaryDrainPersistenceV1.AllPrimary, family: List<TestOrdinaryDrainPersistenceV1.Applied>, lockDomain: Boolean) {
         val p = value.publication
@@ -64,38 +119,10 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
         // Native V, primary completion T and last counted application R keep their own clocks.
         requireDrain(p.createdAt <= value.appliedAt && verifiedAt <= value.appliedAt && value.appliedAt <= recovery.lastAppliedAt &&
             recovery.lastAppliedAt <= now && r.createdAt <= recovery.lastAppliedAt && Instant.parse(proof.retainUntil).isAfter(now))
-        val suffix = if (lockDomain) " FOR UPDATE" else ""
-        val identity = jdbc.query(TestOrdinaryDrainSqlV1.ownerIdentity + suffix, { row, _ ->
-            requireScope(row, facts)
-            requireDrain(row.getString("state") == "DELETED")
-            row.getTimestamp("created_at").toInstant() to checkNotNull(row.getTimestamp("terminal_at")).toInstant()
-        }, tuple.actorId).single()
-        requireDrain(identity.second in p.createdAt..recovery.lastAppliedAt)
-        if (recovery.used[ComplaintCapacityCounter.INSTALLATION_IDS] != 0L) requireDrain(identity.first in p.createdAt..recovery.lastAppliedAt)
-        val credentials = jdbc.query(OwnerDeleteAllInventorySqlV1(facts.routing.journalConfiguration.scope).credential.removeSuffix(" FOR UPDATE") + suffix,
-            { row, _ -> OwnerDeleteAllApplyRows.credential(row) }, tuple.actorId)
-        requireDrain(credentials.size <= 1)
-        credentials.forEach { credential ->
-            requireDrain(credential.state == "DELETED" && credential.credentialVersion == Math.addExact(tuple.credentialVersion, 1L) &&
-                credential.deletedAt == identity.second && credential.expiresAt == identity.second.plus(Duration.ofHours(192)))
-        }
-        var reconstructed = 0L
-        val resourceDeletions = ArrayList<Instant>()
-        event.complaintIds().sortedBy(UUID::toString).forEach { target ->
-            jdbc.query(TestOrdinaryDrainSqlV1.resourceIdentity + suffix, { row, _ ->
-                requireScope(row, facts)
-                val deletedAt = checkNotNull(row.getTimestamp("deleted_at")).toInstant()
-                requireDrain(row.getString("state") == "DELETED" && deletedAt <= recovery.lastAppliedAt)
-                resourceDeletions.add(deletedAt)
-                if (row.getTimestamp("created_at").toInstant() >= p.createdAt) reconstructed++
-            }, target).single()
-        }
-        requireDrain(jdbc.queryForObject("SELECT NOT EXISTS (SELECT 1 FROM complaints WHERE owner_id = ?)", Boolean::class.java, tuple.actorId) == true)
+        val domain = requireDomainFacts(jdbc, facts, event, p.createdAt, recovery.lastAppliedAt, recovery.used, lockDomain)
         val installationSummaries = jdbc.query(primaryAudit, { row, _ -> Summary.read(row, recovery.lastAppliedAt, value.appliedAt, installation = true) },
             Math.addExact(tuple.credentialVersion, 1L), facts.scope, facts.scope.toString(), Timestamp.from(value.appliedAt))
-        val routes = facts.routing.derive(tuple).candidates()
-        val recoverySummaries = jdbc.query(recoveryAudits, { row, _ -> Summary.read(row, recovery.lastAppliedAt, p.createdAt, installation = false) },
-            facts.scope, facts.scope.toString(), routes.joinToString(",", "{", "}") { it.eventId })
+        val recoverySummaries = readRecoverySummaries(jdbc, facts, event, p.createdAt, recovery.lastAppliedAt)
         // Four E versions do not mean four lifetime summaries. Every retained summary still
         // spends the unchanged original 113-audit promise, including bounded bookkeeping repair.
         requireDrain(recoverySummaries.size <= 113 && recoverySummaries.size.toLong() <= recovery.used[ComplaintCapacityCounter.AUDIT_ROWS] &&
@@ -110,7 +137,7 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
         requireRemovalAudits(jdbc, facts, primarySummary, primaryActor)
         val summaries = recoverySummaries.filterNot { it === primarySummary }
         val allSummaries = listOf(primarySummary) + summaries
-        requireDrain(allSummaries.maxOf { it.at } == recovery.lastAppliedAt && allSummaries.any { it.at == identity.second })
+        requireDrain(allSummaries.maxOf { it.at } == recovery.lastAppliedAt && allSummaries.any { it.at == domain.deletedAt })
         val receiptRepaired = r.createdAt > value.appliedAt && summaries.any { it.eventId == p.eventId && it.at >= r.createdAt }
         summaries.forEach { summary ->
             val introduced = family.filter { it.eventId == summary.eventId && it.at == summary.at }
@@ -121,21 +148,67 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
             // Their audit charges never supply missing family evidence or authenticate a caller.
             requireDrain(introduced.isNotEmpty() ||
                 summary.removed + summary.resources + summary.installations > 0 ||
-                identity.second == summary.at || summary.at in resourceDeletions ||
+                domain.deletedAt == summary.at || summary.at in domain.resourceDeletions ||
                 receiptRepaired && summary.eventId == p.eventId && summary.at > value.appliedAt)
         }
         family.filterNot { it.key == p.objectKey && it.version == p.objectVersion }.forEach { applied ->
             requireDrain(summaries.count { it.eventId == applied.eventId && it.at == applied.at } == 1)
         }
-        requireDrain(recovery.used[ComplaintCapacityCounter.RESOURCE_IDS] == reconstructed &&
-            reconstructed == primarySummary.resources.toLong() + summaries.sumOf { it.resources.toLong() } &&
-            recovery.used[ComplaintCapacityCounter.INSTALLATION_IDS] == primarySummary.installations.toLong() + summaries.sumOf { it.installations.toLong() } &&
-            recovery.used[ComplaintCapacityCounter.AUDIT_ROWS] == primarySummary.removed + 1L + summaries.sumOf { it.removed + 1L })
+        requireUse(recovery.used, family.size, domain, allSummaries)
         // Unlike LIVE, TEST ordinary objects are ineligible for production retirement (frozen V6
         // §7.2). requireSupported rejects EVERY retirement row, and this reader rejects any spent
         // retirement counter. Only after the paid denial/all-version cut, terminal identity and
         // zero current content can unused reconstruction/version/audit/retirement slices close.
         // The run/manifest/purge reserves are separate and remain wholly outside this P−U proof.
+    }
+
+    private class DomainFacts(val deletedAt: Instant, val verifierExpiry: Instant?, val reconstructed: Long, val resourceDeletions: List<Instant>)
+
+    private fun requireDomainFacts(jdbc: JdbcTemplate, facts: TestOrdinaryDrainPersistenceV1.FamilyFacts,
+        event: TestOwnerDeleteJournalEventV1, first: Instant, last: Instant, used: ComplaintCapacityVector, lockDomain: Boolean): DomainFacts {
+        val suffix = if (lockDomain) " FOR UPDATE" else ""
+        val tuple = event.tuple
+        val identity = jdbc.query(TestOrdinaryDrainSqlV1.ownerIdentity + suffix, { row, _ ->
+            requireScope(row, facts)
+            requireDrain(row.getString("state") == "DELETED")
+            row.getTimestamp("created_at").toInstant() to checkNotNull(row.getTimestamp("terminal_at")).toInstant()
+        }, tuple.actorId).single()
+        requireDrain(identity.second in first..last)
+        if (used[ComplaintCapacityCounter.INSTALLATION_IDS] != 0L) requireDrain(identity.first in first..last)
+        val credentials = jdbc.query(OwnerDeleteAllInventorySqlV1(facts.routing.journalConfiguration.scope).credential.removeSuffix(" FOR UPDATE") + suffix,
+            { row, _ -> OwnerDeleteAllApplyRows.credential(row) }, tuple.actorId)
+        requireDrain(credentials.size <= 1)
+        credentials.forEach { credential ->
+            requireDrain(credential.state == "DELETED" && credential.credentialVersion == Math.addExact(tuple.credentialVersion, 1L) &&
+                credential.deletedAt == identity.second && credential.expiresAt == identity.second.plus(Duration.ofHours(192)))
+        }
+        var reconstructed = 0L
+        val resourceDeletions = ArrayList<Instant>()
+        event.complaintIds().sortedBy(UUID::toString).forEach { target ->
+            jdbc.query(TestOrdinaryDrainSqlV1.resourceIdentity + suffix, { row, _ ->
+                requireScope(row, facts)
+                val deletedAt = checkNotNull(row.getTimestamp("deleted_at")).toInstant()
+                requireDrain(row.getString("state") == "DELETED" && deletedAt <= last)
+                resourceDeletions.add(deletedAt)
+                if (row.getTimestamp("created_at").toInstant() >= first) reconstructed++
+            }, target).single()
+        }
+        requireDrain(jdbc.queryForObject("SELECT NOT EXISTS (SELECT 1 FROM complaints WHERE owner_id = ?)", Boolean::class.java, tuple.actorId) == true)
+        return DomainFacts(identity.second, credentials.singleOrNull()?.expiresAt, reconstructed, resourceDeletions)
+    }
+
+    private fun readRecoverySummaries(jdbc: JdbcTemplate, facts: TestOrdinaryDrainPersistenceV1.FamilyFacts,
+        event: TestOwnerDeleteJournalEventV1, first: Instant, last: Instant): List<Summary> =
+        jdbc.query(recoveryAudits, { row, _ -> Summary.read(row, last, first, installation = false) }, facts.scope, facts.scope.toString(),
+            facts.routing.derive(event.tuple).candidates().joinToString(",", "{", "}") { it.eventId })
+
+    private fun requireUse(used: ComplaintCapacityVector, applied: Int, domain: DomainFacts, summaries: List<Summary>) {
+        val resources = summaries.sumOf { it.resources.toLong() }
+        val installations = summaries.sumOf { it.installations.toLong() }
+        val audits = summaries.sumOf { it.removed + 1L }
+        requireDrain(resources == domain.reconstructed && resources in 0L..100L && installations in 0L..1L && audits in 1L..113L &&
+            used == ComplaintCapacityCharges.RESOURCE_ID.scaled(resources) + ComplaintCapacityCharges.INSTALLATION_ID.scaled(installations) +
+                ComplaintCapacityCharges.AUDIT.scaled(audits) + OwnerDeleteAllCapacityCharges.APPLIED.scaled(applied.toLong()))
     }
 
     private fun requireRemovalAudits(jdbc: JdbcTemplate, facts: TestOrdinaryDrainPersistenceV1.FamilyFacts, summary: Summary, actor: String) {
