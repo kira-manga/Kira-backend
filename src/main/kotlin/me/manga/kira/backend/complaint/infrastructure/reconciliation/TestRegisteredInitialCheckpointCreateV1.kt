@@ -47,6 +47,7 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
     private val identity = TestActiveFirstCutIdentityV1.fromRegistration(registration)
     private val journal = process.consumers.journalConfiguration
     private val checkpoint = checkNotNull(process.initialCheckpoint)
+    private val recurrentCurrent = if (policy.recurrentCurrent) TestRegisteredRecurrentCheckpointCurrentV1(registration, jdbc) else null
     private val run = TestTerminalRunContextV1(identity.scope.toString(), identity.generation, hex(identity.activationCatalogHash()),
         hex(identity.configurationHash()), identity.sealEncodingSha256)
     private val manifest: Pair<String, Long> = MessageDigest.getInstance("SHA-256").let { digest ->
@@ -70,7 +71,7 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
         check(selected === ownership && assembly.target === process && process.initialCheckpointCreate === policy && process.initialCheckpoint === checkpoint)
         check(replyPolicy == null || replyPolicy === policy)
         replyPolicy?.requireReplies()
-        policy.requireRetained(process.pools, process.consumers.journalRouting, checkpoint)
+        policy.requireRetained(process.pools, process.consumers.journalRouting, checkpoint, process.activeRecurrent)
         process.pools.ordinary.requireTestInitialCheckpointCreate(policy)
         registration.requireActiveIdentityTarget(assembly)
         registration.requireIdentityAdmissionPhaseResources(ownership, jdbc)
@@ -142,9 +143,12 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
         selected.requireCurrentOperation(this, operation, phase)
     }
 
-    /** Private fixed initial-checkpoint read only; callers above prove exact typed operation/owner before and after. */
+    /** One explicit pre-D selection; callers above prove exact typed operation/owner before and after. */
     private fun readCurrent(connection: Connection): Instant {
         registration.requireActiveIdentityGate(PersistenceComplaintMaintenanceGateV1.read(connection))
+        recurrentCurrent?.let { if (!it.selectInitial()) return it.readCurrent() }
+        // The old profile/reader and every initial invariant stay intact. No recurrent refusal is
+        // caught or retried through this branch, and old profiles never select the recurrent reader.
         return jdbc.query(TestActiveInitialCheckpointSqlV1.currentForOwnerCreate, { row, _ -> TestActiveInitialCheckpointRowsV1.Current(row) },
             *identity.arguments()).single().use { current ->
             check(current.leaseOwner == null && current.leaseExpiresAt == null && current.leaseToken > current.preparingToken)

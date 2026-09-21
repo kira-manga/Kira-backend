@@ -158,6 +158,9 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             requireTestDeployment(!entered, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             entered = true
             val inputs = readManifest(manifest)
+            requireTestDeployment(inputs.initialCheckpointCreate?.profile !=
+                me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1.RECURRENT_PROFILE || inputs.activeRecurrent != null,
+                ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
             requireTestDeployment((inputs.activeFirstCut != null) == (ordinaryPublicationCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
             requireTestDeployment((inputs.initialCheckpoint != null) == (initialCheckpointReadCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
             requireTestDeployment((inputs.activeOwnerDeleteQueue != null) == (queueRecoveryCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
@@ -335,7 +338,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial, activeFirstCut, ordinaryPublication, activeFirstCutSuccessor = activeFirstCutSuccessor, initialCheckpoint = scanner, activeRecurrent = recurrent, activeOrdinarySealRecovery = activeOrdinarySealRecovery, terminalDenial = inputs.terminalDenial,
             initialCheckpointCreate = inputs.initialCheckpointCreate?.let {
                 me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1.fromIndependentInputs(
-                    it, pools, routing, checkNotNull(scanner),
+                    it, pools, routing, checkNotNull(scanner), recurrent,
                 )
             },
             activeOwnerDeleteQueue = queue,
