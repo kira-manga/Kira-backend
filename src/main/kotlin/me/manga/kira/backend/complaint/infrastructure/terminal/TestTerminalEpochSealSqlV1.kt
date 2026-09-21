@@ -9,6 +9,10 @@ internal object TestTerminalEpochSealSqlV1 {
         "c.publication_epoch >= c.rotation_epoch_after AND c.publication_epoch - c.rotation_epoch_after <= 1 AND c.rotation_epoch_before > 0",
     )
     val run = TestOrdinaryDrainSqlV1.run.replace("r.generation_seal_count = 1", "r.generation_seal_count BETWEEN 1 AND 2")
+    val controlWithActiveHistory = TestOrdinaryDrainSqlV1.controlWithActiveHistory.replace(
+        "c.publication_epoch = 3 AND c.scan_requested", "c.publication_epoch IN (3, 4) AND c.scan_requested",
+    )
+    val runWithActiveHistory = TestOrdinaryDrainSqlV1.runWithActiveHistory.replace("r.generation_seal_count = 2", "r.generation_seal_count BETWEEN 2 AND 3")
     val sidecar = TestOrdinarySealSqlV1.sidecar
         .replace("i.object_kind = 'EPOCH_SEAL' AND i.object_ordinal = 0", "i.object_kind = 'EPOCH_SEAL' AND i.object_ordinal = 1")
         .replace("WHERE i.data_scope_id = ?::uuid OR i.object_key LIKE ?::text",
@@ -26,6 +30,7 @@ internal object TestTerminalEpochSealSqlV1 {
             AND rotation_epoch_after = publication_epoch AND scan_requested
             AND lease_owner = ?::uuid AND lease_token = ?::bigint AND lease_expires_at > clock_timestamp()
     """.trimIndent()
+    val rotateWithActiveHistory = rotate.replace("rotation_sequence = 1", "rotation_sequence = 2")
     val insert = """
         INSERT INTO complaint_test_terminal_intents (schema_version, operation_token, data_scope_id, test_only, object_kind, object_ordinal,
             object_id, object_key, routing_key_id, writer_generation, epoch_start, epoch_end, preparing_fencing_token,
@@ -42,6 +47,9 @@ internal object TestTerminalEpochSealSqlV1 {
             AND final_ordinary_epoch = ?::bigint AND terminal_seal_epoch = ?::bigint AND generation_seal_count = 1
             AND generation_seal_root = ? AND seal_set_bytes = ? AND seal_set_hash = ?
     """.trimIndent()
+    val verifyRunWithActiveHistory = verifyRun
+        .replace("SET generation_seal_count = 2", "SET generation_seal_count = 3")
+        .replace("AND generation_seal_count = 1", "AND generation_seal_count = 2")
     val counts = """
         WITH e AS MATERIALIZED (SELECT ?::uuid AS scope)
         SELECT count(*) FILTER (WHERE i.object_kind = 'INSTALLATION_MANIFEST') AS manifests,
@@ -71,4 +79,5 @@ internal object TestTerminalEpochSealSqlV1 {
             "(i.object_kind = 'EPOCH_SEAL' AND i.publication_ref IS NULL AND " +
                 "((i.object_ordinal = 0 AND i.state = 'WIRE_FROZEN' AND i.epoch_start = 1 AND i.epoch_end = e.cutoff) OR " +
                 "(i.object_ordinal = 1 AND i.state IN ('CANONICAL', 'WIRE_FROZEN') AND i.epoch_start = e.epoch AND i.epoch_end = e.epoch)))")
+    val relationWithActiveHistory = relation.replace("i.epoch_start = 1 AND i.epoch_end = e.cutoff", "i.epoch_start = 2 AND i.epoch_end = e.cutoff")
 }

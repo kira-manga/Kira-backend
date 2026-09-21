@@ -47,8 +47,9 @@ internal fun withTestActiveFirstCut(
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     activeFirstCutSuccessor: Boolean = false,
     activeSealRecovery: Boolean = false, sealRecoveryHorizon: java.time.Instant? = null,
+    terminalHistory: TestOrdinaryDrainFixtureInputsV1? = null,
     action: (TestActiveFirstCutFixtureV1) -> Unit,
-) = withInitialAdmission(tls, activeFirstCut = true, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor, activeSealRecovery = activeSealRecovery, sealRecoveryHorizon = sealRecoveryHorizon) { identity ->
+) = withInitialAdmission(tls, activeFirstCut = true, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor, activeSealRecovery = activeSealRecovery, sealRecoveryHorizon = sealRecoveryHorizon, terminalHistory = terminalHistory) { identity ->
         identity.release()
         identity.probe.resetObservations()
         val executor = identity.runtime.pools.catalogCoordinator.testActiveFirstCut

@@ -89,7 +89,7 @@ internal class TestRunTerminalQuiescenceV1 private constructor(internal val term
         private set
 
     internal val fullSealSet = TestTerminalSealSetV1.create(runContext.dataScopeId, runContext.activationCatalogGeneration,
-        runContext.activationCatalogSha256, listOf(ordinarySeal, sealedReference))
+        runContext.activationCatalogSha256, control.ordinarySeals(ordinarySeal) + sealedReference)
     internal val fullSealSetSha256 = TestTerminalJsonV1(routing.journalConfiguration).encodeSealSet(fullSealSet).let {
         try { Sha256.hex(it) } finally { it.fill(0) }
     }
@@ -100,6 +100,10 @@ internal class TestRunTerminalQuiescenceV1 private constructor(internal val term
         }
         val purgeFacts = purge.authenticatedFactsForSeal()
         add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.TEST_RUN_PURGE, 0, purgeFacts.id, epoch, epoch, purgeFacts.objectRef))
+        control.initialHistory?.reference?.let { seal ->
+            add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.EPOCH_SEAL, 0, seal.sealId, seal.epochStartInclusive,
+                seal.epochEndInclusive, seal.objectRef, TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL))
+        }
         add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.EPOCH_SEAL, 0, ordinarySeal.sealId,
             ordinarySeal.epochStartInclusive, ordinarySeal.epochEndInclusive, ordinarySeal.objectRef))
         add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.EPOCH_SEAL, 1, sealedReference.sealId, epoch, epoch, sealedReference.objectRef))
@@ -314,7 +318,9 @@ internal class TestRunTerminalQuiescenceV1 private constructor(internal val term
 
 /** Historical expected locator only. Native LIST/GET/AEAD and current SQL must still agree exactly. */
 internal data class TestTerminalQuiescenceTargetV1(val kind: TestTerminalCodecKindV1, val ordinal: Int, val id: String,
-    val startEpoch: Long, val endEpoch: Long, val objectRef: TestTerminalObjectRefV1)
+    val startEpoch: Long, val endEpoch: Long, val objectRef: TestTerminalObjectRefV1,
+    val source: TestTerminalQuiescenceSourceV1 = TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT)
+internal enum class TestTerminalQuiescenceSourceV1 { V21_TERMINAL_INTENT, V26_ACTIVE_SEAL }
 internal enum class TestTerminalQuiescenceStepV1 { CAPTURE, ADMISSION, NATIVE, BEGIN_PASS, EXPECTED, APPEND, COMPLETE_PASS, WITNESS, RECYCLE, COMPLETE }
 internal enum class TestRunTerminalQuiescenceResultV1 { TERMINAL_PREFIX_QUIESCENT_AND_SEALED }
 internal class TestTerminalQuiescenceExceptionV1 : RuntimeException("TEST terminal quiescence refused.", null, false, false)

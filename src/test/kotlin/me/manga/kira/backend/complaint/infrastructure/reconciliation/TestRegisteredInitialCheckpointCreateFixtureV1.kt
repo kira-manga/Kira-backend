@@ -8,6 +8,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.catalog.InitialIdentityExchangeFixture
 import me.manga.kira.backend.complaint.catalog.TestActiveOrdinaryRawHttpV1
+import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainFixtureInputsV1
 import me.manga.kira.backend.complaint.catalog.withTestActiveFirstCut
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
@@ -49,13 +50,14 @@ internal val REGISTERED_CREATE = PersistencePhasePath.COMPLAINT_OWNER_CREATE
  */
 internal fun withRegisteredInitialCheckpointCreate(tls: VersionBoundPersistenceConnectedFixture,
     completeCheckpoint: Boolean = true, shortFreshness: Boolean = false,
+    terminalHistory: TestOrdinaryDrainFixtureInputsV1? = null,
     action: (TestRegisteredInitialCheckpointCreateFixtureV1) -> Unit) {
     val ordinary = TestActiveOrdinaryRawFixtureV1()
     val raw = TestActiveInitialCheckpointRawFixtureV1()
     val factories = ordinary.factories.let { TestActiveOrdinaryRawHttpV1(it.sts, it.kms, it.s3, raw.input,
         initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
         shortInitialCheckpointFreshness = shortFreshness) }
-    withTestActiveFirstCut(tls, ordinaryRawHttp = factories) { first ->
+    withTestActiveFirstCut(tls, ordinaryRawHttp = factories, terminalHistory = terminalHistory) { first ->
         first.initial.withExchange { exchange ->
             val candidate = first.initial.candidate()
             val token = exchange.enroll(candidate).session.accessToken

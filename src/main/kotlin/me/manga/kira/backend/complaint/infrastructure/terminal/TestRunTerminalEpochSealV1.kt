@@ -88,8 +88,9 @@ internal class TestRunTerminalEpochSealV1 private constructor(internal val purge
     init {
         requireConnectionFree()
         purge.authenticatedPurge()
-        requireTerminalSeal(control.sequence == 1L && control.previousSealEpoch == 0L && ordinarySeal.epochStartInclusive == 1L &&
-            ordinarySeal.precedingSealSha256.isEmpty() && epoch == Math.addExact(control.cutoff, 1L) &&
+        requireTerminalSeal(!control.needsCapture && control.previousSealEpoch == (control.initialHistory?.reference?.epochEndInclusive ?: 0L) &&
+            ordinarySeal.epochStartInclusive == control.ordinaryStart &&
+            ordinarySeal.precedingSealSha256 == (control.initialHistory?.reference?.objectRef?.canonicalSha256 ?: "") && epoch == Math.addExact(control.cutoff, 1L) &&
             registration.process.catalogActivation.initialWriterRegistry().eventWriter.generationId == writer)
         acquisition.requireRetained(routing, registration.process.publicationLanes)
         purge.retainTerminalEpochSeal(this)

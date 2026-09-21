@@ -77,6 +77,7 @@ internal class TestRunOrdinarySealV1 private constructor(
     private var content: TestTerminalContentV1? = null
     private var custody: TestOrdinarySealCustodyV1? = null
     private var proof: TestOrdinarySealProofV1? = null
+    private var historyReadback: TestActiveHistorySealReadbackV1? = null
     private var installationObservation: TestTerminalProgressV1? = null
     private var completedStrictReference: TestTerminalSealRefV1? = null
     private val rows = ArrayList<TestTerminalDurableRowV1>()
@@ -104,6 +105,10 @@ internal class TestRunOrdinarySealV1 private constructor(
         try {
             requireRunning()
             capture = coordinator.testOrdinarySeal.execute(this)
+            checkNotNull(capture).activeHistoryRow?.let { row ->
+                val history = checkNotNull(capturedClosedCut().control.initialHistory)
+                TestActiveHistorySealReadbackV1.begin(this, row, history).also { historyReadback = it }.read()
+            }
             bindCanonical()
             if (checkNotNull(capture).row == null) {
                 step = TestOrdinarySealStepV1.PREPARE
@@ -134,7 +139,8 @@ internal class TestRunOrdinarySealV1 private constructor(
             requireRunning()
             requireConnectionFree()
             if (closedDrain == null) installationObservation = verified.releasedInstallationObservation()
-            else completedStrictReference = TestClosedOrdinarySealRowsV1.reference(frozenRow(), checkNotNull(proof))
+            else completedStrictReference = TestClosedOrdinarySealRowsV1.reference(frozenRow(), checkNotNull(proof),
+                capturedClosedCut().control.initialHistory?.reference?.objectRef?.canonicalSha256 ?: "")
             complete = true
         } catch (problem: Throwable) {
             observeFailure(problem)
@@ -165,6 +171,10 @@ internal class TestRunOrdinarySealV1 private constructor(
         throwIfSignalled()
         return completedStrictReference ?: throw TestOrdinarySealExceptionV1()
     }
+    internal fun completedStrictManifest(drain: TestRunOrdinaryDrainV1): TestOrdinarySealManifestV1 {
+        completedStrictReference(drain)
+        return checkNotNull(capture).manifest
+    }
 
     private fun bindCanonical() {
         val captured = checkNotNull(capture)
@@ -174,15 +184,17 @@ internal class TestRunOrdinarySealV1 private constructor(
         val cutoff = if (closedDrain == null) captured.cut.cutoff else checkNotNull(captured.closedCut).control.cutoff
         val capturedAt = if (closedDrain == null) checkNotNull(captured.cut.capturedAt) else checkNotNull(checkNotNull(captured.closedCut).control.capturedAt)
         val token = if (closedDrain == null) checkNotNull(captured.cut.token) else checkNotNull(checkNotNull(captured.closedCut).control.captureId)
-        val value = TestTerminalEpochSealV1(1, "EPOCH_SEAL", "A".repeat(43), writer, "TEST", scope.toString(), 1, cutoff,
-            captured.manifest.count, captured.manifest.sha256, "", fence)
+        val start = captured.closedCut?.control?.ordinaryStart ?: 1L
+        val preceding = captured.closedCut?.control?.initialHistory?.reference?.objectRef?.canonicalSha256 ?: ""
+        val value = TestTerminalEpochSealV1(1, "EPOCH_SEAL", "A".repeat(43), writer, "TEST", scope.toString(), start, cutoff,
+            captured.manifest.count, captured.manifest.sha256, preceding, fence)
         val expected = codec.canonicalizeEpochSeal(value, codecAttempt, retained?.binding?.routingKeyId)
         if (retained == null) {
             content = expected
             val created = OrdinaryJournalRetentionV1.ceilingSecond(capturedAt)
             val binding = TestTerminalDurableBindingV1(token.toString(), runContext, routing.journalConfiguration.sha256,
                 TestTerminalDurableKindV1.EPOCH_SEAL, 0, expected.route.journalId, expected.route.objectKey, expected.route.routingKeyId,
-                writer, 1, cutoff, fence, acquisition.newRetention(codecAttempt, created), created)
+                writer, start, cutoff, fence, acquisition.newRetention(codecAttempt, created), created)
             val bytes = expected.canonicalBytes()
             canonicalCandidate = try { ownRow(TestTerminalDurableRowV1.canonical(binding, bytes)) } finally { bytes.fill(0) }
         } else {
@@ -246,6 +258,21 @@ internal class TestRunOrdinarySealV1 private constructor(
         if (closedDrain == null) capturedCut().requireListedVersion(version) else capturedClosedCut().requireListedVersion(version)
     }
     internal fun capturedManifest() = checkNotNull(capture).manifest
+    internal fun requireHistoryReservation() {
+        requireConnectionFree(); requireRunning(); requireReleased(capture)
+        requireDrain(closedDrain != null && step === TestOrdinarySealStepV1.CAPTURE && historyReadback == null && custody == null &&
+            checkNotNull(capture).activeHistoryRow != null && capturedClosedCut().control.initialHistory != null)
+    }
+    internal fun requireHistoryReadback(selected: TestActiveHistorySealReadbackV1) {
+        requireConnectionFree(); requireRunning(); requireReleased(capture)
+        requireDrain(step === TestOrdinarySealStepV1.CAPTURE && historyReadback === selected && custody == null && prepared == null && frozen == null)
+    }
+    internal fun requireHistoryProof(operation: TestOrdinarySealOperationV1, history: TestOrdinaryDrainActiveHistoryV1,
+        row: TestTerminalDurableRowV1, at: Instant) {
+        requireRunning()
+        requireDrain(operation.original === this && step === TestOrdinarySealStepV1.VERIFY && closedDrain != null)
+        checkNotNull(historyReadback).requireProof(this, history, row, at)
+    }
     internal fun preparedRow(): TestTerminalDurableRowV1 = checkNotNull(checkNotNull(prepared).row)
     internal fun frozenRow(): TestTerminalDurableRowV1 = checkNotNull(checkNotNull(frozen).row)
     internal fun canonicalCandidate(operation: TestOrdinarySealOperationV1): TestTerminalDurableRowV1 {

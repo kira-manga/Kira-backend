@@ -52,15 +52,20 @@ internal fun withInitialAdmission(tls: VersionBoundPersistenceConnectedFixture, 
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     activeFirstCutSuccessor: Boolean = false,
     activeSealRecovery: Boolean = false, sealRecoveryHorizon: java.time.Instant? = null,
+    terminalHistory: TestOrdinaryDrainFixtureInputsV1? = null,
     action: (InitialAdmissionFixture) -> Unit) =
     // The longest current-row drift history pays four enrollment attempts, including refusals, before any window expires.
     TestOrdinarySealHttpFixtureV1(horizon = sealRecoveryHorizon ?: java.time.Instant.parse("2038-01-01T00:00:00Z"),
-        protectedIntake = true, protectedEnrollmentGlobalPerHour = 4).use { native ->
+        protectedIntake = true, protectedEnrollmentGlobalPerHour = 4,
+        manifestPublication = terminalHistory != null, purgePublication = terminalHistory != null,
+        terminalEpochSeal = terminalHistory != null, terminalInventory = terminalHistory?.terminalQuiescence != null,
+        activeOrdinaryHistory = terminalHistory != null).use { native ->
         require(sealRecoveryHorizon == null || activeSealRecovery)
+        require(terminalHistory == null || activeFirstCut)
         ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, ordinarySealHttp = native,
             // Only closed setup predecessor leases: not the tested release or natural-expiry qualification.
             expireClosedSetupPredecessors = true, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery,
-            ordinaryDrain = if (activeFirstCut) TestOrdinaryDrainFixtureInputsV1() else null,
+            ordinaryDrain = terminalHistory ?: if (activeFirstCut) TestOrdinaryDrainFixtureInputsV1() else null,
             ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { p, runtime, registration, probe ->
             val fixture = InitialAdmissionFixture(p, runtime, registration, probe, native)
             val executor = runtime.pools.catalogCoordinator.testInitialAdmission

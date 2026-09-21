@@ -57,6 +57,8 @@ internal class TestOrdinarySealOperationV1 private constructor(
         private set
     internal var row: TestTerminalDurableRowV1? = null
         private set
+    internal var activeHistoryRow: TestTerminalDurableRowV1? = null
+        private set
     private var stage = Stage.NEW
     private var counters: JdbcComplaintCapacityStore.LockedTestOrdinarySeal? = null
     private lateinit var run: Run
@@ -171,6 +173,9 @@ internal class TestOrdinarySealOperationV1 private constructor(
         row = loadSidecar()
         requireDrain((row == null) == (sidecars == 0L))
         checkNotNull(closedCut).requireSidecar(row)
+        if (step === TestOrdinarySealStepV1.CAPTURE) {
+            activeHistoryRow = checkNotNull(closedCut).control.initialHistory?.let { original.ownRow(it.frozen(jdbc, drain)) }
+        }
         stage = Stage.MANIFEST
         manifest = readClosedManifest()
         if (step !== TestOrdinarySealStepV1.CAPTURE) manifest.requireSame(original.capturedManifest())
@@ -221,10 +226,11 @@ internal class TestOrdinarySealOperationV1 private constructor(
         val b = candidate.binding
         val control = checkNotNull(closedCut).control
         requireDrain(candidate.state === TestTerminalDurableStateV1.CANONICAL && b.operationToken == control.captureId.toString() &&
-            b.preparingFencingToken == original.leaseToken && b.epochStartInclusive == 1L && b.epochEndInclusive == control.cutoff)
+            b.preparingFencingToken == original.leaseToken && b.epochStartInclusive == control.ordinaryStart && b.epochEndInclusive == control.cutoff)
         val bytes = candidate.canonicalBytes()
         try {
-            requireDrain(jdbc.update(TestOrdinarySealSqlV1.insert, b.operationToken, b.run.dataScopeId, b.objectId, b.objectKey, b.routingKeyId,
+            val sql = if (control.initialHistory == null) TestOrdinarySealSqlV1.insert else TestClosedOrdinarySealSqlV1.insertActiveTail
+            requireDrain(jdbc.update(sql, b.operationToken, b.run.dataScopeId, b.objectId, b.objectKey, b.routingKeyId,
                 b.writerGeneration, b.epochEndInclusive, b.preparingFencingToken, b.run.activationCatalogGeneration,
                 TestOrdinarySealRowsV1.hex(b.run.activationCatalogSha256), TestOrdinarySealRowsV1.hex(b.run.configurationSha256),
                 TestOrdinarySealRowsV1.hex(b.journalConfigurationSha256), TestOrdinarySealRowsV1.hex(b.run.terminalEncodingSha256),
@@ -244,6 +250,9 @@ internal class TestOrdinarySealOperationV1 private constructor(
         val proof = original.providerProof(this) // Actual native/STS/KMS/S3 cleanup has already completed.
         val at = now()
         requireDrain(!proof.verifiedAt.isAfter(at) && !proof.lastModified.isAfter(at) && proof.retainUntil.isAfter(at))
+        checkNotNull(closedCut).control.initialHistory?.let { history ->
+            history.frozen(jdbc, drain).use { fresh -> original.requireHistoryProof(this, history, fresh, at) }
+        }
         if (checkNotNull(closedCut).existing != null) {
             checkNotNull(closedCut).requireProof(durable, proof)
             return
@@ -554,6 +563,7 @@ internal class TestOrdinarySealOperationV1 private constructor(
         val unused = closedRun?.unused ?: run.unused
         requireOrdinarySeal(ledger.balance.hardLimit == policy.hardLimit && ledger.balance.creationLimit == policy.creationLimit &&
             daily.dailyLimit == policy.dailyEnrollmentLimit && unused.fitsWithin(ledger.balance.testReserved) &&
+            (closedCut?.control?.ordinaryHistoryCharge ?: ComplaintCapacityVector.ZERO).fitsWithin(ledger.balance.actual) &&
             (!spend || TestTerminalCapacityChargesV1.SIDECAR.fitsWithin(unused)))
         return if (spend) ledger.spendTestReserve(expectedDigest, TestTerminalCapacityChargesV1.SIDECAR, ComplaintCapacityVector.ZERO) else ledger
     }

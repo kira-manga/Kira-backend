@@ -90,6 +90,7 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     internal var leaseToken = 0L
         private set
     internal val cutoff: Long get() = checkNotNull(capturedControl).cutoff
+    internal val ordinaryStart: Long get() = checkNotNull(capturedControl).ordinaryStart
     internal val currentEpoch: Long get() = checkNotNull(capturedControl).epoch
     internal val path: PersistencePhasePath get() = if (step === TestOrdinaryDrainStepV1.RECOVERY_APPLY) when (checkNotNull(currentEntry).kind) {
         "OWNER_DELETE" -> PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY
@@ -192,7 +193,7 @@ internal class TestRunOrdinaryDrainV1 private constructor(
             requireRunning()
             val opening = execute(TestOrdinaryDrainStepV1.OPEN)
             retainedRun = opening.run
-            if (checkNotNull(capturedControl).sequence == 0L) {
+            if (checkNotNull(capturedControl).needsCapture) {
                 requireDrain(opening.run.progress == null)
                 val publication = TestRunPreparedOwnerDeleteV1.Publication(primaryCredentials, s3, kms, clock, nanoTime)
                 do {
@@ -299,6 +300,7 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         return checkNotNull(admitted).statement.evidenceRetainUntilEpochSecond
     }
     internal fun manifestSeal() = checkNotNull(closedSeal).completedStrictReference(this).also { requireManifestPredecessor() }
+    internal fun manifestSealManifest() = checkNotNull(closedSeal).completedStrictManifest(this).also { requireManifestPredecessor() }
 
     private fun completeAllPrimaries(credentials: AwsSessionCredentials) {
         val publication = TestRunPreparedOwnerDeleteAllV1.Publication(credentials, s3, kms, clock, nanoTime)
@@ -341,15 +343,19 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     internal fun retainCapture(operation: TestOrdinaryDrainOperationV1, control: TestOrdinaryDrainRowsV1.Control, token: Long) {
         requireRunning(); requireDrain(operation.original === this && operation.step === step && step in setOf(TestOrdinaryDrainStepV1.OPEN, TestOrdinaryDrainStepV1.CAPTURE))
         if (step === TestOrdinaryDrainStepV1.OPEN) requireDrain(capturedControl == null && leaseToken == 0L && token > 0)
-        else requireDrain(leaseToken == token && checkNotNull(capturedControl).historyHash == control.historyHash &&
-            checkNotNull(capturedControl).cutoff == control.cutoff && control.sequence == 1L)
+        else {
+            val before = checkNotNull(capturedControl)
+            requireDrain(before.needsCapture && leaseToken == token && before.historyHash == control.historyHash &&
+                before.cutoff == control.cutoff && control.sequence == before.terminalRotationSequence && !control.needsCapture)
+            before.requireSameHistory(control)
+        }
         capturedControl = control; leaseToken = token
     }
     internal fun requireCapturedControl(control: TestOrdinaryDrainRowsV1.Control) { requireRunning(); control.requireSame(checkNotNull(capturedControl)) }
     internal fun capturedControl(): TestOrdinaryDrainRowsV1.Control { requireRunning(); return checkNotNull(capturedControl) }
 
     internal fun requireAuthority(candidate: TestOrdinaryDenialAuthorityPolicyV1) {
-        requireRunning(); requireDrain(candidate === authority && registration.process.ordinaryDenial === candidate && capturedControl?.sequence == 1L)
+        requireRunning(); requireDrain(candidate === authority && registration.process.ordinaryDenial === candidate && capturedControl?.needsCapture == false)
     }
     internal fun requireDenialContext(statement: TestOrdinaryDenialStatementV1) {
         requireAuthority(authority)
@@ -410,7 +416,7 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         requireRunning()
         requireInventoryKind(event.comparison.eventKind.name)
         requireDrain(event.belongsTo(routing) && event.comparison.scope == routing.journalConfiguration.scope &&
-            event.comparison.epoch in 1..cutoff && when (event.comparison.eventKind) {
+            event.comparison.epoch in ordinaryStart..cutoff && when (event.comparison.eventKind) {
                 ComplaintJournalDeletionKindV1.OWNER_DELETE, ComplaintJournalDeletionKindV1.ADMIN_DELETE -> event.complaintIds().size == 1
                 ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> event.complaintIds().size in 0..100
                 ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE -> event.complaintIds().size in 1..50
@@ -632,8 +638,8 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     }
 
     /**
-     * The released OPEN owns this exact selector. Only its fresh epoch-one, wholly absent-history
-     * shape can skip the historical healthy reader, and only to observe a bounded EMPTY page.
+     * The released OPEN owns this exact selector. Only fresh epoch-one absent history or exact
+     * retained initial A can skip the historical healthy reader, for a bounded EMPTY page only.
      * Current full-D identities/closed gates, the preserved request and the original live lease are
      * still read on the child's already-fenced holder. No lease or failure ownership is transferred.
      */
@@ -641,6 +647,16 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         requirePrimaryContinuation(original)
         requireDrain(jdbc === deletionJdbc && !phaseEntered && allContinuation == null && adminContinuation == null)
         val captured = checkNotNull(capturedControl)
+        if (captured.initialHistory != null) {
+            // A never created global ordinary-health fields. This exact retained-history branch
+            // can inspect an EMPTY pending-primary page only, not authorize/reload a new primary.
+            requireDrain(captured.needsCapture && captured.epoch == 2L && captured.sequence == 1L && checkNotNull(retainedRun).progress == null)
+            TestOrdinaryDrainPersistenceV1.lockControlIdentities(jdbc, this)
+            requireCapturedControl(TestOrdinaryDrainPersistenceV1.readControl(jdbc, this))
+            TestOrdinaryDrainPersistenceV1.requireLease(jdbc, this)
+            requirePrimaryContinuation(original)
+            return true
+        }
         if (captured.sequence != 0L || captured.epoch != 1L || captured.previousSealEpoch != 0L) return false
         requireDrain(checkNotNull(retainedRun).progress == null && captured.cutoff == 1L && leaseToken > 0)
         TestOrdinaryDrainPersistenceV1.lockControlIdentities(jdbc, this)

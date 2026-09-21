@@ -17,7 +17,7 @@ internal object TestTerminalEpochSealRowsV1 {
         init {
             val preceding = original.control
             requireTerminalSeal(TestOrdinaryDrainRowsV1.boolean(row, "valid") && epoch in original.epoch..original.afterEpoch &&
-                row.getLong("rotation_sequence") == preceding.sequence && preceding.sequence == 1L &&
+                row.getLong("rotation_sequence") == preceding.sequence && !preceding.needsCapture &&
                 row.getLong("rotation_epoch_before") == preceding.cutoff && row.getObject("rotation_id", UUID::class.java) == preceding.captureId &&
                 row.getLong("rotation_capture_token") == preceding.captureFence && row.getTimestamp("rotation_captured_at")?.toInstant() == preceding.capturedAt &&
                 row.getLong("seal_epoch") == preceding.previousSealEpoch && TestOrdinaryDrainRowsV1.hash(row, "history_hash") == preceding.historyHash)

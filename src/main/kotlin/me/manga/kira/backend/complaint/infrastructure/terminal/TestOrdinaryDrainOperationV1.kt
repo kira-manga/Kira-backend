@@ -108,7 +108,7 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
         when (step) {
             TestOrdinaryDrainStepV1.OPEN -> {
                 val control = TestOrdinaryDrainPersistenceV1.readControl(jdbc, original)
-                if (control.sequence == 1L) {
+                if (!control.needsCapture) {
                     requireDrain(!checkNotNull(control.capturedAt).isBefore(run.sealedAt))
                     TestOrdinaryDrainPersistenceV1.requireAllPrimaries(jdbc, original, run, converted = false, staged = false)
                 } else requireDrain(run.progress == null && scans.isEmpty() && sidecars == 0L)
@@ -116,7 +116,7 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
             TestOrdinaryDrainStepV1.CAPTURE -> capture()
             TestOrdinaryDrainStepV1.ALL_PRIMARY_PAGE -> {
                 requireDrain(original.routing.journalConfiguration.ownerDeleteAll && run.progress == null && scans.isEmpty() && sidecars == 0L &&
-                    original.capturedControl().sequence == 0L)
+                    original.capturedControl().needsCapture)
                 allPrimaries = jdbc.query(TestOrdinaryDrainSqlV1.allPrimaryPage, { row, _ ->
                     requireDrain(TestOrdinaryDrainRowsV1.boolean(row, "valid"))
                     checkNotNull(row.getObject("installation_id", UUID::class.java)) to checkNotNull(row.getObject("deletion_key", UUID::class.java))
@@ -124,7 +124,7 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
             }
             TestOrdinaryDrainStepV1.ADMIN_PRIMARY_PAGE -> {
                 requireDrain(original.routing.journalConfiguration.registeredAdminDelete && run.progress == null && scans.isEmpty() && sidecars == 0L &&
-                    original.capturedControl().sequence == 0L)
+                    original.capturedControl().needsCapture)
                 adminPrimaries = jdbc.query(TestOrdinaryDrainSqlV1.adminPrimaryPage, { row, _ ->
                     requireDrain(TestOrdinaryDrainRowsV1.boolean(row, "valid"))
                     checkNotNull(row.getObject("actor_id", UUID::class.java)) to checkNotNull(row.getObject("idempotency_key", UUID::class.java))
@@ -185,8 +185,9 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
         requireDrain(run.progress == null && sidecars == 0L && scans.isEmpty())
         TestOrdinaryDrainPersistenceV1.requireAllPrimaries(jdbc, original, run, converted = false, staged = false)
         val before = TestOrdinaryDrainPersistenceV1.readControl(jdbc, original)
-        requireDrain(before.sequence == 0L)
-        requireDrain(jdbc.update(TestOrdinaryDrainSqlV1.capture, original.captureId, original.scope, original.attemptId, original.leaseToken) == 1)
+        requireDrain(before.needsCapture)
+        val sql = if (before.initialHistory == null) TestOrdinaryDrainSqlV1.capture else TestOrdinaryDrainSqlV1.captureWithActiveHistory
+        requireDrain(jdbc.update(sql, original.captureId, original.scope, original.attemptId, original.leaseToken) == 1)
         val control = TestOrdinaryDrainPersistenceV1.readControl(jdbc, original)
         requireDrain(!checkNotNull(control.capturedAt).isBefore(run.sealedAt))
         original.retainCapture(this, control, original.leaseToken)
@@ -362,7 +363,7 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
         val policy = original.registration.process.consumers.capacityPolicy
         requireDrain(ledger.balance.hardLimit == policy.hardLimit && ledger.balance.creationLimit == policy.creationLimit &&
             daily.dailyLimit == policy.dailyEnrollmentLimit && run.unused.fitsWithin(ledger.balance.testReserved) &&
-            initialScanCharge.fitsWithin(ledger.balance.actual) && spend.fitsWithin(run.unused))
+            (initialScanCharge + original.capturedControl().ordinaryHistoryCharge).fitsWithin(ledger.balance.actual) && spend.fitsWithin(run.unused))
         if (!released.isZero()) requireDrain(step === TestOrdinaryDrainStepV1.CONVERT && spend.isZero() && recycled.isZero())
         if (!recycled.isZero()) requireDrain(step in setOf(TestOrdinaryDrainStepV1.RECYCLE, TestOrdinaryDrainStepV1.ABANDON) && spend.isZero() && released.isZero())
         return when {

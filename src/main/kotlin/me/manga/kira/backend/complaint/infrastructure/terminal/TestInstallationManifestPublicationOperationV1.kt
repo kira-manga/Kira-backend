@@ -257,7 +257,8 @@ internal class TestInstallationManifestPublicationOperationV1 private constructo
     }
     private fun readRun(): TestOrdinaryDrainRowsV1.Run {
         original.requireRunning()
-        val run = jdbc.query(TestOrdinaryDrainSqlV1.run, { value, _ -> TestOrdinaryDrainRowsV1.Run(value, original.drain) }, *original.registration.sealingRunArguments()).single()
+        val sql = if (original.control.initialHistory == null) TestOrdinaryDrainSqlV1.run else TestOrdinaryDrainSqlV1.runWithActiveHistory
+        val run = jdbc.query(sql, { value, _ -> TestOrdinaryDrainRowsV1.Run(value, original.drain) }, *original.registration.sealingRunArguments()).single()
         requireManifest(run.progress?.context() == original.runContext && run.progress?.completedCuts() == listOf(original.ordinaryCut) &&
             run.ordinaryEpoch == original.control.cutoff && run.reservedTerminalEpoch == original.epoch)
         val reads = checkNotNull(run.progress).installationReads()
@@ -276,7 +277,7 @@ internal class TestInstallationManifestPublicationOperationV1 private constructo
     private fun requireStrictSeal() {
         val set = json.sealSet(checkNotNull(run.sealSetBytes))
         requireManifest(set.dataScopeId == original.runContext.dataScopeId && set.activationCatalogGeneration == original.runContext.activationCatalogGeneration &&
-            set.activationCatalogSha256 == original.runContext.activationCatalogSha256 && set.records() == listOf(original.ordinarySeal))
+            set.activationCatalogSha256 == original.runContext.activationCatalogSha256 && set.records() == original.control.ordinarySeals(original.ordinarySeal))
         val root = TestTerminalRootsV1(original.routing.journalConfiguration, run.installationLimit, run.plan.manifestChunkCount.toInt()).preTerminalSeals(set)
         requireManifest(run.sealCount == root.count && run.sealRoot.contentEquals(hex(root.sha256)))
         val observedAt = now()
@@ -318,7 +319,8 @@ internal class TestInstallationManifestPublicationOperationV1 private constructo
             val page = TestInstallationManifestAppliedPageV1.page(jdbc, this, after)
             if (page.isEmpty()) break
             page.forEach { value ->
-                requireManifest(count < expected.versionCount && after?.let { TestOrdinaryDrainRowsV1.compare(it, value.locator) < 0 } != false)
+                requireManifest(value.epoch in original.control.ordinaryStart..original.control.cutoff &&
+                    count < expected.versionCount && after?.let { TestOrdinaryDrainRowsV1.compare(it, value.locator) < 0 } != false)
                 framed = Math.addExact(framed, EpochSealFramesV1.update(hash, listOf(value.key, value.version, value.ciphertext)))
                 requireManifest(framed <= original.drain.maximumFramedBytes)
                 count++; after = value.locator
@@ -334,7 +336,7 @@ internal class TestInstallationManifestPublicationOperationV1 private constructo
         original.requireRunning()
         for (sql in listOf(TestRunSealingSqlV1.lockGlobalControl, TestRunSealingSqlV1.lockScopeControl)) requireManifest(jdbc.query(sql,
             { value, _ -> TestOrdinaryDrainRowsV1.boolean(value, "valid") }, *original.registration.sealingControlArguments()).single())
-        jdbc.query(TestOrdinaryDrainSqlV1.control, { value, _ -> TestOrdinaryDrainRowsV1.Control(value) }, original.scope).single().requireSame(original.control)
+        TestOrdinaryDrainPersistenceV1.readControl(jdbc, original.drain).requireSame(original.control)
     }
     private fun requireLease() {
         original.requireRunning()
@@ -356,7 +358,8 @@ internal class TestInstallationManifestPublicationOperationV1 private constructo
         ledger.configuration.requireMatching(expectedDigest)
         val policy = original.registration.process.consumers.capacityPolicy
         requireManifest(ledger.balance.hardLimit == policy.hardLimit && ledger.balance.creationLimit == policy.creationLimit &&
-            daily.dailyLimit == policy.dailyEnrollmentLimit && run.unused.fitsWithin(ledger.balance.testReserved) && spent(run).fitsWithin(ledger.balance.actual))
+            daily.dailyLimit == policy.dailyEnrollmentLimit && run.unused.fitsWithin(ledger.balance.testReserved) &&
+            (spent(run) + original.control.ordinaryHistoryCharge).fitsWithin(ledger.balance.actual))
     }
     internal fun failed(problem: Throwable): Nothing {
         original.observeFailure(problem); phase.recordFailure(problem); original.throwIfSignalled()

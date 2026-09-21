@@ -31,7 +31,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Actual successful-manifest child, initially only the initial registry with no earlier seal.
+ * Actual successful-manifest child, initial registry with either no history or the exact retained A.
  * Own canonical PREPARE and WIRE_FROZEN release precede its provider. Stops at receiptless
  * VERIFIED; no terminal seal, denial, catalog acceptance, erasure or PURGED authority is issued.
  */
@@ -83,9 +83,11 @@ internal class TestRunPurgePublicationV1 private constructor(internal val manife
     init {
         requireConnectionFree()
         manifest.requirePurgePredecessor()
-        // Current strict drain closes 1..cutoff. Earlier history cannot be omitted or relabelled.
-        requirePurge(control.previousSealEpoch == 0L && ordinarySeal.epochStartInclusive == 1L &&
-            ordinarySeal.precedingSealSha256.isEmpty() && epoch == Math.addExact(control.cutoff, 1L) &&
+        // A is an independently verified ordinary prefix, never omitted, repriced or relabelled.
+        requirePurge(control.previousSealEpoch == (control.initialHistory?.reference?.epochEndInclusive ?: 0L) &&
+            ordinarySeal.epochStartInclusive == control.ordinaryStart &&
+            ordinarySeal.precedingSealSha256 == (control.initialHistory?.reference?.objectRef?.canonicalSha256 ?: "") &&
+            epoch == Math.addExact(control.cutoff, 1L) &&
             registration.process.catalogActivation.initialWriterRegistry().eventWriter.generationId == writer)
         acquisition.requireRetained(routing, registration.process.publicationLanes)
         manifest.retainPurge(this)
