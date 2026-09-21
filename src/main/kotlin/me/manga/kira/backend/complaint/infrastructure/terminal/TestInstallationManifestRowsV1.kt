@@ -63,7 +63,7 @@ internal object TestInstallationManifestRowsV1 {
         val b = binding(row, original)
         requireManifest(TestOrdinaryDrainRowsV1.boolean(row, "valid") && row.getString("state") == "WIRE_FROZEN" &&
             b.objectKind === TestTerminalDurableKindV1.EPOCH_SEAL && b.objectOrdinal == 0 && b.operationToken == original.control.captureId.toString() &&
-            b.epochStartInclusive == 1L && b.epochEndInclusive == original.control.cutoff &&
+            b.epochStartInclusive == original.control.ordinaryStart && b.epochEndInclusive == original.control.cutoff &&
             b.preparingFencingToken in original.control.captureFence..original.drain.leaseToken &&
             b.objectId == expected.sealId && b.objectKey == expected.objectRef.objectKey &&
             TestOrdinaryDrainRowsV1.hash(row, "canonical_hash") == expected.objectRef.canonicalSha256 &&
@@ -76,9 +76,10 @@ internal object TestInstallationManifestRowsV1 {
         try {
             val seal = TestTerminalJsonV1(original.routing.journalConfiguration).epochSeal(bytes)
             requireManifest(seal.sealId == expected.sealId && seal.writerGeneration == original.writer && seal.dataScopeId == original.runContext.dataScopeId &&
-                seal.epochStartInclusive == 1L && seal.epochEndInclusive == original.control.cutoff && seal.precedingSealSha256.isEmpty() &&
-                seal.preparingFencingToken == b.preparingFencingToken && seal.eventCount == original.ordinaryCut.denial.firstInventory.versionCount &&
-                seal.eventManifestSha256 == original.ordinaryCut.denial.firstInventory.sha256)
+                seal.epochStartInclusive == original.control.ordinaryStart && seal.epochEndInclusive == original.control.cutoff &&
+                seal.precedingSealSha256 == (original.control.initialHistory?.reference?.objectRef?.canonicalSha256 ?: "") &&
+                seal.preparingFencingToken == b.preparingFencingToken && seal.eventCount == original.ordinarySealManifest.count &&
+                seal.eventManifestSha256 == original.ordinarySealManifest.sha256)
         } finally { bytes.fill(0) }
     }
 

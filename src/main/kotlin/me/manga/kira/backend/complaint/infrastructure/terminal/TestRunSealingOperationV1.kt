@@ -14,11 +14,13 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityChargesV1
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutIdentityV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.sql.Types
 import java.time.Instant
+import java.util.UUID
 
 /** One fixed operation on the retained holder. Neither observed rows nor an audit ID can construct it. */
 internal class TestRunSealingOperationV1 private constructor(
@@ -58,6 +60,7 @@ internal class TestRunSealingOperationV1 private constructor(
         }
 
         stage = Stage.CONTROLS
+        closeSupportedActiveHistoryGates()
         for (sql in listOf(TestRunSealingSqlV1.lockGlobalControl, TestRunSealingSqlV1.lockScopeControl)) {
             requireSealing(jdbc.query(sql, { row, _ -> requiredBoolean(row, "valid") },
                 *original.registration.sealingControlArguments()).single())
@@ -98,6 +101,39 @@ internal class TestRunSealingOperationV1 private constructor(
             requireSealing(insertion === written && written.completedFor(this))
         }
         stage = Stage.COMPLETE
+    }
+
+    private fun closeSupportedActiveHistoryGates() {
+        requireAt(Stage.CONTROLS)
+        val scope = original.registration.process.consumers.journalConfiguration.scope.id
+        // Fixed global-before-scope order; preserve the old already-closed first-history branch.
+        val gates = listOf(UUID(0L, 0L), scope).map { id ->
+            jdbc.query(TestRunSealingSqlV1.lockGateState, { row, _ ->
+                requiredBoolean(row, "maintenance_closed") to requiredBoolean(row, "creation_closed")
+            }, id).single().also { requireAt(Stage.CONTROLS) }
+        }
+        // A completed or interrupted paid audit can reenter with both gates already closed.
+        // That replay still rereads the bounded V26/V14 lineage and exact retained global B.
+        val history = TestOrdinaryDrainActiveHistoryV1.beforeClosure(jdbc, original)
+        if (gates.all { it == (true to true) }) return
+        requireSealing(gates.all { it == (false to false) })
+        // The real initial RELEASE retained exact B and full-D facts, not a caller eligibility DTO.
+        val identity = TestActiveFirstCutIdentityV1.fromRegistration(original.registration)
+        requireSealing(identity.scope == scope)
+        requireSealing(jdbc.query(TestRunSealingSqlV1.lockActiveHistoryGlobal, { row, _ -> requiredBoolean(row, "valid") },
+            *original.registration.sealingControlArguments(), identity.globalDesiredGeneration, identity.globalConfigurationHash()).single())
+        requireSealing(jdbc.query(TestRunSealingSqlV1.lockActiveHistoryScope, { row, _ -> requiredBoolean(row, "valid") },
+            *original.registration.sealingControlArguments()).single())
+        val active = checkNotNull(history)
+        val before = jdbc.query(TestOrdinaryDrainSqlV1.controlWithActiveHistory, { row, _ -> TestOrdinaryDrainRowsV1.Control(row, active) }, scope).single()
+        requireSealing(before.needsCapture && before.epoch == 2L && before.sequence == 1L &&
+            !active.checkpointCompletedAt.isAfter(original.priorSealedAt()))
+        requireAt(Stage.CONTROLS)
+        requireSealing(jdbc.update(TestRunSealingSqlV1.closeActiveHistoryGates, scope) == 2)
+        val afterHistory = TestOrdinaryDrainActiveHistoryV1.beforeClosure(jdbc, original)
+        active.requireSame(afterHistory)
+        jdbc.query(TestOrdinaryDrainSqlV1.controlWithActiveHistory, { row, _ -> TestOrdinaryDrainRowsV1.Control(row, afterHistory) }, scope).single().requireSame(before)
+        requireAt(Stage.CONTROLS)
     }
 
     private fun lockRun(): Run {

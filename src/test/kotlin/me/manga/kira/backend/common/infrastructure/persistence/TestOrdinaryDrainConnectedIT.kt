@@ -2,6 +2,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.catalog.ComplaintTestColdRecoveryProcessCasesV1
 import me.manga.kira.backend.complaint.catalog.ComplaintTestNamespaceRecoveryRegistrationCasesV1
+import me.manga.kira.backend.complaint.catalog.TestActiveHistoryTerminalCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainAccountingCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainAuthorityCutV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainCommitStepV1
@@ -42,6 +43,47 @@ class TestOrdinaryDrainConnectedIT {
     @AfterAll
     fun closeDatabase() {
         if (database.isInitialized()) database.value.close()
+    }
+
+    // Source-only A/V26 connection cases; no execution/qualification is claimed by their addition.
+    @Test
+    fun genuineActiveSealHistoryReachesDrainManifestPurgeTerminalAndFullQuiescentSealSet() = withActiveHistoryFixture {
+        TestActiveHistoryTerminalCasesV1.successful(it)
+    }
+
+    @Test
+    fun activeHistoryChangedGlobalGenerationCannotCloseOpenGatesOrPaySealedAudit() = withActiveHistoryFixture {
+        TestActiveHistoryTerminalCasesV1.currentGlobalDrift(it, closedRetry = false)
+    }
+
+    @Test
+    fun activeHistoryChangedGlobalHashCannotReadmitClosedSealerOrBeginDrain() = withActiveHistoryFixture {
+        TestActiveHistoryTerminalCasesV1.currentGlobalDrift(it, closedRetry = true)
+    }
+
+    @Test
+    fun activeHistoryMissingRetainedNativeVersionCannotRecreateAOrPublishSuccessor() = withActiveHistoryFixture {
+        TestActiveHistoryTerminalCasesV1.changedNativeHistory(it, missing = true)
+    }
+
+    @Test
+    fun activeHistoryChangedRetainedNativeVersionCannotRecreateAOrPublishSuccessor() = withActiveHistoryFixture {
+        TestActiveHistoryTerminalCasesV1.changedNativeHistory(it, missing = false)
+    }
+
+    @Test
+    fun activeHistoryMissingAInSecondNativeInventoryCannotWitnessOrRecycleD() = withActiveHistoryFixture {
+        TestActiveHistoryTerminalCasesV1.secondInventoryHistoryFault(it, missing = true)
+    }
+
+    @Test
+    fun activeHistoryExtraAVersionInSecondNativeInventoryCannotWitnessOrRecycleD() = withActiveHistoryFixture {
+        TestActiveHistoryTerminalCasesV1.secondInventoryHistoryFault(it, missing = false)
+    }
+
+    @Test
+    fun activeHistoryChangedCurrentGlobalGenerationCannotStartDNativeReadback() = withActiveHistoryFixture {
+        TestActiveHistoryTerminalCasesV1.currentGlobalDriftAtD(it)
     }
 
     @Test
@@ -332,6 +374,12 @@ class TestOrdinaryDrainConnectedIT {
     private fun completion(step: TestOrdinaryDrainCommitStepV1, cut: TestRegistrationCompletionCut) = withFixture {
         TestOrdinaryDrainFailureCasesV1.completion(it, step, cut)
     }
+
+    private fun withActiveHistoryFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =
+        VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, activeFirstCut = true).use {
+            it.bind()
+            action(it)
+        }
 
     private fun withFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =
         VersionBoundPersistenceConnectedFixture(database.value, testActivation = true).use {

@@ -55,8 +55,13 @@ internal class TestOrdinarySealHttpFixtureV1(
     val protectedEnrollmentGlobalPerHour: Int? = null,
     val terminalEpochSeal: Boolean = false,
     val terminalInventory: Boolean = false,
+    // Explicit pre-intake raw support for A1 -> final ordinary2 -> terminal3. Defaults stay two-seal only.
+    val activeOrdinaryHistory: Boolean = false,
 ) : AutoCloseable {
-    init { require(protectedEnrollmentGlobalPerHour == null || (protectedIntake && protectedEnrollmentGlobalPerHour in 1..120)) }
+    init {
+        require(protectedEnrollmentGlobalPerHour == null || (protectedIntake && protectedEnrollmentGlobalPerHour in 1..120))
+        require(!activeOrdinaryHistory || protectedIntake && terminalEpochSeal)
+    }
 
     val sts = AwsJournalKmsFixture()
     val kms = AwsJournalKmsFixture()
@@ -83,7 +88,8 @@ internal class TestOrdinarySealHttpFixtureV1(
     val manifestObjects = linkedMapOf<String, JournalPublisherObject>()
     val purgeObjects = linkedMapOf<String, JournalPublisherObject>()
     // The first ordinary seal stays in `stored`; only this explicit successor fixture may own
-    // a different epoch-seal key. No ordinary object is overwritten to simulate terminal proof.
+    // other epoch-seal keys (final2 and terminal3 with A history). Every entry comes from PUT;
+    // no ordinary object is overwritten to simulate terminal proof.
     val terminalSealObjects = linkedMapOf<String, JournalPublisherObject>()
     // Separate opt-in actual recovery identity and whole-prefix pages; no publisher proof or exact-key filter.
     val terminalInventoryRequests = mutableListOf<JournalPublisherHttpRequest>()
@@ -218,7 +224,14 @@ internal class TestOrdinarySealHttpFixtureV1(
         val terminal = terminalEpochSeal && "/epoch-seal/" in key && stored != null && key != stored?.key
         if (terminal) {
             val first = checkNotNull(stored).key.removePrefix(j.sealTerminalPrefix).substringBefore('/').toLong()
-            assertEquals(first + 1, key.removePrefix(j.sealTerminalPrefix).substringBefore('/').toLong())
+            val epoch = key.removePrefix(j.sealTerminalPrefix).substringBefore('/').toLong()
+            if (activeOrdinaryHistory) {
+                assertEquals(1L, first)
+                assertTrue(epoch == 2L || epoch == 3L)
+                if (epoch == 3L) assertEquals(1, terminalSealObjects.keys.count {
+                    it.removePrefix(j.sealTerminalPrefix).substringBefore('/') == "2"
+                }, "The actual final ordinary PUT must precede terminal3; no object/authority is injected.")
+            } else assertEquals(first + 1, epoch)
         }
         val existing = if (manifest) manifestObjects[key] else if (purge) purgeObjects[key] else if (terminal) terminalSealObjects[key] else stored
         journalPublisherRawAssertSigned(request, location.region, location.accountId, TARGET)
@@ -235,7 +248,8 @@ internal class TestOrdinarySealHttpFixtureV1(
             "GET" -> {
                 assertEquals("/${location.bucket}/$key", request.http.encodedPath())
                 assertEquals(checkNotNull(existing).version, request.http.rawQueryParameters().getValue("versionId").single())
-                journalPublisherRawGetReply(location.region, if (manifest || purge || terminal) existing.copy(bytes = existing.bytes.copyOf()) else existing)
+                journalPublisherRawGetReply(location.region, if (manifest || purge || terminal || activeOrdinaryHistory)
+                    existing.copy(bytes = existing.bytes.copyOf()) else existing)
             }
             else -> {
                 assertEquals("PUT", request.kind)
@@ -244,6 +258,7 @@ internal class TestOrdinarySealHttpFixtureV1(
                 assertEquals("COMPLIANCE", request.header("x-amz-object-lock-mode"))
                 if (existing != null) OwnerDeleteAllJournalPublisherFixture.errorReply(412) else {
                     val version = if (manifest) "test-manifest-version-${manifestObjects.size + 1}" else if (purge) "test-purge-version-${purgeObjects.size + 1}"
+                        else if (terminal && activeOrdinaryHistory && key.removePrefix(j.sealTerminalPrefix).substringBefore('/') == "2") "test-active-tail-seal-version-1"
                         else if (terminal) "test-terminal-seal-version-1" else VERSION
                     val value = JournalPublisherObject(key, version, request.body.copyOf(), now().truncatedTo(ChronoUnit.SECONDS),
                         Instant.parse(request.header("x-amz-object-lock-retain-until-date")),

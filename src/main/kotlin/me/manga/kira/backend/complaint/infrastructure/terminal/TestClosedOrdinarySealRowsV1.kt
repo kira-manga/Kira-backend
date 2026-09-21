@@ -25,14 +25,16 @@ internal object TestClosedOrdinarySealRowsV1 {
         val existing: TestTerminalSealRefV1?
         init {
             original.requirePaidProgress(run.progress)
-            requireDrain(control.sequence == 1L && control.cutoff == original.cutoff && control.epoch == Math.addExact(control.cutoff, 1L))
+            requireDrain(!control.needsCapture && control.cutoff == original.cutoff && control.epoch == Math.addExact(control.cutoff, 1L))
             existing = run.sealSetBytes?.let { bytes ->
                 val set = TestTerminalJsonV1(original.routing.journalConfiguration).sealSet(bytes)
                 requireDrain(set.dataScopeId == original.runContext.dataScopeId && set.activationCatalogGeneration == original.runContext.activationCatalogGeneration &&
-                    set.activationCatalogSha256 == original.runContext.activationCatalogSha256 && set.records().size == 1)
-                val record = set.records().single()
+                    set.activationCatalogSha256 == original.runContext.activationCatalogSha256)
+                val record = set.records().last()
+                requireDrain(set.records() == control.ordinarySeals(record))
                 requireDrain(record.role === TestTerminalSealRoleV1.ORDINARY && record.writerGeneration == original.writer &&
-                    record.epochStartInclusive == 1L && record.epochEndInclusive == control.cutoff && record.precedingSealSha256.isEmpty() &&
+                    record.epochStartInclusive == control.ordinaryStart && record.epochEndInclusive == control.cutoff &&
+                    record.precedingSealSha256 == (control.initialHistory?.reference?.objectRef?.canonicalSha256 ?: "") &&
                     run.ordinaryEpoch == control.cutoff && run.reservedTerminalEpoch == control.epoch)
                 val root = TestTerminalRootsV1(original.routing.journalConfiguration, run.installationLimit, run.plan.manifestChunkCount.toInt()).preTerminalSeals(set)
                 requireDrain(run.sealCount == root.count && run.sealRoot.contentEquals(HexFormat.of().parseHex(root.sha256)))
@@ -56,17 +58,19 @@ internal object TestClosedOrdinarySealRowsV1 {
         }
         fun requireProof(row: TestTerminalDurableRowV1, proof: TestOrdinarySealProofV1) {
             requireSidecar(row)
-            requireDrain(existing == reference(row, proof))
+            requireDrain(existing == reference(row, proof, control.initialHistory?.reference?.objectRef?.canonicalSha256 ?: ""))
         }
     }
 
-    fun reference(row: TestTerminalDurableRowV1, proof: TestOrdinarySealProofV1): TestTerminalSealRefV1 = TestTerminalSealRefV1(
+    fun reference(row: TestTerminalDurableRowV1, proof: TestOrdinarySealProofV1, precedingHash: String = ""): TestTerminalSealRefV1 = TestTerminalSealRefV1(
         TestTerminalSealRoleV1.ORDINARY, row.binding.writerGeneration, row.binding.epochStartInclusive, row.binding.epochEndInclusive,
-        row.binding.objectId, "", TestTerminalObjectRefV1(row.binding.objectKey, proof.version, checkNotNull(row.wireSha256), row.canonicalSha256))
+        row.binding.objectId, precedingHash, TestTerminalObjectRefV1(row.binding.objectKey, proof.version, checkNotNull(row.wireSha256), row.canonicalSha256))
 
     fun set(original: TestRunOrdinaryDrainV1, row: TestTerminalDurableRowV1, proof: TestOrdinarySealProofV1): TestTerminalSealSetV1 =
         TestTerminalSealSetV1.create(original.runContext.dataScopeId, original.runContext.activationCatalogGeneration,
-            original.runContext.activationCatalogSha256, listOf(reference(row, proof)))
+            original.runContext.activationCatalogSha256, original.capturedControl().let { control ->
+                control.ordinarySeals(reference(row, proof, control.initialHistory?.reference?.objectRef?.canonicalSha256 ?: ""))
+            })
 
     fun sidecar(row: ResultSet, original: TestRunOrdinarySealV1, cut: Cut): TestTerminalDurableRowV1 {
         val drain = checkNotNull(original.closedDrain)
@@ -81,7 +85,7 @@ internal object TestClosedOrdinarySealRowsV1 {
             row.getObject("writer_generation", UUID::class.java).toString(), row.getLong("epoch_start"), row.getLong("epoch_end"),
             row.getLong("preparing_fencing_token"), checkNotNull(row.getTimestamp("retention_floor")).toInstant(), checkNotNull(row.getTimestamp("created_at")).toInstant())
         val control = cut.control
-        requireDrain(binding.operationToken == control.captureId.toString() && binding.epochStartInclusive == 1L && binding.epochEndInclusive == control.cutoff &&
+        requireDrain(binding.operationToken == control.captureId.toString() && binding.epochStartInclusive == control.ordinaryStart && binding.epochEndInclusive == control.cutoff &&
             binding.writerGeneration == original.writer && binding.journalConfigurationSha256 == original.routing.journalConfiguration.sha256 &&
             binding.preparingFencingToken in control.captureFence..original.leaseToken && !binding.createdAt.isBefore(checkNotNull(control.capturedAt)))
         val bytes = checkNotNull(row.getBytes("canonical_bytes"))

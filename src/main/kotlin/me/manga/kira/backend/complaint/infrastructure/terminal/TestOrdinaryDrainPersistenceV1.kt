@@ -73,8 +73,13 @@ internal object TestOrdinaryDrainPersistenceV1 {
         }
     }
 
-    fun readControl(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1): TestOrdinaryDrainRowsV1.Control =
-        jdbc.query(TestOrdinaryDrainSqlV1.control, { row, _ -> TestOrdinaryDrainRowsV1.Control(row) }, original.scope).single()
+    fun readControl(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1): TestOrdinaryDrainRowsV1.Control {
+        // This comparator also serves later originals under THEIR current holders/budgets. Do not
+        // require the already-completed drain to be running or transfer its historical authority.
+        val history = TestOrdinaryDrainActiveHistoryV1.read(jdbc, original)
+        val sql = if (history == null) TestOrdinaryDrainSqlV1.control else TestOrdinaryDrainSqlV1.controlWithActiveHistory
+        return jdbc.query(sql, { row, _ -> TestOrdinaryDrainRowsV1.Control(row, history) }, original.scope).single()
+    }
 
     fun requireLease(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1) {
         tick(original)
@@ -84,7 +89,8 @@ internal object TestOrdinaryDrainPersistenceV1 {
 
     fun readRun(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1): TestOrdinaryDrainRowsV1.Run {
         tick(original)
-        val run = jdbc.query(TestOrdinaryDrainSqlV1.run, { row, _ -> TestOrdinaryDrainRowsV1.Run(row, original) },
+        val sql = if (original.capturedControl().initialHistory == null) TestOrdinaryDrainSqlV1.run else TestOrdinaryDrainSqlV1.runWithActiveHistory
+        val run = jdbc.query(sql, { row, _ -> TestOrdinaryDrainRowsV1.Run(row, original) },
             *original.registration.sealingRunArguments()).single()
         // Like the registered primary APPLY, verify the immutable audit without taking an audit
         // lock before installation/resource/content. Recovery and conversion keep that lock order.
@@ -110,7 +116,7 @@ internal object TestOrdinaryDrainPersistenceV1 {
                 row.getString("object_kind") == "EPOCH_SEAL" && row.getInt("object_ordinal") == 0 &&
                 row.getObject("writer_generation", UUID::class.java).toString() == original.writer &&
                 row.getObject("operation_token", UUID::class.java) == original.capturedControl().captureId &&
-                row.getLong("epoch_start") == 1L && row.getLong("epoch_end") == original.cutoff &&
+                row.getLong("epoch_start") == original.ordinaryStart && row.getLong("epoch_end") == original.cutoff &&
                 row.getLong("preparing_fencing_token") in 1..original.leaseToken &&
                 row.getLong("activation_catalog_generation") == original.runContext.activationCatalogGeneration &&
                 TestOrdinaryDrainRowsV1.hash(row, "activation_catalog_hash") == original.runContext.activationCatalogSha256 &&
@@ -447,7 +453,9 @@ internal object TestOrdinaryDrainPersistenceV1 {
         companion object {
             fun read(row: ResultSet, original: TestRunOrdinaryDrainV1, hasTime: Boolean = false): Applied {
                 original.requireInventoryKind(checkNotNull(row.getString("event_kind")))
-                return readFacts(row, FamilyFacts(original.routing, original.cutoff), hasTime)
+                return readFacts(row, FamilyFacts(original.routing, original.cutoff), hasTime).also {
+                    requireDrain(it.epoch in original.ordinaryStart..original.cutoff)
+                }
             }
 
             fun readFacts(row: ResultSet, facts: FamilyFacts, hasTime: Boolean = false): Applied {

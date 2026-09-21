@@ -199,7 +199,8 @@ internal class TestTerminalEpochSealOperationV1 private constructor(
         try {
             requireDescriptor(bytes)
             // The original rotation slot, ordinary seal and checkpoint are neither cleared nor rewritten.
-            requireTerminalSeal(jdbc.update(TestTerminalEpochSealSqlV1.rotate, original.afterEpoch, original.scope, original.epoch,
+            val rotate = if (original.control.initialHistory == null) TestTerminalEpochSealSqlV1.rotate else TestTerminalEpochSealSqlV1.rotateWithActiveHistory
+            requireTerminalSeal(jdbc.update(rotate, original.afterEpoch, original.scope, original.epoch,
                 original.writer, original.control.captureId, original.control.captureFence, original.control.cutoff, original.attemptId, original.leaseToken) == 1)
             requireTerminalSeal(jdbc.update(TestTerminalEpochSealSqlV1.insert, b.operationToken, original.scope, b.objectId, b.objectKey, b.routingKeyId,
                 b.writerGeneration, b.epochStartInclusive, b.epochEndInclusive, b.preparingFencingToken, b.run.activationCatalogGeneration,
@@ -242,7 +243,8 @@ internal class TestTerminalEpochSealOperationV1 private constructor(
         val root = roots(run).fullSeals(full)
         val encoded = json.encodeSealSet(full)
         try {
-            requireTerminalSeal(jdbc.update(TestTerminalEpochSealSqlV1.verifyRun, hex(root.sha256), encoded, hex(Sha256.hex(encoded)),
+            val sql = if (original.control.initialHistory == null) TestTerminalEpochSealSqlV1.verifyRun else TestTerminalEpochSealSqlV1.verifyRunWithActiveHistory
+            requireTerminalSeal(jdbc.update(sql, hex(root.sha256), encoded, hex(Sha256.hex(encoded)),
                 original.scope, OwnerDeleteRows.array(run.reserve), OwnerDeleteRows.array(run.unused), run.progressBytes, run.progressHash,
                 original.control.cutoff, original.epoch, run.sealRoot, run.sealSetBytes, run.sealSetHash) == 1)
         } finally { encoded.fill(0) }
@@ -283,7 +285,8 @@ internal class TestTerminalEpochSealOperationV1 private constructor(
     }
     private fun roots(current: TestOrdinaryDrainRowsV1.Run) = TestTerminalRootsV1(original.routing.journalConfiguration, current.installationLimit, current.plan.manifestChunkCount.toInt())
     private fun sealSet(terminal: TestTerminalSealRefV1?) = TestTerminalSealSetV1.create(original.runContext.dataScopeId,
-        original.runContext.activationCatalogGeneration, original.runContext.activationCatalogSha256, listOfNotNull(original.ordinarySeal, terminal))
+        original.runContext.activationCatalogGeneration, original.runContext.activationCatalogSha256,
+        original.control.ordinarySeals(original.ordinarySeal) + listOfNotNull(terminal))
     private fun requireSealSet(current: TestOrdinaryDrainRowsV1.Run, terminal: TestTerminalSealRefV1?) {
         val actual = json.sealSet(checkNotNull(current.sealSetBytes))
         val expected = sealSet(terminal)
@@ -333,7 +336,8 @@ internal class TestTerminalEpochSealOperationV1 private constructor(
     }
     private fun readRun(): TestOrdinaryDrainRowsV1.Run {
         original.requireRunning()
-        val current = jdbc.query(TestTerminalEpochSealSqlV1.run, { value, _ -> TestOrdinaryDrainRowsV1.Run(value, original.drain) }, *original.registration.sealingRunArguments()).single()
+        val sql = if (original.control.initialHistory == null) TestTerminalEpochSealSqlV1.run else TestTerminalEpochSealSqlV1.runWithActiveHistory
+        val current = jdbc.query(sql, { value, _ -> TestOrdinaryDrainRowsV1.Run(value, original.drain) }, *original.registration.sealingRunArguments()).single()
         requireTerminalSeal(current.progress?.context() == original.runContext && current.progress?.completedCuts() == listOf(original.ordinaryCut) &&
             current.ordinaryEpoch == original.control.cutoff && current.reservedTerminalEpoch == original.epoch)
         val reads = checkNotNull(current.progress).installationReads()
@@ -372,7 +376,8 @@ internal class TestTerminalEpochSealOperationV1 private constructor(
     }
     private fun requireRelation() {
         original.requireRunning()
-        requireTerminalSeal(jdbc.query(TestTerminalEpochSealSqlV1.relation, { value, _ -> TestOrdinaryDrainRowsV1.boolean(value, "valid") }, original.scope,
+        val sql = if (original.control.initialHistory == null) TestTerminalEpochSealSqlV1.relation else TestTerminalEpochSealSqlV1.relationWithActiveHistory
+        requireTerminalSeal(jdbc.query(sql, { value, _ -> TestOrdinaryDrainRowsV1.boolean(value, "valid") }, original.scope,
             original.routing.journalConfiguration.ordinaryPrefix + "%", original.routing.journalConfiguration.sealTerminalPrefix + "%", original.writer,
             original.control.cutoff, original.epoch, original.routing.journalConfiguration.ownerDeleteAll, original.routing.journalConfiguration.registeredAdminDelete,
             original.routing.journalConfiguration.registeredAdminBatchDelete, OwnerDeleteRows.array(TestRunPurgeOperationV1.FUTURE)).single())
@@ -381,7 +386,9 @@ internal class TestTerminalEpochSealOperationV1 private constructor(
         original.requireRunning()
         for (sql in listOf(TestRunSealingSqlV1.lockGlobalControl, TestRunSealingSqlV1.lockScopeControl)) requireTerminalSeal(jdbc.query(sql,
             { value, _ -> TestOrdinaryDrainRowsV1.boolean(value, "valid") }, *original.registration.sealingControlArguments()).single())
-        return jdbc.query(TestTerminalEpochSealSqlV1.control, { value, _ -> TestTerminalEpochSealRowsV1.Control(value, original) }, original.scope).single()
+        TestOrdinaryDrainActiveHistoryV1.requireCurrent(jdbc, original.drain, original.control.initialHistory)
+        val sql = if (original.control.initialHistory == null) TestTerminalEpochSealSqlV1.control else TestTerminalEpochSealSqlV1.controlWithActiveHistory
+        return jdbc.query(sql, { value, _ -> TestTerminalEpochSealRowsV1.Control(value, original) }, original.scope).single()
     }
     private fun requireLease() {
         original.requireRunning()
@@ -399,7 +406,7 @@ internal class TestTerminalEpochSealOperationV1 private constructor(
         val policy = original.registration.process.consumers.capacityPolicy
         requireTerminalSeal(ledger.balance.hardLimit == policy.hardLimit && ledger.balance.creationLimit == policy.creationLimit && daily.dailyLimit == policy.dailyEnrollmentLimit &&
             run.unused.fitsWithin(ledger.balance.testReserved) &&
-            (baselineActual(run) + TestTerminalCapacityChargesV1.SIDECAR.scaled(terminalSeals)).fitsWithin(ledger.balance.actual) &&
+            (baselineActual(run) + TestTerminalCapacityChargesV1.SIDECAR.scaled(terminalSeals) + original.control.ordinaryHistoryCharge).fitsWithin(ledger.balance.actual) &&
             TestRunPurgeOperationV1.FUTURE.fitsWithin(ledger.balance.recoveryReserved))
         if (!spend) return ledger
         requireTerminalSeal(step === TestTerminalEpochSealStepV1.PREPARE && terminalSeals == 0L && TestTerminalCapacityChargesV1.SIDECAR.fitsWithin(run.unused))

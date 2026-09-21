@@ -128,7 +128,14 @@ internal class TestRunSealingV1 private constructor(internal val registration: C
         requireRunning()
         registration.requireSealingOwner(ownership)
         requireSealing(selected === path && phaseEntered && phase != null)
-        registration.requireSealingGate(gate)
+        if (gate.maintenanceClosed || gate.creationClosed) registration.requireSealingGate(gate)
+        else {
+            // Only this same initial-PROJECT registration's genuinely released open graph. This
+            // admits the run-only barrier, not closure authority: AUDIT still authenticates exact
+            // A/V26, current full-D/B and both controls under E before closing either gate.
+            registration.requireInitialMutationAdmission()
+            registration.requireActiveIdentityGate(gate)
+        }
     }
 
     internal fun priorSealedAt(): Instant {

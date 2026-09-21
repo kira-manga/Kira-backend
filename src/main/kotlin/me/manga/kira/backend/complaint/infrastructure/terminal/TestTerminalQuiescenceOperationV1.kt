@@ -183,7 +183,8 @@ internal class TestTerminalQuiescenceOperationV1 private constructor(
 
     private fun readRun(expected: TestTerminalProgressV1? = null): TestOrdinaryDrainRowsV1.Run {
         original.requireRunning()
-        val current = jdbc.query(TestTerminalQuiescenceSqlV1.run, { value, _ -> TestOrdinaryDrainRowsV1.Run(value, original.drain) },
+        val sql = if (original.control.initialHistory == null) TestTerminalQuiescenceSqlV1.run else TestTerminalQuiescenceSqlV1.runWithActiveHistory
+        val current = jdbc.query(sql, { value, _ -> TestOrdinaryDrainRowsV1.Run(value, original.drain) },
             *original.registration.sealingRunArguments()).single()
         val observed = checkNotNull(current.progress)
         requireQuiescence(observed.context() == original.runContext && current.ordinaryEpoch == original.control.cutoff && current.reservedTerminalEpoch == original.epoch)
@@ -237,7 +238,7 @@ internal class TestTerminalQuiescenceOperationV1 private constructor(
         val full = roots().fullSeals(set)
         requireQuiescence(current.sealCount == full.count && current.sealRoot.contentEquals(hex(full.sha256)))
         val prefix = TestTerminalSealSetV1.create(original.runContext.dataScopeId, original.runContext.activationCatalogGeneration,
-            original.runContext.activationCatalogSha256, listOf(original.ordinarySeal))
+            original.runContext.activationCatalogSha256, original.control.ordinarySeals(original.ordinarySeal))
         requireQuiescence(roots().preTerminalSeals(prefix) == original.purge.capturedRoots().seals)
     }
     private fun roots() = TestTerminalRootsV1(original.routing.journalConfiguration, run.installationLimit, run.plan.manifestChunkCount.toInt())
@@ -247,7 +248,14 @@ internal class TestTerminalQuiescenceOperationV1 private constructor(
     }
     private fun loadSidecar(target: TestTerminalQuiescenceTargetV1): TestTerminalDurableRowV1 {
         val at = now()
-        val loaded = when (target.kind) {
+        requireQuiescence(original.targets.any { it === target })
+        val loaded = if (target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL) {
+            val history = checkNotNull(original.control.initialHistory)
+            requireQuiescence(target.kind === TestTerminalCodecKindV1.EPOCH_SEAL && target.ordinal == 0 &&
+                target.objectRef == history.reference.objectRef && target.startEpoch == 1L && target.endEpoch == 1L)
+            // A remains ordinary-paid V26 provenance. Never fall back to or alias V21 ordinal zero.
+            history.frozen(jdbc, original.drain)
+        } else when (target.kind) {
             TestTerminalCodecKindV1.INSTALLATION_MANIFEST -> oneSidecar(TestInstallationManifestSqlV1.sidecar, { value ->
                 TestInstallationManifestPublicationRowsV1.manifest(value, original.manifest, run.sealedAt, at, target.ordinal)
             }, original.scope, target.ordinal)
@@ -273,7 +281,7 @@ internal class TestTerminalQuiescenceOperationV1 private constructor(
                         purge.eventId == target.id && purge.finalOrdinaryEpoch == original.control.cutoff && purge.finalOrdinarySeal == original.ordinarySeal &&
                         purge.preTerminalSeals == original.purge.capturedRoots().seals && purge.preTerminalInventory == original.purge.capturedRoots().inventory &&
                         purge.installationManifest == original.manifest.authenticatedSummary())
-                } else if (target.kind === TestTerminalCodecKindV1.EPOCH_SEAL && target.ordinal == 1) {
+                } else if (target.kind === TestTerminalCodecKindV1.EPOCH_SEAL && target.source === TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT && target.ordinal == 1) {
                     val seal = json.epochSeal(bytes)
                     val completed = original.terminalSeal.capturedManifest()
                     TestTerminalEpochSealRowsV1.requireReference(loaded, original.sealedReference, original.terminalSeal)
@@ -406,7 +414,8 @@ internal class TestTerminalQuiescenceOperationV1 private constructor(
 
     private fun requireRelation() {
         original.requireRunning()
-        requireQuiescence(jdbc.query(TestTerminalQuiescenceSqlV1.relation, { value, _ -> TestOrdinaryDrainRowsV1.boolean(value, "valid") }, original.scope,
+        val sql = if (original.control.initialHistory == null) TestTerminalQuiescenceSqlV1.relation else TestTerminalQuiescenceSqlV1.relationWithActiveHistory
+        requireQuiescence(jdbc.query(sql, { value, _ -> TestOrdinaryDrainRowsV1.boolean(value, "valid") }, original.scope,
             original.routing.journalConfiguration.ordinaryPrefix + "%", original.routing.journalConfiguration.sealTerminalPrefix + "%", original.writer,
             original.control.cutoff, original.epoch, original.routing.journalConfiguration.ownerDeleteAll, original.routing.journalConfiguration.registeredAdminDelete,
             original.routing.journalConfiguration.registeredAdminBatchDelete, OwnerDeleteRows.array(TestRunPurgeOperationV1.FUTURE)).single())
@@ -415,7 +424,9 @@ internal class TestTerminalQuiescenceOperationV1 private constructor(
         original.requireRunning()
         for (sql in listOf(TestRunSealingSqlV1.lockGlobalControl, TestRunSealingSqlV1.lockScopeControl)) requireQuiescence(jdbc.query(sql,
             { value, _ -> TestOrdinaryDrainRowsV1.boolean(value, "valid") }, *original.registration.sealingControlArguments()).single())
-        requireQuiescence(jdbc.query(TestTerminalQuiescenceSqlV1.control, { value, _ -> TestTerminalEpochSealRowsV1.Control(value, original.terminalSeal) },
+        TestOrdinaryDrainActiveHistoryV1.requireCurrent(jdbc, original.drain, original.control.initialHistory)
+        val sql = if (original.control.initialHistory == null) TestTerminalQuiescenceSqlV1.control else TestTerminalQuiescenceSqlV1.controlWithActiveHistory
+        requireQuiescence(jdbc.query(sql, { value, _ -> TestTerminalEpochSealRowsV1.Control(value, original.terminalSeal) },
             original.scope).single().epoch == original.terminalSeal.afterEpoch)
     }
     private fun requireLease() {
@@ -436,7 +447,8 @@ internal class TestTerminalQuiescenceOperationV1 private constructor(
         retained(Stage.TRANSFER, selected); ledger.configuration.requireMatching(expectedDigest)
         val policy = original.registration.process.consumers.capacityPolicy
         requireQuiescence(ledger.balance.hardLimit == policy.hardLimit && ledger.balance.creationLimit == policy.creationLimit && daily.dailyLimit == policy.dailyEnrollmentLimit &&
-            run.unused.fitsWithin(ledger.balance.testReserved) && (baselineActual(run) + initialScanCharge).fitsWithin(ledger.balance.actual) &&
+            run.unused.fitsWithin(ledger.balance.testReserved) &&
+            (baselineActual(run) + initialScanCharge + original.control.ordinaryHistoryCharge).fitsWithin(ledger.balance.actual) &&
             TestRunPurgeOperationV1.FUTURE.fitsWithin(ledger.balance.recoveryReserved) && spend.fitsWithin(run.unused))
         if (!recycled.isZero()) {
             requireQuiescence(step === TestTerminalQuiescenceStepV1.RECYCLE && spend.isZero())

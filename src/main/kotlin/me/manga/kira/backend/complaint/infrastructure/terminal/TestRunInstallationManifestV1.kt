@@ -43,6 +43,7 @@ internal class TestRunInstallationManifestV1 private constructor(internal val dr
     internal val control = drain.manifestControl()
     internal val ordinaryCut = drain.manifestCut()
     internal val ordinarySeal = drain.manifestSeal()
+    internal val ordinarySealManifest = drain.manifestSealManifest()
     internal val epoch = control.epoch
     internal val attemptId = UUID.randomUUID()
     internal val path = PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE
@@ -76,7 +77,8 @@ internal class TestRunInstallationManifestV1 private constructor(internal val dr
         drain.requireManifestPredecessor()
         registration.requireUsable()
         acquisition.requireRetained(routing, registration.process.publicationLanes)
-        requireManifest(control.sequence == 1L && epoch == Math.addExact(control.cutoff, 1L))
+        requireManifest(!control.needsCapture && epoch == Math.addExact(control.cutoff, 1L) &&
+            ordinarySealManifest.count == ordinaryCut.denial.firstInventory.versionCount)
     }
 
     fun prepare(): TestRunInstallationManifestResultV1 {

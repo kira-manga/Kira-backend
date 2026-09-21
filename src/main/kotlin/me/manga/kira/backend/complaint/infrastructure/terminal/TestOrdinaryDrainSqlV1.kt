@@ -41,8 +41,41 @@ internal object TestOrdinaryDrainSqlV1 {
         FROM complaint_test_runs r CROSS JOIN expected e WHERE r.data_scope_id = e.scope FOR UPDATE OF r
     """.trimIndent()
 
+    // Exact two-ordinary-seal relation, never a count-only relaxation of the first-history query.
+    val runWithActiveHistory = """
+        $expectedRun
+        SELECT (r.test_only AND r.state = 'SEALED' AND r.configuration_hash = e.configuration_hash AND r.accounting_version = 1
+            AND r.installation_limit = e.installation_limit AND r.enrolled_count BETWEEN 0 AND r.installation_limit
+            AND r.activation_catalog_generation = e.generation AND r.activation_catalog_hash = e.activation_hash
+            AND r.created_at = e.created_at AND isfinite(r.created_at) AND r.original_reserve = e.original_reserve
+            AND complaint_vector_valid(r.original_reserve) AND complaint_vector_lte(r.unused_reserve, r.original_reserve)
+            AND isfinite(r.sealed_at) AND r.sealed_at >= r.created_at AND r.sealed_at <= clock_timestamp()
+            AND r.sealed_at >= '1970-01-01T00:00:00Z'::timestamptz AND r.sealed_at < '10000-01-01T00:00:00Z'::timestamptz
+            AND r.purging_at IS NULL AND r.purged_at IS NULL
+            AND r.event_manifest_count IS NULL AND r.event_manifest_root IS NULL
+            AND r.installation_manifest_count IS NULL AND r.installation_manifest_root IS NULL AND r.installation_chunk_count IS NULL
+            AND r.retired_count IS NULL AND r.deleted_count IS NULL AND r.terminal_event_id IS NULL AND r.terminal_object_key IS NULL
+            AND r.terminal_object_version IS NULL AND r.terminal_ciphertext_hash IS NULL
+            AND r.terminal_catalog_generation IS NULL AND r.terminal_catalog_hash IS NULL
+            AND ((r.permanent_denial_bytes IS NULL AND r.permanent_denial_hash IS NULL)
+                OR complaint_bytes_match(r.permanent_denial_bytes, r.permanent_denial_hash, 51291))
+            AND ((r.final_ordinary_epoch IS NULL AND r.terminal_seal_epoch IS NULL AND r.generation_seal_count IS NULL
+                    AND r.generation_seal_root IS NULL AND r.seal_set_bytes IS NULL AND r.seal_set_hash IS NULL)
+                OR (r.final_ordinary_epoch = 2 AND r.terminal_seal_epoch = 3 AND r.generation_seal_count = 2
+                    AND complaint_digest_valid(r.generation_seal_root) AND complaint_bytes_match(r.seal_set_bytes, r.seal_set_hash, 65536)
+                    AND r.permanent_denial_bytes IS NOT NULL))) IS TRUE AS valid,
+            r.sealed_at, r.installation_limit, r.enrolled_count, r.original_reserve, r.unused_reserve,
+            CASE WHEN octet_length(r.permanent_denial_bytes) BETWEEN 1 AND 51291 THEN r.permanent_denial_bytes END AS progress_bytes,
+            CASE WHEN octet_length(r.permanent_denial_hash) = 32 THEN r.permanent_denial_hash END AS progress_hash,
+            r.final_ordinary_epoch, r.terminal_seal_epoch, r.generation_seal_count,
+            CASE WHEN octet_length(r.generation_seal_root) = 32 THEN r.generation_seal_root END AS generation_seal_root,
+            CASE WHEN octet_length(r.seal_set_bytes) BETWEEN 1 AND 65536 THEN r.seal_set_bytes END AS seal_set_bytes,
+            CASE WHEN octet_length(r.seal_set_hash) = 32 THEN r.seal_set_hash END AS seal_set_hash
+        FROM complaint_test_runs r CROSS JOIN expected e WHERE r.data_scope_id = e.scope FOR UPDATE OF r
+    """.trimIndent()
+
     // Preserve all previous seal/checkpoint bytes. This digest is a SQL comparison, not lineage authority.
-    private val historyFields = """
+    internal val historyFields = """
         c.seal_state, c.seal_epoch, c.seal_writer_generation, c.seal_operation_token, c.seal_object_key,
         c.seal_bytes, c.seal_hash, c.seal_object_version, c.seal_ciphertext_hash,
         extract(epoch FROM c.seal_retain_until), extract(epoch FROM c.seal_verified_at), c.seal_verification_bytes, c.seal_verification_hash,
@@ -125,6 +158,59 @@ internal object TestOrdinaryDrainSqlV1 {
         FROM now n WHERE c.data_scope_id = ?::uuid AND c.test_only AND c.rotation_sequence = 0
             AND c.publication_epoch BETWEEN 1 AND 9223372036854775806
             AND c.lease_owner = ?::uuid AND c.lease_token = ?::bigint AND c.lease_expires_at > n.at
+    """.trimIndent()
+
+    /** Exact A successor lane. The V26/V14 comparator is independently reread under these controls. */
+    val controlWithActiveHistory = """
+        SELECT c.publication_epoch, c.lease_token, c.rotation_sequence, c.rotation_id, c.rotation_epoch_before,
+            c.rotation_capture_token, c.rotation_captured_at, c.scan_requested, c.seal_epoch,
+            sha256(convert_to(jsonb_build_array($historyFields)::text, 'UTF8')) AS history_hash,
+            (c.test_only AND c.retention_lease_owner IS NULL AND c.retention_lease_token = 0 AND c.retention_lease_expires_at IS NULL
+                AND c.seal_format IS NULL AND c.seal_rotation_id IS NULL AND c.seal_rotation_sequence IS NULL
+                AND c.seal_preparing_fencing_token IS NULL AND c.seal_routing_key_id IS NULL AND c.seal_epoch_start IS NULL AND c.seal_preceding_hash IS NULL
+                AND c.seal_state = 'SEAL_VERIFIED' AND c.seal_epoch = 1 AND c.seal_operation_token = i.operation_token
+                AND c.rotation_state = 'CAPTURED' AND c.rotation_implementation_schema = c.implementation_schema
+                AND c.rotation_desired_generation = c.desired_generation AND c.rotation_desired_configuration_hash = c.desired_configuration_hash
+                AND c.rotation_database_identity = c.database_identity AND c.rotation_restore_identity = c.restore_identity
+                AND c.rotation_event_writer_generation = c.event_writer_generation
+                AND c.rotation_accepted_catalog_generation = c.accepted_catalog_generation AND c.rotation_accepted_catalog_hash = c.accepted_catalog_hash
+                AND c.rotation_trust_bundle_hash = c.trust_bundle_hash AND c.rotation_catalog_writer_generation = c.catalog_writer_generation
+                AND ((c.rotation_sequence = 1 AND c.rotation_id = i.operation_token AND c.publication_epoch = 2 AND NOT c.scan_requested
+                        AND c.rotation_epoch_before = 1 AND c.rotation_epoch_after = 2
+                        AND c.rotation_request_owner = i.request_owner AND c.rotation_request_token = i.request_token AND c.rotation_requested_at = i.requested_at
+                        AND c.rotation_capture_owner = i.capture_owner AND c.rotation_capture_token = i.capture_token AND c.rotation_captured_at = i.captured_at)
+                    OR (c.rotation_sequence = 2 AND complaint_is_v4(c.rotation_id) AND c.rotation_id <> i.operation_token
+                        AND c.publication_epoch = 3 AND c.scan_requested AND c.rotation_epoch_before = 2 AND c.rotation_epoch_after = 3
+                        AND c.rotation_request_owner = c.rotation_capture_owner AND c.rotation_request_token = c.rotation_capture_token
+                        AND complaint_is_v4(c.rotation_capture_owner) AND c.rotation_capture_token > c.checkpoint_fencing_token
+                        AND c.rotation_capture_token <= c.lease_token AND c.rotation_requested_at = c.rotation_captured_at
+                        AND c.rotation_captured_at >= c.checkpoint_completed_at AND isfinite(c.rotation_captured_at)))) IS TRUE AS valid
+        FROM complaint_journal_control c LEFT JOIN complaint_test_active_seal_intents i ON i.data_scope_id = c.data_scope_id
+        WHERE c.data_scope_id = ?::uuid FOR UPDATE OF c
+    """.trimIndent()
+
+    // Do not clear A's retained seal/checkpoint, fabricate sequence zero, or reuse its earlier capture.
+    val captureWithActiveHistory = """
+        WITH now AS MATERIALIZED (SELECT clock_timestamp() AS at)
+        UPDATE complaint_journal_control c SET rotation_sequence = 2, rotation_id = ?::uuid, rotation_state = 'CAPTURED',
+            rotation_epoch_before = 2, rotation_epoch_after = 3,
+            rotation_implementation_schema = c.implementation_schema, rotation_desired_generation = c.desired_generation,
+            rotation_desired_configuration_hash = c.desired_configuration_hash, rotation_database_identity = c.database_identity,
+            rotation_restore_identity = c.restore_identity, rotation_event_writer_generation = c.event_writer_generation,
+            rotation_accepted_catalog_generation = c.accepted_catalog_generation, rotation_accepted_catalog_hash = c.accepted_catalog_hash,
+            rotation_trust_bundle_hash = c.trust_bundle_hash, rotation_catalog_writer_generation = c.catalog_writer_generation,
+            rotation_request_owner = c.lease_owner, rotation_request_token = c.lease_token, rotation_requested_at = n.at,
+            rotation_capture_owner = c.lease_owner, rotation_capture_token = c.lease_token, rotation_captured_at = n.at,
+            publication_epoch = 3, scan_requested = true, updated_at = n.at
+        FROM now n, complaint_test_active_seal_intents i
+        WHERE c.data_scope_id = ?::uuid AND c.test_only AND c.rotation_sequence = 1 AND c.rotation_state = 'CAPTURED'
+            AND c.publication_epoch = 2 AND NOT c.scan_requested AND c.rotation_epoch_before = 1 AND c.rotation_epoch_after = 2
+            AND i.data_scope_id = c.data_scope_id AND i.operation_token = c.rotation_id AND i.state = 'WIRE_FROZEN'
+            AND c.rotation_request_owner = i.request_owner AND c.rotation_request_token = i.request_token AND c.rotation_requested_at = i.requested_at
+            AND c.rotation_capture_owner = i.capture_owner AND c.rotation_capture_token = i.capture_token AND c.rotation_captured_at = i.captured_at
+            AND c.seal_operation_token = i.operation_token AND c.seal_state = 'SEAL_VERIFIED' AND c.seal_epoch = 1
+            AND c.checkpoint_result = 'SUCCESS' AND c.checkpoint_cutoff_epoch = 1 AND c.checkpoint_completed_at <= n.at
+            AND c.lease_owner = ?::uuid AND c.lease_token = ?::bigint AND c.lease_token > c.checkpoint_fencing_token AND c.lease_expires_at > n.at
     """.trimIndent()
 
     val runs = """

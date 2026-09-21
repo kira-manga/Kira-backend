@@ -23,6 +23,7 @@ internal class TestOrdinarySealManifestV1 private constructor(val count: Long, v
         private val first = MessageDigest.getInstance("SHA-256")
         private val second = MessageDigest.getInstance("SHA-256")
         private val manifest = MessageDigest.getInstance("SHA-256")
+        private val fullCut = MessageDigest.getInstance("SHA-256")
         private var firstHash: String? = null
         private var count = 0L
         private var repeated = 0L
@@ -36,6 +37,7 @@ internal class TestOrdinarySealManifestV1 private constructor(val count: Long, v
             drain.requireClosedSeal(original)
             original.codecAttempt.remainingMillis(1)
             requireDrain(!ended && previous?.let { TestOrdinaryDrainRowsV1.compare(it, row.locator) < 0 } != false &&
+                row.epoch in drain.ordinaryStart..drain.cutoff &&
                 row.key.length in 1..1024 && row.key.all { it in ' '..'~' } && row.ciphertext.matches(Regex("[0-9a-f]{64}")) &&
                 row.stamp?.matches(Regex("[0-9]{1,10}")) == true)
             val fields = listOf(row.key, row.version, row.ciphertext)
@@ -50,6 +52,7 @@ internal class TestOrdinarySealManifestV1 private constructor(val count: Long, v
             } else {
                 requireDrain(repeated < count)
                 repeatedBytes = Math.addExact(repeatedBytes, EpochSealFramesV1.update(manifest, fields))
+                EpochSealFramesV1.update(fullCut, fields)
                 EpochSealFramesV1.update(second, stamps)
                 requireDrain(repeatedBytes <= drain.maximumFramedBytes)
                 repeated++
@@ -58,16 +61,21 @@ internal class TestOrdinarySealManifestV1 private constructor(val count: Long, v
         }
         fun beginSecond() {
             requireDrain(!secondPass && !ended)
-            val prefixBytes = EpochSealFramesV1.update(manifest, listOf(EpochSealFramesV1.DOMAIN, "1", "manifest", drain.writer,
+            val prefixBytes = EpochSealFramesV1.update(fullCut, listOf(EpochSealFramesV1.DOMAIN, "1", "manifest", drain.writer,
                 drain.routing.journalConfiguration.ordinaryPrefix, "TEST", drain.scope.toString(), "1", drain.cutoff.toString(), count.toString()))
             requireDrain(Math.addExact(prefixBytes, entryBytes) == drain.paidCut().framedByteCount)
+            val sealPrefixBytes = EpochSealFramesV1.update(manifest, listOf(EpochSealFramesV1.DOMAIN, "1", "manifest", drain.writer,
+                drain.routing.journalConfiguration.ordinaryPrefix, "TEST", drain.scope.toString(), drain.ordinaryStart.toString(), drain.cutoff.toString(), count.toString()))
+            requireDrain(Math.addExact(sealPrefixBytes, entryBytes) <= drain.maximumFramedBytes)
             firstHash = HexFormat.of().formatHex(first.digest())
             secondPass = true; previous = null
         }
         fun finish(): TestOrdinarySealManifestV1 {
             requireDrain(secondPass && !ended && count == repeated && entryBytes == repeatedBytes && firstHash == HexFormat.of().formatHex(second.digest()))
             val root = HexFormat.of().formatHex(manifest.digest())
-            requireDrain(count == drain.paidCut().denial.firstInventory.versionCount && root == drain.paidCut().denial.firstInventory.sha256)
+            // Same actual twice-read entries, distinct range frames: 1..2 denial is never relabeled 2..2.
+            requireDrain(count == drain.paidCut().denial.firstInventory.versionCount &&
+                HexFormat.of().formatHex(fullCut.digest()) == drain.paidCut().denial.firstInventory.sha256)
             ended = true
             return TestOrdinarySealManifestV1(count, root, checkNotNull(firstHash))
         }

@@ -267,7 +267,8 @@ internal class TestRunPurgeOperationV1 private constructor(
     }
     private fun readRun(): TestOrdinaryDrainRowsV1.Run {
         original.requireRunning()
-        val run = jdbc.query(TestOrdinaryDrainSqlV1.run, { value, _ -> TestOrdinaryDrainRowsV1.Run(value, original.drain) }, *original.registration.sealingRunArguments()).single()
+        val sql = if (original.control.initialHistory == null) TestOrdinaryDrainSqlV1.run else TestOrdinaryDrainSqlV1.runWithActiveHistory
+        val run = jdbc.query(sql, { value, _ -> TestOrdinaryDrainRowsV1.Run(value, original.drain) }, *original.registration.sealingRunArguments()).single()
         requirePurge(run.progress?.context() == original.runContext && run.progress?.completedCuts() == listOf(original.ordinaryCut) &&
             run.ordinaryEpoch == original.control.cutoff && run.reservedTerminalEpoch == original.epoch)
         val reads = checkNotNull(run.progress).installationReads()
@@ -286,7 +287,7 @@ internal class TestRunPurgeOperationV1 private constructor(
     private fun requireStrictSeal() {
         val set = json.sealSet(checkNotNull(run.sealSetBytes))
         requirePurge(set.dataScopeId == original.runContext.dataScopeId && set.activationCatalogGeneration == original.runContext.activationCatalogGeneration &&
-            set.activationCatalogSha256 == original.runContext.activationCatalogSha256 && set.records() == listOf(original.ordinarySeal))
+            set.activationCatalogSha256 == original.runContext.activationCatalogSha256 && set.records() == original.control.ordinarySeals(original.ordinarySeal))
         val root = TestTerminalRootsV1(original.routing.journalConfiguration, run.installationLimit, run.plan.manifestChunkCount.toInt()).preTerminalSeals(set)
         requirePurge(run.sealCount == root.count && run.sealRoot.contentEquals(hex(root.sha256)))
         val observedAt = now()
@@ -326,9 +327,9 @@ internal class TestRunPurgeOperationV1 private constructor(
         original.requireRunning()
         for (sql in listOf(TestRunSealingSqlV1.lockGlobalControl, TestRunSealingSqlV1.lockScopeControl)) requirePurge(jdbc.query(sql,
             { value, _ -> TestOrdinaryDrainRowsV1.boolean(value, "valid") }, *original.registration.sealingControlArguments()).single())
-        val control = jdbc.query(TestOrdinaryDrainSqlV1.control, { value, _ -> TestOrdinaryDrainRowsV1.Control(value) }, original.scope).single()
+        val control = TestOrdinaryDrainPersistenceV1.readControl(jdbc, original.drain)
         control.requireSame(original.control)
-        requirePurge(control.previousSealEpoch == 0L)
+        requirePurge(control.previousSealEpoch == (control.initialHistory?.reference?.epochEndInclusive ?: 0L))
     }
     private fun requireLease() {
         original.requireRunning()
@@ -346,7 +347,7 @@ internal class TestRunPurgeOperationV1 private constructor(
         val policy = original.registration.process.consumers.capacityPolicy
         requirePurge(ledger.balance.hardLimit == policy.hardLimit && ledger.balance.creationLimit == policy.creationLimit &&
             daily.dailyLimit == policy.dailyEnrollmentLimit && run.unused.fitsWithin(ledger.balance.testReserved) &&
-            (baselineActual(run) + ACTUAL.scaled(purges)).fitsWithin(ledger.balance.actual) && FUTURE.scaled(purges).fitsWithin(ledger.balance.recoveryReserved) &&
+            (baselineActual(run) + ACTUAL.scaled(purges) + original.control.ordinaryHistoryCharge).fitsWithin(ledger.balance.actual) && FUTURE.scaled(purges).fitsWithin(ledger.balance.recoveryReserved) &&
             spend.fitsWithin(run.unused))
         if (spend.isZero()) return ledger
         requirePurge(step === TestRunPurgeStepV1.PREPARE && purges == 0L && spend == ACTUAL + FUTURE)

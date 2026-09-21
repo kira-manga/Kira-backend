@@ -25,16 +25,17 @@ internal object TestRunPurgeInventorySourceV1 {
         val original = operation.original
         val roots = TestTerminalRootsV1(original.routing.journalConfiguration, run.installationLimit, run.plan.manifestChunkCount.toInt())
         val seals = TestTerminalJsonV1(original.routing.journalConfiguration).sealSet(checkNotNull(run.sealSetBytes))
-        requirePurge(seals.records() == listOf(original.ordinarySeal))
+        requirePurge(seals.records() == original.control.ordinarySeals(original.ordinarySeal))
         val fold = roots.preTerminalInventory(original.runContext, seals)
-        val seal = TestTerminalInventoryEntryV1(original.writer, "EPOCH_SEAL", original.ordinarySeal.epochStartInclusive,
-            original.ordinarySeal.epochEndInclusive, original.ordinarySeal.objectRef)
+        val sealEntries = seals.records().map { seal -> TestTerminalInventoryEntryV1(original.writer, "EPOCH_SEAL",
+            seal.epochStartInclusive, seal.epochEndInclusive, seal.objectRef) }
         repeat(2) { pass ->
             // These are independent actual reads, not a replay of the first fold's entries.
+            TestOrdinaryDrainActiveHistoryV1.requireCurrent(jdbc, original.drain, original.control.initialHistory)
             requireNativeCut(jdbc, operation)
             var after: TestOrdinaryDrainPersistenceV1.Applied? = null
             var count = 0L
-            var sealAdded = false
+            var sealIndex = 0
             while (true) {
                 operation.requireInventoryPage(jdbc)
                 val page = terminalPage(jdbc, operation, after)
@@ -45,16 +46,17 @@ internal object TestRunPurgeInventorySourceV1 {
                 val hashes = resolvePage(jdbc, operation, run, page)
                 page.forEachIndexed { index, value ->
                     operation.requireInventoryPage(jdbc)
-                    requirePurge(count < original.ordinaryCut.denial.firstInventory.versionCount)
+                    requirePurge(value.epoch in original.control.ordinaryStart..original.control.cutoff &&
+                        count < original.ordinaryCut.denial.firstInventory.versionCount)
                     val entry = TestTerminalInventoryEntryV1(original.writer, value.kind, value.epoch, value.epoch,
                         TestTerminalObjectRefV1(value.key, value.version, value.ciphertext, hashes[index]))
-                    if (!sealAdded && compare(seal, entry) < 0) { add(fold, pass, seal); sealAdded = true }
+                    while (sealIndex < sealEntries.size && compare(sealEntries[sealIndex], entry) < 0) add(fold, pass, sealEntries[sealIndex++])
                     add(fold, pass, entry)
                     after = value; count++
                 }
             }
             requirePurge(count == original.ordinaryCut.denial.firstInventory.versionCount)
-            if (!sealAdded) add(fold, pass, seal)
+            while (sealIndex < sealEntries.size) add(fold, pass, sealEntries[sealIndex++])
             operation.requireInventoryPage(jdbc)
             if (pass == 0) fold.beginSecondPass()
         }
@@ -134,7 +136,8 @@ internal object TestRunPurgeInventorySourceV1 {
             if (page.isEmpty()) break
             page.forEach { value ->
                 operation.requireInventoryPage(jdbc)
-                requirePurge(count < expected.versionCount && after?.let { TestOrdinaryDrainRowsV1.compare(it, value.locator) < 0 } != false)
+                requirePurge(value.epoch in original.control.ordinaryStart..original.control.cutoff &&
+                    count < expected.versionCount && after?.let { TestOrdinaryDrainRowsV1.compare(it, value.locator) < 0 } != false)
                 framed = Math.addExact(framed, EpochSealFramesV1.update(hash, listOf(value.key, value.version, value.ciphertext)))
                 requirePurge(framed <= original.drain.maximumFramedBytes)
                 count++; after = value.locator

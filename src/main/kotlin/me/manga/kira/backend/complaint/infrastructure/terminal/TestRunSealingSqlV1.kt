@@ -76,6 +76,27 @@ internal object TestRunSealingSqlV1 {
     """.trimIndent()
     val lockScopeControl = "$readScopeControl FOR UPDATE OF c"
 
+    // Only the existing sealed-audit owner uses this bounded prelude, under its original E fence.
+    // No row/key supplied from outside the registration can select another closure scope.
+    val lockGateState = """
+        SELECT maintenance_closed, creation_closed FROM complaint_journal_control WHERE data_scope_id = ?::uuid FOR UPDATE
+    """.trimIndent()
+    val readActiveHistoryGlobal = readGlobalControl
+        .replace("c.maintenance_closed AND c.creation_closed AND ", "")
+        .replace("c.desired_generation > 0", "c.desired_generation = ?::bigint AND c.desired_configuration_hash IS NOT DISTINCT FROM ?::bytea")
+    val lockActiveHistoryGlobal = "$readActiveHistoryGlobal FOR UPDATE OF c"
+    val lockActiveHistoryScope = lockScopeControl.replace("c.maintenance_closed AND c.creation_closed AND ", "")
+    // Both exact identities and the supported retained A lineage are checked on these same locked
+    // rows before this statement. Gate closure and the paid audit share one known transaction.
+    val closeActiveHistoryGates = """
+        WITH e AS MATERIALIZED (SELECT ?::uuid AS scope), s AS MATERIALIZED (SELECT clock_timestamp() AS at)
+        UPDATE complaint_journal_control c SET maintenance_closed = true, creation_closed = true, updated_at = s.at
+        FROM e CROSS JOIN s WHERE c.data_scope_id IN ('00000000-0000-0000-0000-000000000000'::uuid, e.scope)
+            AND c.test_only = (c.data_scope_id = e.scope) AND NOT c.maintenance_closed AND NOT c.creation_closed
+            AND c.pending_projection_token IS NULL AND isfinite(s.at) AND s.at >= c.updated_at
+            AND s.at >= '1970-01-01T00:00:00Z'::timestamptz AND s.at < '10000-01-01T00:00:00Z'::timestamptz
+    """.trimIndent()
+
     private val expectedAudit = """
         WITH expected AS MATERIALIZED (SELECT ?::uuid AS scope, ?::bigint AS generation, ?::timestamptz AS sealed_at)
     """.trimIndent()
