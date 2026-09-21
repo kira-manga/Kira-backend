@@ -189,7 +189,8 @@ internal class CatalogTestRunActivationEvidenceFixture(
                 if (ordinarySealHttp?.manifestPublication == true) 1_000 else original.dailyEnrollmentLimit,
             )
         } else original
-        fixture.configuration(settings = boundConsumerTestSettings(createGlobal = createGlobal), capacity = capacity)
+        fixture.configuration(settings = boundConsumerTestSettings(
+            enrollmentGlobal = ordinarySealHttp?.protectedEnrollmentGlobalPerHour ?: 2, createGlobal = createGlobal), capacity = capacity)
     }
     private val activation = FullTestCatalogInputs.activation(
         pools, journal, reader, FullTestCatalogInputs.key(signerId, key(signerId).public.encoded),
@@ -293,7 +294,9 @@ internal class CatalogTestRunActivationEvidenceFixture(
                 protectedTrustParent = tls.database.versionBoundTls().publicTrustParent().toString()),
             capacity = DesiredCapacityInputV1(consumers.capacityPolicy.hardLimit.toLongArray().toList(),
                 consumers.capacityPolicy.creationLimit.toLongArray().toList(), consumers.capacityPolicy.dailyEnrollmentLimit),
-            admission = template.admission.copy(ownerCreateGlobalPerHour = createGlobal),
+            admission = template.admission.copy(
+                enrollmentGlobalPerHour = http.protectedEnrollmentGlobalPerHour ?: template.admission.enrollmentGlobalPerHour,
+                ownerCreateGlobalPerHour = createGlobal),
             catalog = template.catalog.copy(readerProfile = "PROJECTED_CURRENT", initialBundleBase64 = TestDeploymentInputFixture.base64(initial),
                 currentBundleBase64 = TestDeploymentInputFixture.base64(current),
                 rootPublicKeySpkiBase64 = TestDeploymentInputFixture.base64(trust.rootPublicKeySpki),

@@ -51,7 +51,11 @@ internal class TestOrdinarySealHttpFixtureV1(
     val protectedIntake: Boolean = false,
     val manifestPublication: Boolean = false,
     val purgePublication: Boolean = false,
+    // Raw TEST input selected before protected parsing/full D, never a live counter reset or quota exemption.
+    val protectedEnrollmentGlobalPerHour: Int? = null,
 ) : AutoCloseable {
+    init { require(protectedEnrollmentGlobalPerHour == null || (protectedIntake && protectedEnrollmentGlobalPerHour in 1..120)) }
+
     val sts = AwsJournalKmsFixture()
     val kms = AwsJournalKmsFixture()
     val requests = mutableListOf<JournalPublisherHttpRequest>()

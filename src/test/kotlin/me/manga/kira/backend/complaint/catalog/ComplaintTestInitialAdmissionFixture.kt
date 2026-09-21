@@ -44,7 +44,8 @@ internal val INITIAL_RELEASE = PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMIS
 internal fun withInitialAdmission(tls: VersionBoundPersistenceConnectedFixture, activeFirstCut: Boolean = false,
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     action: (InitialAdmissionFixture) -> Unit) =
-    TestOrdinarySealHttpFixtureV1(protectedIntake = true).use { native ->
+    // The longest current-row drift history pays four enrollment attempts, including refusals, before any window expires.
+    TestOrdinarySealHttpFixtureV1(protectedIntake = true, protectedEnrollmentGlobalPerHour = 4).use { native ->
         ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, ordinarySealHttp = native,
             // Only closed setup predecessor leases: not the tested release or natural-expiry qualification.
             expireClosedSetupPredecessors = true, activeFirstCut = activeFirstCut,

@@ -328,7 +328,7 @@ internal object ComplaintTestInitialAdmissionCases {
             }
             InitialAdmissionLifetimeCut.SPENT_CLOSED -> { val closed = f.begin(); closed.close(); assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> { closed.release(credentials, credentials) } }
             InitialAdmissionLifetimeCut.REGISTRATION_CLOSE -> f.registration.close()
-            InitialAdmissionLifetimeCut.ROOT_SHUTDOWN -> f.runtime.owner.requestShutdown()
+            InitialAdmissionLifetimeCut.ROOT_SHUTDOWN -> f.runtime.requestIntakeShutdownForRefusal()
             InitialAdmissionLifetimeCut.SEALED -> {
                 assertEquals(TestRunSealingResultV1.SEALED_AND_AUDITED, TestRunSealingV1.begin(f.registration).seal())
                 f.probe.resetObservations()

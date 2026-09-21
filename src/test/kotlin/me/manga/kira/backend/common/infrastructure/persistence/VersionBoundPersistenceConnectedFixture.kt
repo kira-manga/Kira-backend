@@ -107,6 +107,7 @@ internal class VersionBoundPersistenceConnectedFixture(
     private var parentCreated = false
     private var trustPrepared = false
     private var stoppedBeforeClose = false
+    private var intakeShutdownRequestedByCase = false
     private var closed = false
 
     init {
@@ -226,6 +227,16 @@ internal class VersionBoundPersistenceConnectedFixture(
         stoppedBeforeClose = true
     }
 
+    /** Explicit negative lifetime cut: observe the running intake, then request its actual sticky shutdown without closing it. */
+    fun requestIntakeShutdownForRefusal() {
+        requireConnectionFree()
+        check(testIntake != null && !closed && !intakeShutdownRequestedByCase)
+        assertIntakeRunningBeforeAssembly()
+        assertTrue(owner.requestShutdown(), "The negative case must perform the original root's first shutdown request.")
+        assertIntakeRequestedShutdownBeforeAssembly()
+        intakeShutdownRequestedByCase = true // Expected TEST observation only; never retirement/disposal authority.
+    }
+
     override fun close() = closeSelected(listOf(this))
 
     /** Both independent roots stop before either shared driver Timer wait or database-wide session assertion. */
@@ -293,17 +304,11 @@ internal class VersionBoundPersistenceConnectedFixture(
         }
         val beforeAssembly = intakes.map { fixture ->
             runCatching {
-                assertAll(
-                    Executable { assertFalse(fixture.pools.shutdownRequested(), "The fixture must not pre-stop the intake root.") },
-                    Executable {
-                        val snapshot = fixture.owner.snapshot()
-                        assertTrue(snapshot.ordinaryReady && snapshot.timerReady)
-                    },
-                    Executable { assertTrue(fixture.trustPrepared && Files.isRegularFile(fixture.trustPath())) },
-                )
+                if (fixture.intakeShutdownRequestedByCase) fixture.assertIntakeRequestedShutdownBeforeAssembly()
+                else fixture.assertIntakeRunningBeforeAssembly()
             }
         }
-        // Do not await a peer's shared Timer while the intake root still pins it. Assembly initiates its own stop.
+        // Do not await a peer's shared Timer while the intake root still pins it. Assembly still owns all actual close/drain work.
         val assembliesClosed = intakes.map { runCatching { checkNotNull(it.testIntake).close() } }
         val assemblyObserved = intakes.map { runCatching { it.assertAssemblyClosedBeforeFallback() } }
         // Fallback cleanup cannot supply the observations above; every attempt still runs after any earlier failure.
@@ -312,6 +317,31 @@ internal class VersionBoundPersistenceConnectedFixture(
         requireCleanup(
             shutdown + beforeClose + poolsClosed + beforeAssembly + assembliesClosed + assemblyObserved + rootsClosed + completed,
             assertionsFirst = true,
+        )
+    }
+
+    private fun assertIntakeRunningBeforeAssembly() {
+        assertAll(
+            Executable { assertFalse(pools.shutdownRequested(), "The fixture must not pre-stop the intake root.") },
+            Executable {
+                val snapshot = owner.snapshot()
+                assertTrue(snapshot.ordinaryReady && snapshot.timerReady)
+            },
+            Executable { assertTrue(trustPrepared && Files.isRegularFile(trustPath())) },
+        )
+    }
+
+    /** Read-only negative-cut observations. No close, wait or public-trust release may repair this result. */
+    private fun assertIntakeRequestedShutdownBeforeAssembly() {
+        assertAll(
+            Executable { assertTrue(pools.shutdownRequested(), "The case's original shutdown request must stay sticky.") },
+            Executable {
+                val snapshot = owner.snapshot()
+                assertTrue(snapshot.shutdownRequested)
+                assertFalse(snapshot.ordinaryReady)
+                assertFalse(snapshot.timerReady)
+            },
+            Executable { assertTrue(trustPrepared && Files.isRegularFile(trustPath()), "A shutdown request alone cannot dispose public trust.") },
         )
     }
 
