@@ -1,0 +1,38 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 39,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "First no-A Catalog failure only after reviewed fixture-only pre-cleanup stage/category diagnostic; no unchanged later failure replay.",
+      "expected_invocations_from_annotation": 1,
+      "method": "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "9154aae20f3eddbed392e005b1bf5f5bf26f6e7c",
+      "source_sha256": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+      "xml_names": [
+        "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 1,
+  "expected_total": 1,
+  "selection_basis": {
+    "cohorts": {
+      "First no-A Catalog failure only after reviewed fixture-only pre-cleanup stage/category diagnostic; no unchanged later failure replay.": 1
+    },
+    "previous_run": "35603509181",
+    "scope": "New registered me2 plus2 previously setup-blocked Catalog specimens and1 newly diagnosed recurrent failure;18priorPASS not replayed. Alias4methods12scenarios and all other failures/deferred requirements retained."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging"
+  ]
+}
