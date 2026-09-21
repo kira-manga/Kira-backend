@@ -57,10 +57,13 @@ internal class TestOrdinarySealHttpFixtureV1(
     val terminalInventory: Boolean = false,
     // Explicit pre-intake raw support for A1 -> final ordinary2 -> terminal3. Defaults stay two-seal only.
     val activeOrdinaryHistory: Boolean = false,
+    // Finite raw transport support only; every key/value below must still come from its actual PUT.
+    val maximumActiveHistorySeals: Int = 1,
 ) : AutoCloseable {
     init {
         require(protectedEnrollmentGlobalPerHour == null || (protectedIntake && protectedEnrollmentGlobalPerHour in 1..120))
         require(!activeOrdinaryHistory || protectedIntake && terminalEpochSeal)
+        require(maximumActiveHistorySeals in 1..14 && (maximumActiveHistorySeals == 1 || activeOrdinaryHistory))
     }
 
     val sts = AwsJournalKmsFixture()
@@ -227,10 +230,20 @@ internal class TestOrdinarySealHttpFixtureV1(
             val epoch = key.removePrefix(j.sealTerminalPrefix).substringBefore('/').toLong()
             if (activeOrdinaryHistory) {
                 assertEquals(1L, first)
-                assertTrue(epoch == 2L || epoch == 3L)
-                if (epoch == 3L) assertEquals(1, terminalSealObjects.keys.count {
-                    it.removePrefix(j.sealTerminalPrefix).substringBefore('/') == "2"
-                }, "The actual final ordinary PUT must precede terminal3; no object/authority is injected.")
+                if (maximumActiveHistorySeals == 1) {
+                    assertTrue(epoch == 2L || epoch == 3L)
+                    if (epoch == 3L) assertEquals(1, terminalSealObjects.keys.count {
+                        it.removePrefix(j.sealTerminalPrefix).substringBefore('/') == "2"
+                    }, "The actual final ordinary PUT must precede terminal3; no object/authority is injected.")
+                } else {
+                    assertTrue(epoch in 2L..(maximumActiveHistorySeals + 2L))
+                    for (prior in 2L until epoch) assertEquals(1, terminalSealObjects.keys.count {
+                        it.removePrefix(j.sealTerminalPrefix).substringBefore('/').toLong() == prior
+                    }, "Every earlier native seal must already have its one actual PUT; a later declaration cannot fill a gap.")
+                    assertTrue(terminalSealObjects.keys.none {
+                        it != key && it.removePrefix(j.sealTerminalPrefix).substringBefore('/').toLong() == epoch
+                    }, "A second key in the same epoch is not an additional historical seal.")
+                }
             } else assertEquals(first + 1, epoch)
         }
         val existing = if (manifest) manifestObjects[key] else if (purge) purgeObjects[key] else if (terminal) terminalSealObjects[key] else stored

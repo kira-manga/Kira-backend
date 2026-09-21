@@ -11,6 +11,8 @@ import me.manga.kira.backend.complaint.catalog.TerminalCatalogEvidenceFaultV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogRecoveryRefusalV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogHistoryNativeFaultV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogHistoryRowFaultV1
+import me.manga.kira.backend.complaint.catalog.TerminalCatalogRecurrentNativeFaultV1
+import me.manga.kira.backend.complaint.catalog.TerminalCatalogRecurrentRowFaultV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogRetainedPrimaryFaultV1
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Test
@@ -28,7 +30,9 @@ import org.junit.jupiter.api.parallel.ExecutionMode
  * not E. The missing-bookkeeping dataset deliberately does not claim consistent-restore closure.
  * Alias-only pending ALL cases use a fresh registered primary completion and replay after real sealing, without D/E.
  * Retained-D single-primary cuts include genuine PREPARED completion and same-holder lease/full-D refusals, stopping at D.
- * No full ACTIVE recurrence, erasure, PURGED or supported-maximum-N qualification.
+ * Genuine recurrent N>=2 -> D/E and N14/total16/refusal selectors are source-authored below,
+ * not executed or accepted by this file. N0/N1 stay separate regressions. No erasure/PURGED,
+ * prerequisite-PASS assumption or supported-maximum-N runtime qualification is asserted.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
@@ -88,6 +92,26 @@ class CatalogTestRunTerminalIT {
     @Test fun genuineSettledBNonemptyPreparedRecoveryAndProjectedReplayKeepOriginalBytesRowsAndSinglePayment() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.settledQueuePreparedRecoveryAndReplay(it) }
     @Test fun genuineMalformedQueuePollingSurvivesActualDAndRefusesEBeforeAnyNativeOrCatalogPayment() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.genuinePollingQueueRefusesCatalog(it) }
 
+    @Test fun genuineRecurrentTwoActiveSealsReachFourSealTerminalWithFullHistoricalAndTailRootsAndOnlyTwoNewV21Charges() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.recurrentSuccessful(it) }
+    @Test fun genuineRecurrentPreparedColdContinuationAndProjectedReplayRecheckEveryOriginalAndKeepExactBytesCustodyAndSinglePayment() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.recurrentPreparedRecoveryAndReplay(it) }
+    @Test fun genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.recurrentSuccessful(it, activeSeals = 14) }
+    @Test fun genuineFifteenthActiveAttemptRefusesBeforeRequestChargeOrAnotherPutAndIsNeverReusedForD() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.recurrentFifteenthActiveRefuses(it) }
+    @Test fun genuineDMissingMiddleHistoryRefusesAfterPaidOrdinaryCloseoutBeforeNewV21SealPaymentOrPut() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.recurrentDrainHistoryRefuses(it, physical = false) }
+    @Test fun genuineDRechecksIdenticalHistoricalBytesWithChangedXminAfterNativeReadBeforeNewV21SealPaymentOrPut() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.recurrentDrainHistoryRefuses(it, physical = true) }
+    @Test fun recurrentCatalogCannotReplaceMissingLastPaidCheckpointArchiveWithItsDeclaredSealCount() = recurrentRow(TerminalCatalogRecurrentRowFaultV1.MISSING_LATEST_ARCHIVE)
+    @Test fun recurrentCatalogRequiresOriginalLastIntentAndItsArchiveRatherThanTheRetainedNativeLocatorAlone() = recurrentRow(TerminalCatalogRecurrentRowFaultV1.MISSING_LATEST_SOURCE)
+    @Test fun recurrentCatalogRefusesPartiallyCheckpointedArchiveWithoutRepairSignOrPayment() = recurrentRow(TerminalCatalogRecurrentRowFaultV1.PARTIAL_CHECKPOINT)
+    @Test fun recurrentCatalogRefusesForeignSourceIdentityDespiteTheSameNativeSealAndOrderedCount() = recurrentRow(TerminalCatalogRecurrentRowFaultV1.FOREIGN_SOURCE_IDENTITY)
+    @Test fun recurrentCatalogRefusesReorderedPhysicalArchivesRatherThanSortingAwayBrokenOrdinalBinding() = recurrentRow(TerminalCatalogRecurrentRowFaultV1.REORDERED_ARCHIVES)
+    @Test fun recurrentCatalogRefusesIdenticalIntentBytesWithRewrittenXminAgainstOriginalD() = recurrentRow(TerminalCatalogRecurrentRowFaultV1.REWRITTEN_SOURCE_XMIN)
+    @Test fun recurrentCatalogRefusesIdenticalCheckpointArchiveBytesWithRewrittenXminAgainstOriginalD() = recurrentRow(TerminalCatalogRecurrentRowFaultV1.REWRITTEN_ARCHIVE_XMIN)
+    @Test fun recurrentColdPreparedContinuationRefusesChangedArchiveXminAgainstExactOriginalCustody() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.recurrentColdPhysicalRefusal(it, projected = false) }
+    @Test fun recurrentColdProjectedReplayRefusesChangedIntentXminWithoutNewAuthorityOrCustodyWrites() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.recurrentColdPhysicalRefusal(it, projected = true) }
+    @Test fun recurrentFullTerminalInventoryCannotOmitTheMiddleHistoricalNativeSeal() = recurrentNative(TerminalCatalogRecurrentNativeFaultV1.MISSING_MIDDLE)
+    @Test fun recurrentSecondFullInventoryCannotFilterAnExtraMiddleSealVersionAfterAGenuineFirstPass() = recurrentNative(TerminalCatalogRecurrentNativeFaultV1.SECOND_PASS_EXTRA_VERSION)
+    @Test fun recurrentMiddleHistoricalCiphertextDriftRefusesWithoutRepairOrCatalogPayment() = recurrentNative(TerminalCatalogRecurrentNativeFaultV1.CHANGED_CIPHERTEXT)
+    @Test fun recurrentMiddleHistoricalRetentionMustRemainExactNotMerelyLongEnough() = recurrentNative(TerminalCatalogRecurrentNativeFaultV1.CHANGED_RETENTION)
+
     @Test fun genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain() = withFixture { CatalogRetainedDPrimaryCasesV1.prepared(it) }
     @Test fun retainedDSelectedPrimaryRefusesStolenLeaseBeforeReloadingItsReceipt() = primaryRefusal(TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER)
     @Test fun retainedDPreparedPrimaryFinalLeaseExpiryRollsBackItsActualVerification() = primaryRefusal(TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE)
@@ -117,6 +141,8 @@ class CatalogTestRunTerminalIT {
     private fun lost(edge: TerminalCatalogCommitEdgeV1) = withFixture { CatalogTestRunTerminalRecoveryCasesV1.lostCommitAcknowledgement(it, edge) }
     private fun historyRow(fault: TerminalCatalogHistoryRowFaultV1) = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.rowRefusal(it, fault) }
     private fun historyNative(fault: TerminalCatalogHistoryNativeFaultV1) = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.nativeRefusal(it, fault) }
+    private fun recurrentRow(fault: TerminalCatalogRecurrentRowFaultV1) = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.recurrentRowRefusal(it, fault) }
+    private fun recurrentNative(fault: TerminalCatalogRecurrentNativeFaultV1) = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.recurrentNativeRefusal(it, fault) }
     private fun primaryRefusal(fault: TerminalCatalogRetainedPrimaryFaultV1) = withFixture { CatalogRetainedDPrimaryCasesV1.refuses(it, fault) }
     private fun withFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =
         VersionBoundPersistenceConnectedFixture(database.value, testActivation = true).use {

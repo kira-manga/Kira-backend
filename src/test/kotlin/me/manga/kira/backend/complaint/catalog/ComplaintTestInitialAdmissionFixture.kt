@@ -60,7 +60,8 @@ internal fun withInitialAdmission(tls: VersionBoundPersistenceConnectedFixture, 
         protectedIntake = true, protectedEnrollmentGlobalPerHour = 4,
         manifestPublication = terminalHistory != null, purgePublication = terminalHistory != null,
         terminalEpochSeal = terminalHistory != null, terminalInventory = terminalHistory?.terminalQuiescence != null,
-        activeOrdinaryHistory = terminalHistory != null).use { native ->
+        activeOrdinaryHistory = terminalHistory != null,
+        maximumActiveHistorySeals = terminalHistory?.maximumActiveHistorySeals ?: 1).use { native ->
         require(sealRecoveryHorizon == null || activeSealRecovery)
         require(terminalHistory == null || activeFirstCut)
         ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, ordinarySealHttp = native,
