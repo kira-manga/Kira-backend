@@ -1,0 +1,98 @@
+name: Backend App29 host-native logical capture class3
+
+# Primary-admitted exact source/native3 run; nonshipping, no deployment authority.
+on:
+  push:
+    branches: [remediation/backend-app29-logical-native3-20260921-01]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: backend-native3-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native3:
+    if: >-
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.event.repository.private == false &&
+      github.event.created == true && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CONTROL: ${{ github.workspace }}/carrier/scripts/ci/backend-project
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Exact carrier controls without retained credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: carrier
+          persist-credentials: false
+          fetch-depth: 2
+          sparse-checkout: scripts/ci/backend-project
+          sparse-checkout-cone-mode: false
+          show-progress: false
+
+      - name: Exact independently reviewed source, not the moving worktree
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: a16ec218e5134881236e7fecff6584ef584026ba
+          path: backend
+          persist-credentials: false
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Check primary authority before download or build; admit real host inputs
+        id: owned
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          cd "$CONTROL"
+          sha256sum --check --strict SHA256SUMS
+          /usr/bin/python3.12 -I -B "$CONTROL/run-hosted-native.py" --admit-outputs
+
+      - name: Download only the exact public seed artifact
+        id: seed
+        timeout-minutes: 3
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          repository: kira-manga/Kira-backend
+          run-id: 35591558415
+          artifact-ids: 10634349173
+          merge-multiple: true
+          path: ${{ steps.owned.outputs.artifact_input }}
+          github-token: ${{ github.token }} # Transient action-only read token; never the runner/JVM environment.
+
+      - name: Exact seed import, new native PG supplier, guarded compilation, one fresh native class3
+        id: native
+        if: always() && steps.owned.outcome == 'success' && steps.owned.outputs.admission != ''
+        timeout-minutes: 42
+        env:
+          KIRA_QCAP_ADMISSION: ${{ steps.owned.outputs.admission }}
+          KIRA_QCAP_ADMISSION_SHA256: ${{ steps.owned.outputs.admission_sha256 }}
+          KIRA_QCAP_PRIOR_STATUS: ${{ job.status }}
+        # A prior download failure/cancellation permits only unstarted owned-root cleanup, not a build.
+        run: /usr/bin/python3.12 -I -B "$CONTROL/run-hosted-native.py" --run
+
+      - name: Validate the fixed public metadata and exact XML allowlist, not a success verdict
+        id: public
+        if: always() && steps.owned.outputs.evidence != ''
+        env:
+          KIRA_QCAP_EVIDENCE: ${{ steps.owned.outputs.evidence }}
+          KIRA_QCAP_EVIDENCE_IDENTITY: ${{ steps.owned.outputs.evidence_identity }}
+        run: /usr/bin/python3.12 -I -B "$CONTROL/run-hosted-native.py" --publish-outputs
+
+      - name: Retain only the explicitly validated public files
+        if: always() && steps.public.outputs.upload == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-native3-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 3
+          if-no-files-found: error
+          overwrite: false
+          include-hidden-files: false
+          path: ${{ steps.public.outputs.paths }}
