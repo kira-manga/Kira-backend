@@ -1,6 +1,7 @@
 package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteLiteralCharges
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
@@ -22,10 +23,12 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerm
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialDeletionSqlCallV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainActiveHistorySqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainStepV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealSqlV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealStepV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllExceptionV1
@@ -59,6 +62,7 @@ internal class CatalogTestRunTerminalSqlProbeV1(private val f: TestRunPurgeFixtu
     var before: (Call) -> Unit = {}
     var after: (Call) -> Unit = {}
     val calls = arrayListOf<Call>()
+    private val returnedCalls = arrayListOf<Call>()
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     private val owners = linkedMapOf<PersistencePhaseContext, CatalogTestRunTerminalV1>()
     private val assertion = AtomicReference<AssertionError?>()
@@ -120,7 +124,7 @@ internal class CatalogTestRunTerminalSqlProbeV1(private val f: TestRunPurgeFixtu
         }
         assertSame(observation.lease, lease); assertSame(owners.getValue(phase), owner); assertFalse(lease.completion.quiescent())
         val call = Call(phase, path, sql, args.map { if (it is ByteArray) Bytes(it.size, Sha256.hex(it)) else it })
-        calls.add(call); before(call); action().also { after(call) }
+        calls.add(call); before(call); action().also { returnedCalls.add(call); after(call) }
     } catch (problem: AssertionError) { assertion.compareAndSet(null, problem); throw problem }
 
     fun assertReleased(requireCommitted: Boolean = true) {
@@ -137,9 +141,15 @@ internal class CatalogTestRunTerminalSqlProbeV1(private val f: TestRunPurgeFixtu
     }
 
     /** New history reads never introduce a lock class, or smuggle a run read into lease-only work. */
-    fun assertHistoryOrder(active: Boolean) {
-        val materialized = setOf(CatalogTestRunTerminalActiveHistorySqlV1.initialSeal, CatalogTestRunTerminalActiveHistorySqlV1.queue)
-        val physical = setOf(CatalogTestRunTerminalActiveHistorySqlV1.sealIdentity, CatalogTestRunTerminalActiveHistorySqlV1.queueIdentity)
+    fun assertHistoryOrder(active: Boolean, activeSeals: Int = if (active) 1 else 0) {
+        require(activeSeals in 0..14 && active == (activeSeals > 0))
+        val recurrent = activeSeals >= 2
+        val materialized = setOf(CatalogTestRunTerminalActiveHistorySqlV1.queue) + if (recurrent)
+            setOf(TestOrdinaryDrainActiveHistorySqlV1.rows, TestOrdinaryDrainActiveHistorySqlV1.currentLast)
+            else setOf(CatalogTestRunTerminalActiveHistorySqlV1.initialSeal)
+        val physical = setOf(CatalogTestRunTerminalActiveHistorySqlV1.queueIdentity,
+            TestOrdinaryDrainActiveHistorySqlV1.sourceIdentity, TestOrdinaryDrainActiveHistorySqlV1.archiveIdentity) +
+            if (recurrent) emptySet() else setOf(CatalogTestRunTerminalActiveHistorySqlV1.sealIdentity, TestOrdinaryDrainActiveHistorySqlV1.noRecurrent)
         calls.groupBy { it.phase }.values.forEach { phaseCalls ->
             val sql = phaseCalls.map { it.sql }
             val lastControl = sql.indexOfLast { it == CatalogTestRunTerminalSqlV1.lockControl }
@@ -162,17 +172,36 @@ internal class CatalogTestRunTerminalSqlProbeV1(private val f: TestRunPurgeFixtu
                     assertTrue((if (active) CatalogTestRunTerminalPreflightSqlV1.controlWithActiveHistory else CatalogTestRunTerminalPreflightSqlV1.control) in sql)
                 }
             }
+            val absent = if (recurrent) setOf(CatalogTestRunTerminalActiveHistorySqlV1.initialSeal,
+                CatalogTestRunTerminalActiveHistorySqlV1.sealIdentity, TestOrdinaryDrainActiveHistorySqlV1.noRecurrent)
+                else setOf(TestOrdinaryDrainActiveHistorySqlV1.rows, TestOrdinaryDrainActiveHistorySqlV1.currentLast)
+            assertTrue(sql.none { it in absent }, "Recurrent originals cannot fall back to a singleton; N0/N1 cannot invent archives.")
             phaseCalls.filter { it.sql in materialized || it.sql in physical }.forEach {
                 assertFalse(it.sql.contains("FOR UPDATE")); assertFalse(it.sql.contains("FOR SHARE"))
                 assertTrue(sql.indexOf(it.sql) > lastControl)
                 assertEquals(when (it.sql) {
                     CatalogTestRunTerminalActiveHistorySqlV1.initialSeal -> 14
                     CatalogTestRunTerminalActiveHistorySqlV1.queue -> 13
-                    CatalogTestRunTerminalActiveHistorySqlV1.sealIdentity -> 2
-                    else -> 3
+                    CatalogTestRunTerminalActiveHistorySqlV1.queueIdentity -> 3
+                    TestOrdinaryDrainActiveHistorySqlV1.currentLast -> 21
+                    else -> 2
                 }, it.arguments.size)
             }
         }
+        assertSharedHistoryArguments(f, calls.map { it.sql to it.arguments })
+    }
+
+    /** Partial refused paths still have to reach the intended original-source comparison. */
+    fun assertRecurrentReadReached(sql: String, returned: Boolean = false) {
+        val reached = calls.lastOrNull { it.sql == sql }
+        assertTrue(reached != null, "The refusal must reach its intended shared history read, not an earlier unrelated guard.")
+        val selected = checkNotNull(reached)
+        val phase = calls.filter { it.phase === selected.phase }
+        val source = phase.indexOfFirst { it.sql == TestOrdinaryDrainActiveHistorySqlV1.sourceIdentity }
+        val archive = phase.indexOfFirst { it.sql == TestOrdinaryDrainActiveHistorySqlV1.archiveIdentity }
+        assertTrue(source >= 0 && archive > source && phase.indexOf(selected) >= archive)
+        if (returned) assertTrue(selected in returnedCalls, "The actual SQL/mapper returned; an SQL dispatch error is not this refusal oracle.")
+        assertSharedHistoryArguments(f, calls.map { it.sql to it.arguments })
     }
     override fun close() {
         before = {}; after = {}
@@ -187,6 +216,31 @@ internal class CatalogTestRunTerminalSqlProbeV1(private val f: TestRunPurgeFixtu
             value.endsWith("s") -> value.removeSuffix("s").toLong() * 1_000
             else -> value.toLong()
         }
+    }
+}
+
+/** Independent column/argument observations; no production document-argument helper as oracle. */
+private fun assertSharedHistoryArguments(f: TestRunPurgeFixtureV1, calls: List<Pair<String, List<Any?>>>) {
+    val pair = listOf(f.scope, f.registration.process.consumers.journalConfiguration.sealTerminalPrefix + "%")
+    val scoped = setOf(TestOrdinaryDrainActiveHistorySqlV1.sourceIdentity, TestOrdinaryDrainActiveHistorySqlV1.archiveIdentity,
+        TestOrdinaryDrainActiveHistorySqlV1.noRecurrent, TestOrdinaryDrainActiveHistorySqlV1.rows)
+    calls.filter { it.first in scoped }.forEach { (sql, args) ->
+        assertEquals(pair, args); assertFalse(sql.contains("FOR UPDATE") || sql.contains("FOR SHARE"))
+    }
+    val current = calls.filter { it.first == TestOrdinaryDrainActiveHistorySqlV1.currentLast }
+    if (current.isEmpty()) return
+    val columns = listOf("checkpoint_generation", "checkpoint_fencing_token", "checkpoint_catalog_generation", "checkpoint_catalog_hash",
+        "checkpoint_writer_generation", "checkpoint_cutoff_epoch", "checkpoint_configuration_hash", "checkpoint_database_identity",
+        "checkpoint_restore_identity", "checkpoint_schema", "checkpoint_started_at", "checkpoint_completed_at", "checkpoint_object_count",
+        "checkpoint_byte_count", "checkpoint_result", "checkpoint_bytes", "checkpoint_hash", "seal_verified_at", "seal_retain_until",
+        "data_scope_id", "seal_operation_token")
+    val control = f.observer.queryForMap("SELECT ${columns.joinToString(",")} FROM complaint_journal_control WHERE data_scope_id = ?", f.scope)
+    fun observed(value: Any?) = if (value is ByteArray) CatalogTestRunTerminalSqlProbeV1.Bytes(value.size, Sha256.hex(value)) else value
+    val documentIds = setOf("checkpoint_writer_generation", "checkpoint_database_identity", "checkpoint_restore_identity")
+    val expected = columns.map { if (it in documentIds) checkNotNull(control[it]).toString() else observed(control[it]) }
+    current.forEach { (sql, args) ->
+        assertEquals(21, args.size); assertEquals(expected, args.map(::observed))
+        assertFalse(sql.contains("FOR UPDATE") || sql.contains("FOR SHARE"))
     }
 }
 
@@ -259,6 +313,9 @@ internal class CatalogTerminalHistorySealingProbeV1(private val f: TestRunPurgeF
 internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFixtureV1,
     private val a: TestRegisteredInitialCheckpointDeletionFixtureV1, private val preparedPrimary: Boolean = false) : AutoCloseable {
     private val coordinator = TestOrdinaryDrainSqlProbeV1(f.p, f.runtime)
+    private val returnedCoordinatorCalls = mutableListOf<TestOrdinaryDrainSqlCallV1>()
+    private val refusedCoordinatorPhases = mutableSetOf<PersistencePhaseContext>()
+    var beforeCoordinator: (TestOrdinaryDrainSqlCallV1) -> Unit = {}
     private val beforeDeletion = a.deletion.before
     private val afterDeletion = a.deletion.after
     private val calls = mutableListOf<TestRegisteredInitialDeletionSqlCallV1>()
@@ -284,6 +341,8 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
     init {
         requireConnectionFree(); a.assertReleased(); assertSame(a.runtime, f.runtime); assertSame(a.registration, f.registration)
         templates.forEach { (executor, field, previous) -> assertSame(coordinator.dataSource, previous.dataSource); field.set(executor, coordinator) }
+        coordinator.before = { beforeCoordinator(it) }
+        coordinator.after = { returnedCoordinatorCalls.add(it) }
         a.deletion.before = ::observeDeletion
         a.deletion.after = { call ->
             returnedCalls.add(call) // The actual JDBC mapper/update returned, never a substituted result.
@@ -492,7 +551,12 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
     } catch (problem: AssertionError) { assertion.compareAndSet(null, problem); throw problem }
 
     fun assertReleased() {
-        requireConnectionFree(); a.assertSqlReleased(); f.assertDatabaseReleased(); coordinator.assertReleased()
+        requireConnectionFree(); a.assertSqlReleased(); f.assertDatabaseReleased()
+        coordinator.assertReleased(requireCommitted = refusedCoordinatorPhases.isEmpty())
+        if (refusedCoordinatorPhases.isNotEmpty()) coordinator.observations.keys.forEach { phase ->
+            assertEquals(if (phase in refusedCoordinatorPhases) PersistenceDatabaseOutcome.ROLLED_BACK else PersistenceDatabaseOutcome.COMMITTED,
+                phase.databaseOutcome(), "Only the specifically observed negative PREPARE may roll back; every successful phase still must commit.")
+        }
         owners.forEach { (phase, owner) ->
             assertTrue(a.deletion.observations.getValue(phase).lease.completion.quiescent())
             assertTrue(phase.testRunOwnerDeleteCleanupProven(owner))
@@ -525,6 +589,51 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
     }
 
     fun observedCallCounts(): Pair<Int, Int> = calls.size to coordinator.calls.size
+
+    fun assertBeforeRecurrentHistoryNative() {
+        assertReleased()
+        assertEquals(TestOrdinaryDrainStepV1.SEAL, checkNotNull(original).step)
+        assertTrue(coordinator.calls.any { it.step === TestOrdinaryDrainStepV1.READY })
+        assertEquals(listOf(TestOrdinarySealStepV1.CAPTURE), coordinator.calls.mapNotNull { it.sealStep }.distinct())
+        assertTrue(coordinator.calls.any { it.sealStep === TestOrdinarySealStepV1.CAPTURE && it.sql == TestOrdinaryDrainActiveHistorySqlV1.currentLast })
+    }
+
+    fun assertRecurrentHistoryReads() {
+        assertReleased()
+        val ordered = listOf(TestOrdinaryDrainActiveHistorySqlV1.sourceIdentity, TestOrdinaryDrainActiveHistorySqlV1.archiveIdentity,
+            TestOrdinaryDrainActiveHistorySqlV1.rows, TestOrdinaryDrainActiveHistorySqlV1.currentLast)
+        val selected = coordinator.calls.filter { it.sql in ordered }
+        assertTrue(selected.isNotEmpty()); assertEquals(0, selected.size % ordered.size)
+        selected.chunked(ordered.size).forEach { reads ->
+            assertEquals(ordered, reads.map { it.sql }); assertEquals(1, reads.map { it.phase }.distinct().size)
+        }
+        assertTrue(coordinator.calls.none { it.sql == TestOrdinaryDrainActiveHistorySqlV1.noRecurrent })
+        assertSharedHistoryArguments(f, selected.map { it.sql to it.arguments })
+    }
+
+    /** Expected outcome only, observed before the actual fresh PREPARE history query executes. */
+    fun expectSealPrepareRollback(call: TestOrdinaryDrainSqlCallV1) {
+        assertSame(call.phase, PersistencePhaseOwnership.current())
+        assertEquals(TestOrdinaryDrainStepV1.SEAL, call.step); assertEquals(TestOrdinarySealStepV1.PREPARE, call.sealStep)
+        assertEquals(TestOrdinaryDrainActiveHistorySqlV1.sourceIdentity, call.sql)
+        assertSame(checkNotNull(original), checkNotNull(call.sealOriginal).closedDrain)
+        assertTrue(refusedCoordinatorPhases.isEmpty()); assertTrue(refusedCoordinatorPhases.add(call.phase))
+        coordinator.observations.filterKeys { it !== call.phase }.forEach { (phase, value) ->
+            assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome()); assertTrue(value.lease.completion.quiescent())
+        }
+    }
+
+    fun assertRecurrentSealRefusal(physical: Boolean) {
+        assertRecurrentHistoryReads()
+        assertEquals(if (physical) 1 else 0, refusedCoordinatorPhases.size)
+        val seal = coordinator.calls.filter { it.sealOriginal != null }
+        assertEquals(listOf(TestOrdinarySealStepV1.CAPTURE) + if (physical) listOf(TestOrdinarySealStepV1.PREPARE) else emptyList(),
+            seal.mapNotNull { it.sealStep }.distinct())
+        assertTrue(seal.none { mutation.containsMatchIn(it.sql) }, "No new V21 row, counter payment, FREEZE or PUT is reached.")
+        assertEquals(coordinator.calls, returnedCoordinatorCalls, "The expected native/physical refusal is not an SQL/mapper failure.")
+        if (physical) assertEquals(TestOrdinaryDrainSqlV1.controlWithActiveHistory, seal.last().sql,
+            "Fresh full controls compare the original physical history before any new seal counter/run work.")
+    }
 
     fun assertRetainedPrimarySequence(expected: List<String>) {
         assertReleased()
@@ -603,12 +712,21 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
     /** Literal P-U release observed in the actual CONVERT SQL, never a calculator as oracle. */
     fun assertAllResidualConversion(used: ComplaintCapacityVector = TerminalCatalogAllLiteralChargesV1.applied) {
         assertReleased(); assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, a.family)
+        assertResidualConversion(TerminalCatalogAllLiteralChargesV1.promise, used)
+    }
+
+    fun assertOrdinaryResidualConversion() {
+        assertReleased(); assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE, a.family)
+        assertResidualConversion(OwnerDeleteLiteralCharges.promise, OwnerDeleteLiteralCharges.appliedOnly + OwnerDeleteLiteralCharges.audit.scaled(2))
+    }
+
+    private fun assertResidualConversion(promise: ComplaintCapacityVector, used: ComplaintCapacityVector) {
         val conversion = coordinator.calls.filter { it.step === TestOrdinaryDrainStepV1.CONVERT }
         val mark = conversion.single { it.sql == TestOrdinaryDrainSqlV1.convert }
         assertEquals(checkNotNull(a.event).route.eventId, mark.arguments[0]); assertEquals(a.scope, mark.arguments[1])
-        assertEquals(TerminalCatalogAllLiteralChargesV1.promise.toLongArray().joinToString(",", "{", "}"), mark.arguments[2])
+        assertEquals(promise.toLongArray().joinToString(",", "{", "}"), mark.arguments[2])
         assertEquals(used.toLongArray().joinToString(",", "{", "}"), mark.arguments[3])
-        val remainder = TerminalCatalogAllLiteralChargesV1.promise - used
+        val remainder = promise - used
         val updates = conversion.filter { it.sql.startsWith("UPDATE complaint_capacity_counters") }
         assertEquals(ComplaintCapacityCounter.entries.filter { remainder[it] != 0L }.map { it.storedName }.toSet(), updates.map { it.arguments[4] }.toSet())
         assertEquals(updates.size, updates.map { it.arguments[4] }.distinct().size)
@@ -622,6 +740,7 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
     override fun close() {
         try { assertReleased() }
         finally {
+            beforeCoordinator = {}; coordinator.before = {}; coordinator.after = {}
             afterPrimary = { _, _ -> }
             a.deletion.before = beforeDeletion; a.deletion.after = afterDeletion
             templates.forEach { (executor, field, previous) -> assertSame(coordinator, field.get(executor)); field.set(executor, previous) }

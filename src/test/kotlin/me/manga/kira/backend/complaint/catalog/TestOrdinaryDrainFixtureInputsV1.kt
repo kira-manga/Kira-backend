@@ -24,6 +24,8 @@ internal class TestOrdinaryDrainFixtureInputsV1(
     val maximumFramedBytes: Long? = null,
     val scanMillis: Int? = null,
     val terminalQuiescence: TestTerminalQuiescenceFixtureInputsV1? = null,
+    // Raw depot bound selected before intake; never a supplied history count or product authority.
+    val maximumActiveHistorySeals: Int = 1,
 ) {
     private val signer by lazy { OfflineTrustBundleFixture.newKey() }
 
@@ -31,6 +33,7 @@ internal class TestOrdinaryDrainFixtureInputsV1(
         require(maximumRetainedVersions in 1..10_000)
         require(maximumFramedBytes == null || maximumFramedBytes > 0)
         require(scanMillis == null || scanMillis in 1..600_000)
+        require(maximumActiveHistorySeals in 1..14)
     }
 
     fun limits(original: JournalLimitsV1): JournalLimitsV1 = original.copy(

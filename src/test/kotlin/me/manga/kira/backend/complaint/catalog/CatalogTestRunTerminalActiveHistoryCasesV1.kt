@@ -1,8 +1,13 @@
 package me.manga.kira.backend.complaint.catalog
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
@@ -13,8 +18,13 @@ import me.manga.kira.backend.complaint.catalog.CatalogTestRunTerminalCasesV1.ass
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunTerminalCasesV1.assertProjected
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunTerminalCasesV1.unused
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
+import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveCheckpointHistoryV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentCheckpointDocumentV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityChargesV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDenialPrefixV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalExceptionV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalFailureV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSealSetV1
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyRows
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalActiveHistorySqlV1
@@ -25,15 +35,23 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerm
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalSqlV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueFixtureV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentFixtureV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentStepV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainActiveHistorySqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainPersistenceV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealStepV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceSourceV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.TestTerminalJsonV1
+import me.manga.kira.backend.security.TestTerminalCodecKindV1
+import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -55,11 +73,18 @@ import java.util.UUID
 
 internal enum class TerminalCatalogHistoryRowFaultV1 { MISSING_A, FOREIGN_A_IDENTITY, REWRITTEN_A_XMIN }
 internal enum class TerminalCatalogHistoryNativeFaultV1 { MISSING_A, SECOND_PASS_EXTRA_VERSION, CHANGED_RETENTION, CHANGED_LAST_MODIFIED }
+internal enum class TerminalCatalogRecurrentRowFaultV1 {
+    MISSING_LATEST_ARCHIVE, MISSING_LATEST_SOURCE, PARTIAL_CHECKPOINT, FOREIGN_SOURCE_IDENTITY,
+    REORDERED_ARCHIVES, REWRITTEN_SOURCE_XMIN, REWRITTEN_ARCHIVE_XMIN,
+}
+internal enum class TerminalCatalogRecurrentNativeFaultV1 { MISSING_MIDDLE, SECOND_PASS_EXTRA_VERSION, CHANGED_CIPHERTEXT, CHANGED_RETENTION }
 
 /** Authored producer/refusal assertions only. No execution, provider qualification or substituted B/D completion. */
 internal object CatalogTestRunTerminalActiveHistoryCasesV1 {
     fun successful(tls: VersionBoundPersistenceConnectedFixture) = withActiveHistoryTerminalCatalogRun(tls) { h ->
         val f = h.catalog
+        assertTrue(h.historyRows().getValue("V31_INTENT").isEmpty() && h.historyRows().getValue("V31_HISTORY").isEmpty(),
+            "Legacy V26-only history has no invented recurrent intent, archive or archive charge.")
         val protected = h.preservedRows(); val counters = f.f.p.counters(); val reserve = unused(f)
         val nativeStart = f.f.sealHttp.terminalInventoryRequests.size; val journalStart = f.f.sealHttp.order.size
         val seals = f.record.sealSet.records()
@@ -182,6 +207,232 @@ internal object CatalogTestRunTerminalActiveHistoryCasesV1 {
             assertEquals(1, f.signatures.size); assertEquals(1, f.http.bodies.size)
             assertThrows<RuntimeException> { original.publish(f.unsigned, f.request()) }
         }
+
+    fun recurrentSuccessful(tls: VersionBoundPersistenceConnectedFixture, activeSeals: Int = 2) =
+        withRecurrentTerminalCatalogRun(tls, activeSeals) { h, r ->
+            val f = h.catalog; assertRecurrentHistory(h, r)
+            val protected = h.preservedRows(); val counters = f.f.p.counters(); val reserve = unused(f)
+            val nativeStart = f.f.sealHttp.terminalInventoryRequests.size; val journalStart = f.f.sealHttp.order.size
+            f.http.replicateOnPut = true
+            val original = f.begin()
+            assertEquals(CatalogTestRunTerminalResultV1.DUAL_COPY_ACCEPTED_AND_PURGING_PROJECTED, original.publish(f.unsigned, f.request()))
+            original.requireActualCleanup(); f.probe.assertReleased(); f.probe.assertHistoryOrder(active = true, activeSeals = activeSeals); assertProjected(f)
+            val charge = TestTerminalCapacityChargesV1.SCOPED_CATALOG + TestTerminalCapacityChargesV1.AUDIT
+            assertCharge(f, counters, charge); assertEquals(reserve - charge, unused(f))
+            assertEquals(protected, h.preservedRows(), "Every original paid V26/V31/archive/checkpoint/native binding and xmin survives E.")
+            assertRecurrentHistory(h, r); assertRecurrentNativePairs(h, nativeStart, journalStart, 2)
+            assertEquals(1, f.signatures.size); assertEquals(1, f.http.bodies.size)
+            assertArrayEquals(f.unsigned, f.bytes("unsigned_bytes")); assertArrayEquals(f.bytes("envelope_bytes"), f.http.bodies.single())
+            CatalogTestRunTerminalCasesV1.assertOrder(f.probe)
+            if (activeSeals == 14) {
+                assertEquals(16, f.record.sealSet.records().size); assertEquals(15L, f.record.purge.document.preTerminalSeals.count)
+                val before = h.fullImage(); val files = f.files(); val seals = f.record.sealSet
+                // Negative syntax bound over the actual sixteen records, not a fabricated seventeenth producer.
+                val failure = assertThrows<TestTerminalExceptionV1> { TestTerminalSealSetV1.create(seals.dataScopeId,
+                    seals.activationCatalogGeneration, seals.activationCatalogSha256, seals.records() + seals.records().last()) }
+                assertEquals(TestTerminalFailureV1.LIMIT_EXCEEDED, failure.code)
+                assertEquals(before, h.fullImage()); assertEquals(files, f.files())
+            }
+        }
+
+    fun recurrentPreparedRecoveryAndReplay(tls: VersionBoundPersistenceConnectedFixture) = withRecurrentTerminalCatalogRun(tls) { h, r ->
+        val f = h.catalog; val n = r.history().size; assertRecurrentHistory(h, r)
+        val protected = h.preservedRows(); val counters = f.f.p.counters(); val reserve = unused(f)
+        val nativeStart = f.f.sealHttp.terminalInventoryRequests.size; val journalStart = f.f.sealHttp.order.size
+        val original = f.begin()
+        assertEquals(CatalogTestRunTerminalResultV1.EXACT_PREPARED_AWAITING_DUAL_COPY, original.publish(f.unsigned, f.request()))
+        original.requireActualCleanup(); f.probe.assertReleased(); f.probe.assertHistoryOrder(active = true, activeSeals = n); assertPrepared(f)
+        assertCharge(f, counters, TestTerminalCapacityChargesV1.SCOPED_CATALOG); assertEquals(protected, h.preservedRows())
+        val prepared = listOf("unsigned_bytes", "signer_one_signature", "envelope_bytes").associateWith(f::bytes)
+        val preparedFiles = f.files()
+        f.http.completeReplication() // Only the actual original envelope is copied; it supplies no admitted history/receipt.
+        f.freshRecovery { recovery, probe ->
+            assertEquals(CatalogTestRunTerminalResultV1.DUAL_COPY_ACCEPTED_AND_PURGING_PROJECTED, recovery.resume(f.request()))
+            probe.assertReleased(); probe.assertHistoryOrder(active = true, activeSeals = n); assertProjected(f)
+            assertTrue(probe.calls.none { it.sql in setOf(CatalogTestRunTerminalSqlV1.insertPrepared,
+                CatalogTestRunTerminalProjectionSqlV1.spendPrepared, CatalogTestRunTerminalSqlV1.persistSignature) })
+            prepared.forEach { (column, bytes) -> assertArrayEquals(bytes, f.bytes(column), column) }
+            preparedFiles.forEach { (path, hash) -> assertEquals(hash, f.files()[path], path) }
+        }
+        val charge = TestTerminalCapacityChargesV1.SCOPED_CATALOG + TestTerminalCapacityChargesV1.AUDIT
+        assertCharge(f, counters, charge); assertEquals(reserve - charge, unused(f)); assertEquals(protected, h.preservedRows())
+        val projected = h.fullImage(); val files = f.files()
+        f.freshRecovery { recovery, probe ->
+            assertEquals(CatalogTestRunTerminalResultV1.DUAL_COPY_ACCEPTED_AND_PURGING_PROJECTED, recovery.resume(f.request()))
+            probe.assertReleased(); probe.assertHistoryOrder(active = true, activeSeals = n); assertReadOnly(probe)
+            prepared.forEach { (column, bytes) -> assertArrayEquals(bytes, f.bytes(column), column) }
+            assertEquals(projected, h.fullImage()); assertEquals(files, f.files())
+        }
+        assertRecurrentHistory(h, r); assertRecurrentNativePairs(h, nativeStart, journalStart, 6)
+        assertCharge(f, counters, charge); assertEquals(reserve - charge, unused(f))
+        assertEquals(1, f.signatures.size); assertEquals(1, f.http.bodies.size)
+        assertThrows<RuntimeException> { original.publish(f.unsigned, f.request()) }
+    }
+
+    /** A distinct actual fifteenth ACTIVE attempt fails; it is never repaired/reused as D input. */
+    fun recurrentFifteenthActiveRefuses(tls: VersionBoundPersistenceConnectedFixture) = withCompletedRecurrentTerminalHistory(tls, 14) { r, _ ->
+        val before = terminalCatalogActiveRows(r.observer, r.scope); val domain = r.domainImage(); val counters = r.counters()
+        val puts = r.first.native.requests.count { it.kind == "PUT" }; val ordinary = r.raw.order.toList()
+        val original = r.begin()
+        assertThrows<TestActiveRecurrentExceptionV1> { r.checkpoint(original) }
+        r.assertReleased()
+        assertEquals(before, terminalCatalogActiveRows(r.observer, r.scope)); assertEquals(domain, r.domainImage()); assertEquals(counters, r.counters())
+        assertEquals(14, r.history().size); assertEquals(13, r.intents().size)
+        assertEquals(puts, r.first.native.requests.count { it.kind == "PUT" }); assertEquals(ordinary, r.raw.order)
+        assertTrue(r.probe.calls.none { it.step === TestActiveRecurrentStepV1.REQUEST }, "The bound refuses before a fifteenth request, charge or capture.")
+        assertEquals(0L, r.queue.count("complaint_test_terminal_intents"))
+        val calls = r.probe.calls.size
+        assertThrows<TestActiveRecurrentExceptionV1> { r.checkpoint(original) }
+        assertEquals(calls, r.probe.calls.size)
+    }
+
+    fun recurrentRowRefusal(tls: VersionBoundPersistenceConnectedFixture, fault: TerminalCatalogRecurrentRowFaultV1) =
+        withRecurrentTerminalCatalogRun(tls, if (fault === TerminalCatalogRecurrentRowFaultV1.REORDERED_ARCHIVES) 3 else 2) { h, _ ->
+            val f = h.catalog
+            withChangedRecurrentHistory(f.f, fault) {
+                val before = h.fullImage(); val files = f.files(); val native = f.f.sealHttp.terminalInventoryRequests.size
+                val original = f.begin()
+                assertThrows<CatalogTestRunTerminalExceptionV1> { original.publish(f.unsigned, f.request()) }
+                f.probe.assertReleased(requireCommitted = false); assertReadOnly(f.probe)
+                f.probe.assertRecurrentReadReached(when (fault) {
+                    TerminalCatalogRecurrentRowFaultV1.MISSING_LATEST_ARCHIVE, TerminalCatalogRecurrentRowFaultV1.MISSING_LATEST_SOURCE -> TestOrdinaryDrainActiveHistorySqlV1.archiveIdentity
+                    TerminalCatalogRecurrentRowFaultV1.REWRITTEN_SOURCE_XMIN, TerminalCatalogRecurrentRowFaultV1.REWRITTEN_ARCHIVE_XMIN -> TestOrdinaryDrainActiveHistorySqlV1.currentLast
+                    else -> TestOrdinaryDrainActiveHistorySqlV1.rows
+                }, returned = fault in setOf(TerminalCatalogRecurrentRowFaultV1.MISSING_LATEST_ARCHIVE, TerminalCatalogRecurrentRowFaultV1.MISSING_LATEST_SOURCE,
+                    TerminalCatalogRecurrentRowFaultV1.REWRITTEN_SOURCE_XMIN, TerminalCatalogRecurrentRowFaultV1.REWRITTEN_ARCHIVE_XMIN))
+                assertEquals(before, h.fullImage()); assertEquals(files, f.files()); assertEquals(native, f.f.sealHttp.terminalInventoryRequests.size)
+                assertTrue(f.signatures.isEmpty() && f.http.bodies.isEmpty() && f.ordinaryRequests.isEmpty())
+                assertThrows<RuntimeException> { original.publish(f.unsigned, f.request()) }
+            }
+            assertThrows<RuntimeException> { f.d.beginTerminalCatalog() }
+        }
+
+    fun recurrentColdPhysicalRefusal(tls: VersionBoundPersistenceConnectedFixture, projected: Boolean) = withRecurrentTerminalCatalogRun(tls) { h, _ ->
+        val f = h.catalog; f.http.replicateOnPut = projected
+        val original = f.begin()
+        assertEquals(if (projected) CatalogTestRunTerminalResultV1.DUAL_COPY_ACCEPTED_AND_PURGING_PROJECTED
+            else CatalogTestRunTerminalResultV1.EXACT_PREPARED_AWAITING_DUAL_COPY, original.publish(f.unsigned, f.request()))
+        original.requireActualCleanup(); f.probe.assertReleased()
+        val files = f.files(); val nativeStart = f.f.sealHttp.terminalInventoryRequests.size
+        val bytes = listOf("unsigned_bytes", "signer_one_signature", "envelope_bytes").associateWith(f::bytes)
+        if (!projected) f.http.completeReplication()
+        withChangedRecurrentHistory(f.f, if (projected) TerminalCatalogRecurrentRowFaultV1.REWRITTEN_SOURCE_XMIN
+            else TerminalCatalogRecurrentRowFaultV1.REWRITTEN_ARCHIVE_XMIN) {
+            val before = h.fullImage()
+            f.freshRecovery { recovery, probe ->
+                assertThrows<CatalogTestRunTerminalExceptionV1> { recovery.resume(f.request()) }
+                probe.assertReleased(requireCommitted = false); assertReadOnly(probe)
+                probe.assertRecurrentReadReached(TestOrdinaryDrainActiveHistorySqlV1.currentLast, returned = true)
+                assertEquals(before, h.fullImage()); assertEquals(files, f.files())
+                bytes.forEach { (column, value) -> assertArrayEquals(value, f.bytes(column), column) }
+                assertTrue(f.f.sealHttp.terminalInventoryRequests.size > nativeStart,
+                    "Cold recovery independently reads native history, then compares the rewritten physical source/archive against original custody.")
+            }
+        }
+        if (projected) assertProjected(f) else assertPrepared(f)
+        assertEquals(1, f.signatures.size); assertEquals(1, f.http.bodies.size)
+    }
+
+    fun recurrentNativeRefusal(tls: VersionBoundPersistenceConnectedFixture, fault: TerminalCatalogRecurrentNativeFaultV1) =
+        withRecurrentTerminalCatalogRun(tls, activeSeals = 3) { h, r ->
+            val f = h.catalog; val native = f.f.sealHttp; val before = h.fullImage()
+            val key = TestActiveCheckpointHistoryV1.Entry.parse(r.history()[1]["entry_bytes"] as ByteArray).objectKey
+            val passes = native.terminalRecoverySessions.size; val reads = native.terminalInventoryRequests.size
+            val listing = native.terminalInventoryListing; val objects = native.terminalInventoryObject
+            native.terminalInventoryListing = { pass, values ->
+                val actual = listing(pass, values)
+                when (fault) {
+                    TerminalCatalogRecurrentNativeFaultV1.MISSING_MIDDLE -> actual.filterNot { it.key == key }
+                    TerminalCatalogRecurrentNativeFaultV1.SECOND_PASS_EXTRA_VERSION -> if (pass == passes + 2)
+                        actual + actual.single { it.key == key }.copy(version = "unexpected-middle-recurrent-version") else actual
+                    else -> actual
+                }
+            }
+            native.terminalInventoryObject = { pass, value ->
+                val actual = objects(pass, value)
+                if (actual.key != key) actual else when (fault) {
+                    TerminalCatalogRecurrentNativeFaultV1.CHANGED_CIPHERTEXT -> actual.copy(bytes = actual.bytes.copyOf().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() })
+                    TerminalCatalogRecurrentNativeFaultV1.CHANGED_RETENTION -> actual.copy(retainUntil = actual.retainUntil.plusSeconds(1))
+                    else -> actual
+                }
+            }
+            try { assertThrows<CatalogTestRunTerminalExceptionV1> { f.begin().publish(f.unsigned, f.request()) } }
+            finally { native.terminalInventoryListing = listing; native.terminalInventoryObject = objects }
+            f.probe.assertReleased(requireCommitted = false); assertReadOnly(f.probe)
+            f.probe.assertRecurrentReadReached(TestOrdinaryDrainActiveHistorySqlV1.currentLast, returned = true)
+            assertEquals(before, h.fullImage()); assertTrue(f.files().isEmpty() && f.signatures.isEmpty() && f.http.bodies.isEmpty())
+            assertThrows<RuntimeException> { f.d.beginTerminalCatalog() }
+            if (fault === TerminalCatalogRecurrentNativeFaultV1.SECOND_PASS_EXTRA_VERSION) assertTrue(
+                native.terminalInventoryRequests.drop(reads).count { it.kind == "GET" } >= f.d.targets.size,
+                "The complete genuine first pass precedes rejection of an extra middle-history version in pass two.")
+        }
+
+    /** D rereads every history after its real ordinary closeout, before any new V21 seal payment. */
+    fun recurrentDrainHistoryRefuses(tls: VersionBoundPersistenceConnectedFixture, physical: Boolean) = withSealedRecurrentTerminalRun(tls, activeSeals = 3) { f, r, inputs ->
+        val history = terminalCatalogActiveRows(f)
+        val native = f.sealHttp; val puts = native.requests.count { it.kind == "PUT" }
+        val entry = TestActiveCheckpointHistoryV1.Entry.parse(r.history()[1]["entry_bytes"] as ByteArray); val key = entry.objectKey
+        val listing = native.terminalSealListing; val changed = native.changeS3; var injected = false
+        native.terminalSealListing = { selected, values ->
+            val actual = listing(selected, values)
+            if (!physical && selected == key) { injected = true; actual.filterNot { it.key == key } } else actual
+        }
+        try {
+            CatalogTerminalHistoryDrainProbeV1(f, r.precursor).use { probe ->
+                val ordinary = CatalogTerminalOriginalOrdinaryHttpV1(r.process.consumers.journalConfiguration, r.record, probe::assertReleased)
+                val drain = probe.begin(ordinary::client, ordinary.keys::httpClient)
+                val approval = activeHistoryOrdinaryApproval(f, inputs, drain, 4); val raw = f.rawEvidence
+                var expectedImage: Map<String, List<String>>? = null
+                var counters: Map<String, ProjectionCounterObservation>? = null
+                var reserve: ComplaintCapacityVector? = null
+                fun image() = r.domainImage() + terminalCatalogActiveRows(f) + listOf("complaint_test_runs", "complaint_test_terminal_intents",
+                    "complaint_journal_scan_runs", "complaint_journal_scan_entries", "complaint_journal_control").associateWith { table ->
+                    f.observer.queryForList("SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text", String::class.java, f.scope)
+                }
+                probe.beforeCoordinator = { call ->
+                    if (physical && injected && call.sealStep === TestOrdinarySealStepV1.PREPARE && call.sql == TestOrdinaryDrainActiveHistorySqlV1.sourceIdentity)
+                        probe.expectSealPrepareRollback(call)
+                }
+                native.changeS3 = { request, reply ->
+                    changed(request, reply)
+                    if (physical && !injected && request.kind == "GET" && request.http.encodedPath().endsWith("/$key")) {
+                        probe.assertBeforeRecurrentHistoryNative()
+                        val bytes = checkNotNull(f.observer.queryForObject("SELECT to_jsonb(h)::text FROM complaint_test_active_checkpoint_history h WHERE operation_token = ?::uuid", String::class.java, entry.operationToken))
+                        changeRecurrentRows(f, source = false) { jdbc ->
+                            assertEquals(1, jdbc.update("UPDATE complaint_test_active_checkpoint_history SET charged_storage_bytes = charged_storage_bytes WHERE data_scope_id = ? AND operation_token = ?::uuid", f.scope, entry.operationToken))
+                        }
+                        assertEquals(bytes, f.observer.queryForObject("SELECT to_jsonb(h)::text FROM complaint_test_active_checkpoint_history h WHERE operation_token = ?::uuid", String::class.java, entry.operationToken))
+                        val after = image(); val before = checkNotNull(expectedImage)
+                        assertEquals(before - "V31_HISTORY", after - "V31_HISTORY"); assertNotEquals(before["V31_HISTORY"], after["V31_HISTORY"])
+                        expectedImage = after; injected = true // Identical source bytes, genuinely different committed xmin only.
+                    }
+                }
+                try {
+                    terminalCatalogHistoryBoundaries(f, {
+                        probe.assertReleased()
+                        if (expectedImage == null) {
+                            probe.assertBeforeRecurrentHistoryNative(); assertEquals(history, terminalCatalogActiveRows(f))
+                            expectedImage = image(); counters = f.p.counters(); reserve = terminalCatalogUnusedReserve(f)
+                            assertTrue(checkNotNull(expectedImage).getValue("complaint_journal_scan_runs").isEmpty() &&
+                                checkNotNull(expectedImage).getValue("complaint_journal_scan_entries").isEmpty())
+                        }
+                    }) {
+                        assertThrows<TestOrdinaryDrainExceptionV1> { drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS) }
+                    }
+                    probe.assertRecurrentSealRefusal(physical); ordinary.assertReadPairs(2, recovery = true); assertTrue(injected)
+                    probe.assertRetainedInventoryRecovery(r.record.stored); probe.assertPrimaryApplied(false); probe.assertOrdinaryResidualConversion()
+                    assertEquals(checkNotNull(expectedImage), image()); assertEquals(checkNotNull(counters), f.p.counters())
+                    assertEquals(checkNotNull(reserve), terminalCatalogUnusedReserve(f)); assertEquals(puts, native.requests.count { it.kind == "PUT" })
+                    if (!physical) assertEquals(history, terminalCatalogActiveRows(f))
+                    assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
+                    val calls = probe.observedCallCounts()
+                    assertThrows<TestOrdinaryDrainExceptionV1> { drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS) }
+                    assertThrows<RuntimeException> { drain.prepareInstallationManifest() }
+                    assertEquals(calls, probe.observedCallCounts(), "No reuse or descendant work follows the refused original.")
+                } finally { approval.fill(0); raw.forEach { it.fill(0) }; ordinary.assertClosed() }
+            }
+        } finally { native.terminalSealListing = listing; native.changeS3 = changed }
+    }
 
     /** Both variants use B's original native readback; PREPARED does not borrow a SQL VERIFY. */
     fun allQueueSuccessful(tls: VersionBoundPersistenceConnectedFixture, verifyPublication: Boolean) =
@@ -812,6 +1063,7 @@ internal object CatalogTestRunTerminalActiveHistoryCasesV1 {
 
     /** Old framing oracle over genuinely captured preimages, not a hash/condition supplied to E. */
     fun legacyTwoSealCompatibility(tls: VersionBoundPersistenceConnectedFixture) = withTerminalCatalogRun(tls) { f ->
+        assertTrue(terminalCatalogActiveRows(f.f).values.all { it.isEmpty() }, "N0 cannot invent V26/V29/V31 history or charges.")
         f.http.replicateOnPut = true
         val original = f.begin()
         assertEquals(CatalogTestRunTerminalResultV1.DUAL_COPY_ACCEPTED_AND_PURGING_PROJECTED, original.publish(f.unsigned, f.request()))
@@ -837,6 +1089,238 @@ internal object CatalogTestRunTerminalActiveHistoryCasesV1 {
         assertEquals(15, fields.size); assertEquals("catalog-test-run-terminal-release-v1", fields[0]); assertEquals(oldDigest, fields[11])
         assertFalse(fields.any { it == "V26" || it == "V29" })
         assertArrayEquals(f.unsigned, f.bytes("unsigned_bytes")); assertArrayEquals(f.bytes("envelope_bytes"), f.http.primaryBytes)
+    }
+
+    /** Independent LP32 full/history/tail roots and original source/native/charge identities. */
+    private fun assertRecurrentHistory(h: CatalogTestRunTerminalActiveHistoryFixtureV1, r: TestActiveRecurrentFixtureV1) {
+        val f = h.catalog; val archive = r.history(); val n = archive.size; val seals = f.record.sealSet.records()
+        assertTrue(n in 2..14); assertEquals(n + 2, seals.size)
+        assertEquals((1L..n + 2L).toList(), seals.map { it.epochStartInclusive })
+        assertEquals((1L..n + 2L).toList(), seals.map { it.epochEndInclusive })
+        seals.zipWithNext().forEach { (prior, next) -> assertEquals(prior.objectRef.canonicalSha256, next.precedingSealSha256) }
+        assertEquals(n + 1L, f.record.purge.document.preTerminalSeals.count)
+        assertEquals(n + 2L, f.record.purge.document.preTerminalInventory.count, "The one original ordinary object plus EVERY preterminal seal.")
+        assertEquals(n + 2L, f.manifest.history.epochSeals.count)
+        assertEquals(1L, f.record.installationManifest.summary.installationCount)
+        val entries = archive.map { TestActiveCheckpointHistoryV1.Entry.parse(it["entry_bytes"] as ByteArray) }
+        val sources = listOf(f.observer.queryForMap("SELECT * FROM complaint_test_active_seal_intents WHERE data_scope_id = ?", f.scope)) + r.intents()
+        assertEquals(n, sources.size)
+        val depot = f.f.sealHttp.terminalObjects().associateBy { it.key }
+        val nativeTargets = f.d.targets.filter { it.kind === TestTerminalCodecKindV1.EPOCH_SEAL }
+        assertEquals(n + 2, nativeTargets.size)
+        val historical = nativeTargets.filter { it.source !== TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT }.sortedBy { it.startEpoch }
+        assertEquals(listOf(TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL) + List(n - 1) { TestTerminalQuiescenceSourceV1.V31_ACTIVE_RECURRENT_SEAL }, historical.map { it.source })
+        assertEquals((0 until n).toList(), historical.map { it.ordinal }, "V31 durable ordinal is history ordinal minus one; V26 remains zero.")
+        val terminalTargets = nativeTargets.filter { it.source === TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT }.sortedBy { it.ordinal }
+        assertEquals(listOf(0, 1), terminalTargets.map { it.ordinal }); assertEquals(seals.takeLast(2).map { it.objectRef }, terminalTargets.map { it.objectRef })
+        val json = TestTerminalJsonV1(r.process.consumers.journalConfiguration)
+        fun hex(value: Any?) = HexFormat.of().formatHex(value as ByteArray)
+        fun historyRoot(count: Int): String {
+            val hashes = archive.take(count).joinToString(",") { "\"${Sha256.hex(it["entry_bytes"] as ByteArray)}\"" }
+            return Sha256.hex("{\"entries\":[$hashes],\"kind\":\"kira-test-active-seal-history-root\",\"schemaVersion\":1}".toByteArray(Charsets.UTF_8))
+        }
+        entries.forEachIndexed { index, entry ->
+            val source = sources[index]; val row = archive[index]; val native = depot.getValue(entry.objectKey)
+            assertEquals(index + 1, (row["ordinal"] as Number).toInt()); assertEquals(index + 1L, (source["rotation_sequence"] as Number).toLong())
+            assertEquals(if (index == 0) "V26_INITIAL" else "V31_RECURRENT", row["source"])
+            assertEquals(source["operation_token"], row["operation_token"]); assertEquals(source["operation_token"].toString(), entry.operationToken)
+            assertEquals(f.scope.toString(), entry.identity.scope)
+            assertEquals(source["database_identity"].toString(), entry.identity.databaseIdentity)
+            assertEquals(source["restore_identity"].toString(), entry.identity.restoreIdentity)
+            assertEquals(source["writer_generation"].toString(), entry.identity.writerGeneration)
+            assertEquals(source["epoch_start"], entry.epochStart); assertEquals(source["epoch_end"], entry.epochEnd); assertEquals(source["epoch_after"], entry.epochAfter)
+            assertEquals(source["object_key"], entry.objectKey); assertEquals(row["object_version"], entry.objectVersion)
+            assertEquals(hex(row["entry_hash"]), Sha256.hex(row["entry_bytes"] as ByteArray))
+            assertEquals(hex(row["verification_hash"]), Sha256.hex(row["verification_bytes"] as ByteArray))
+            assertEquals(hex(row["verification_hash"]), entry.verificationSha256)
+            assertEquals(hex(source["canonical_hash"]), entry.canonicalSha256); assertEquals(hex(source["wire_hash"]), entry.wireSha256)
+            assertEquals(hex(source["metadata_hash"]), entry.metadataSha256)
+            assertArrayEquals(source["wire_bytes"] as ByteArray, native.bytes)
+            assertEquals(entry.objectVersion, native.version); assertEquals(entry.lastModified, native.lastModified); assertEquals(entry.retainUntil, native.retainUntil)
+            assertEquals(entry.canonicalSha256, seals[index].objectRef.canonicalSha256)
+            assertEquals(entry.wireSha256, seals[index].objectRef.ciphertextSha256)
+            assertEquals(entry.objectKey, seals[index].objectRef.objectKey); assertEquals(entry.objectVersion, seals[index].objectRef.objectVersion)
+            assertEquals(seals[index].objectRef, historical[index].objectRef); assertEquals(source["object_id"], historical[index].id)
+            assertEquals(entry.epochStart, historical[index].startEpoch); assertEquals(entry.epochEnd, historical[index].endEpoch)
+            assertEquals(1, f.f.sealHttp.requests.count { it.kind == "PUT" && it.http.encodedPath().endsWith("/${entry.objectKey}") },
+                "Each retained seal has exactly its original actual PUT; D/E cannot republish the N history records.")
+            assertEquals(2_097_152L, source["charged_storage_bytes"]); assertEquals(2_097_152L, row["charged_storage_bytes"])
+            val frame = recurrentOrdinaryFrame(r, entry.epochStart, entry.epochEnd)
+            try {
+                val seal = json.epochSeal(source["canonical_bytes"] as ByteArray)
+                assertEquals(if (index == 1) 1L else 0L, seal.eventCount)
+                assertEquals(seal.eventCount, entry.eventCount)
+                assertEquals(Sha256.hex(frame), seal.eventManifestSha256); assertEquals(Sha256.hex(frame), entry.manifestSha256)
+                assertEquals(frame.size.toLong(), entry.manifestFramedBytes)
+                assertEquals(Sha256.hex(source["canonical_bytes"] as ByteArray), entry.canonicalSha256)
+            } finally { frame.fill(0) }
+            val checkpointBytes = row["checkpoint_bytes"] as ByteArray
+            assertEquals(hex(row["checkpoint_hash"]), Sha256.hex(checkpointBytes))
+            assertTrue(row["checkpointed_at"] is Timestamp)
+            if (index == 0) {
+                val checkpoint = Json.parseToJsonElement(checkpointBytes.decodeToString()).jsonObject
+                assertEquals("TEST_INITIAL_EMPTY_EPOCH1", checkpoint.getValue("profile").jsonPrimitive.content)
+                assertEquals(entry.operationToken, checkpoint.getValue("sealOperationToken").jsonPrimitive.content)
+                assertEquals(entry.objectKey, checkpoint.getValue("sealObjectKey").jsonPrimitive.content)
+                assertEquals(entry.objectVersion, checkpoint.getValue("sealObjectVersion").jsonPrimitive.content)
+                assertEquals(entry.canonicalSha256, checkpoint.getValue("sealCanonicalSha256").jsonPrimitive.content)
+                assertEquals(entry.wireSha256, checkpoint.getValue("sealCiphertextSha256").jsonPrimitive.content)
+                assertEquals("0", checkpoint.getValue("objectCount").jsonPrimitive.content)
+            } else {
+                val checkpoint = TestActiveRecurrentCheckpointDocumentV1.parse(checkpointBytes)
+                assertEquals(entries[index - 1].operationToken, source["predecessor_operation_token"].toString())
+                assertEquals(hex(archive[index - 1]["checkpoint_hash"]), hex(source["predecessor_checkpoint_hash"]))
+                assertEquals(historyRoot(index), hex(source["predecessor_history_hash"]))
+                assertEquals(hex(archive[index - 1]["checkpoint_hash"]), checkpoint.predecessorCheckpointSha256)
+                assertEquals(historyRoot(index + 1), checkpoint.sealHistorySha256)
+                assertEquals(entries.take(index + 1).map { it.operationToken }, checkpoint.ranges.map { it.operationToken })
+                assertEquals(entries.take(index + 1).map { it.canonicalSha256 }, checkpoint.ranges.map { it.sealCanonicalSha256 })
+                assertEquals(entries.take(index + 1).map { it.manifestSha256 }, checkpoint.ranges.map { it.manifestSha256 })
+                assertEquals(entries.take(index + 1).map { it.manifestFramedBytes }, checkpoint.ranges.map { it.manifestFramedBytes })
+                assertEquals(1L, checkpoint.objectCount); assertEquals(r.record.stored.bytes.size.toLong(), checkpoint.byteCount)
+                val full = recurrentOrdinaryFrame(r, 1, entry.epochEnd)
+                try {
+                    assertEquals(Sha256.hex(full), checkpoint.first.manifestSha256); assertEquals(Sha256.hex(full), checkpoint.second.manifestSha256)
+                } finally { full.fill(0) }
+            }
+        }
+        assertEquals(2_097_152L * n, sources.sumOf { (it["charged_storage_bytes"] as Number).toLong() })
+        assertEquals(2_097_152L * n, archive.sumOf { (it["charged_storage_bytes"] as Number).toLong() })
+        assertEquals(8192L, r.queue.observation()?.get("storage_bytes")); assertEquals(1, h.historyRows().getValue("V29").size)
+        val finalRows = f.observer.queryForList("SELECT * FROM complaint_test_terminal_intents WHERE data_scope_id = ? AND object_kind = 'EPOCH_SEAL' ORDER BY object_ordinal", f.scope)
+        assertEquals(listOf(0, 1), finalRows.map { (it["object_ordinal"] as Number).toInt() }, "Only TWO new V21 seal slots, never relabeled V26/V31 sources.")
+        assertTrue(finalRows.none { final -> sources.any { it["operation_token"] == final["operation_token"] || it["object_key"] == final["object_key"] } })
+        val full = recurrentOrdinaryFrame(r, 1, n + 1L); val tail = recurrentOrdinaryFrame(r, n + 1L, n + 1L)
+        try {
+            val cut = f.record.progress.completedCuts().single { it.prefixKind === TestTerminalDenialPrefixV1.ORDINARY }
+            assertEquals(1L, cut.epochStartInclusive); assertEquals(n + 1L, cut.epochEndInclusive); assertEquals(full.size.toLong(), cut.framedByteCount)
+            listOf(cut.denial.firstInventory, cut.denial.secondInventory).forEach {
+                assertEquals(1L, it.versionCount); assertEquals(r.record.stored.bytes.size.toLong(), it.byteCount); assertEquals(Sha256.hex(full), it.sha256)
+            }
+            val ordinary = json.epochSeal(finalRows.first()["canonical_bytes"] as ByteArray)
+            assertEquals(0L, ordinary.eventCount); assertEquals(Sha256.hex(tail), ordinary.eventManifestSha256)
+            assertEquals(entries.last().epochAfter, seals[n].epochStartInclusive)
+            assertEquals(entries.last().canonicalSha256, seals[n].precedingSealSha256)
+            assertNotEquals(Sha256.hex(full), ordinary.eventManifestSha256, "The full nonempty denial is not the final empty successor seal.")
+        } finally { full.fill(0); tail.fill(0) }
+        val record = Json.parseToJsonElement(f.unsigned.decodeToString()).jsonObject.getValue("terminalRecord").jsonObject
+        val records = record.getValue("sealSet").jsonObject.getValue("records").jsonArray
+        assertEquals(Sha256.hexUtf8(CanonicalJson.canonicalize(JsonArray(records.dropLast(1)))), f.record.purge.document.preTerminalSeals.sha256)
+        val context = f.record.context()
+        val contextual = JsonArray(records.map { JsonObject(mapOf("dataScopeId" to JsonPrimitive(context.dataScopeId),
+            "activationCatalogGeneration" to JsonPrimitive(context.activationCatalogGeneration),
+            "activationCatalogSha256" to JsonPrimitive(context.activationCatalogSha256), "seal" to it)) })
+        assertEquals(Sha256.hexUtf8(CanonicalJson.canonicalize(contextual)), f.manifest.history.epochSeals.sha256)
+        val members = seals.dropLast(1).map { listOf(it.writerGeneration, "EPOCH_SEAL", it.epochStartInclusive.toString(), it.epochEndInclusive.toString(),
+            it.objectRef.objectKey, it.objectRef.objectVersion, it.objectRef.ciphertextSha256, it.objectRef.canonicalSha256) } + listOf(listOf(
+            r.process.consumers.journalConfiguration.declaration().writer.generationId, "OWNER_DELETE", "2", "2", r.record.stored.key,
+            r.record.stored.version, Sha256.hex(r.record.stored.bytes), r.record.event.semanticSha256))
+        val ordered = members.sortedWith(compareBy<List<String>>({ it[2].toLong() }, { it[3].toLong() }, { it[1] }, { it[4] }, { it[5] }))
+        val inventory = recurrentFrame(listOf("kira-test-preterminal-inventory-v1", f.scope.toString(), context.activationCatalogGeneration.toString(),
+            context.activationCatalogSha256, members.size.toString()) + ordered.flatten())
+        try { assertEquals(Sha256.hex(inventory), f.record.purge.document.preTerminalInventory.sha256) } finally { inventory.fill(0) }
+        val applied = f.observer.queryForMap("SELECT object_key, object_version, journal_epoch, encode(ciphertext_hash, 'hex') AS wire_hash " +
+            "FROM complaint_deletion_journal_applied WHERE data_scope_id = ?", f.scope)
+        assertEquals(r.record.stored.key, applied["object_key"]); assertEquals(r.record.stored.version, applied["object_version"])
+        assertEquals(2L, applied["journal_epoch"]); assertEquals(Sha256.hex(r.record.stored.bytes), applied["wire_hash"])
+        assertEquals(0L, r.queue.count("complaint_journal_scan_runs")); assertEquals(0L, r.queue.count("complaint_journal_scan_entries"))
+    }
+
+    private fun recurrentOrdinaryFrame(r: TestActiveRecurrentFixtureV1, start: Long, end: Long): ByteArray {
+        val journal = r.process.consumers.journalConfiguration; val containsOriginal = 2L in start..end
+        return recurrentFrame(listOf("kira-complaint-journal-epoch-seal-v1", "1", "manifest", journal.declaration().writer.generationId,
+            journal.ordinaryPrefix, "TEST", r.scope.toString(), start.toString(), end.toString(), if (containsOriginal) "1" else "0") +
+            if (containsOriginal) listOf(r.record.stored.key, r.record.stored.version, Sha256.hex(r.record.stored.bytes)) else emptyList())
+    }
+
+    private fun recurrentFrame(fields: List<String>): ByteArray = ByteArrayOutputStream().use { bytes ->
+        DataOutputStream(bytes).use { output -> fields.forEach { field ->
+            val value = field.toByteArray(Charsets.UTF_8); output.writeInt(value.size); output.write(value)
+        } }
+        bytes.toByteArray()
+    }
+
+    private fun assertRecurrentNativePairs(h: CatalogTestRunTerminalActiveHistoryFixtureV1, nativeStart: Int, journalStart: Int, passes: Int) {
+        val f = h.catalog; checkNotNull(f.originalOrdinary).assertReadPairs(passes)
+        val native = f.f.sealHttp.terminalInventoryRequests.drop(nativeStart)
+        assertEquals(passes * f.d.targets.size, native.count { it.kind == "GET" })
+        assertEquals(passes * ((f.d.targets.size + 1) / 2), native.count { it.kind == "LIST" })
+        f.d.targets.forEach { target ->
+            val gets = native.filter { it.kind == "GET" && it.http.encodedPath().endsWith("/${target.objectRef.objectKey}") }
+            assertEquals(passes, gets.size)
+            gets.forEach { assertEquals(listOf(target.objectRef.objectVersion), it.http.rawQueryParameters()["versionId"]) }
+        }
+        assertTrue(f.f.sealHttp.order.drop(journalStart).none { it == "GENERATE" || it == "PUT" })
+    }
+
+    /** Disposable negative row changes only. Restored contents are used only by ordered teardown, never a successful original. */
+    private fun withChangedRecurrentHistory(f: TestRunPurgeFixtureV1, fault: TerminalCatalogRecurrentRowFaultV1, action: () -> Unit) {
+        requireConnectionFree()
+        val latest = f.observer.queryForMap("SELECT * FROM complaint_test_active_checkpoint_history WHERE data_scope_id = ? ORDER BY ordinal DESC LIMIT 1", f.scope)
+        val ordinal = (latest["ordinal"] as Number).toInt(); val token = latest["operation_token"]
+        val oldArchive = checkNotNull(f.observer.queryForObject("SELECT to_jsonb(h)::text FROM complaint_test_active_checkpoint_history h WHERE data_scope_id = ? AND ordinal = ?", String::class.java, f.scope, ordinal))
+        val oldSource = checkNotNull(f.observer.queryForObject("SELECT to_jsonb(i)::text FROM complaint_test_active_recurrent_seal_intents i WHERE data_scope_id = ? AND operation_token = ?", String::class.java, f.scope, token))
+        val source = f.observer.queryForMap("SELECT * FROM complaint_test_active_recurrent_seal_intents WHERE data_scope_id = ? AND operation_token = ?", f.scope, token)
+        val before = terminalCatalogActiveRows(f)
+        val sourceChange = fault in setOf(TerminalCatalogRecurrentRowFaultV1.MISSING_LATEST_SOURCE,
+            TerminalCatalogRecurrentRowFaultV1.FOREIGN_SOURCE_IDENTITY, TerminalCatalogRecurrentRowFaultV1.REWRITTEN_SOURCE_XMIN)
+        changeRecurrentRows(f, sourceChange) { jdbc ->
+            when (fault) {
+                TerminalCatalogRecurrentRowFaultV1.MISSING_LATEST_ARCHIVE, TerminalCatalogRecurrentRowFaultV1.MISSING_LATEST_SOURCE -> {
+                    assertEquals(1, jdbc.update("DELETE FROM complaint_test_active_checkpoint_history WHERE data_scope_id = ? AND ordinal = ?", f.scope, ordinal))
+                    if (sourceChange) assertEquals(1, jdbc.update("DELETE FROM complaint_test_active_recurrent_seal_intents WHERE data_scope_id = ? AND operation_token = ?", f.scope, token))
+                }
+                TerminalCatalogRecurrentRowFaultV1.PARTIAL_CHECKPOINT -> assertEquals(1, jdbc.update("UPDATE complaint_test_active_checkpoint_history SET checkpoint_bytes = NULL, checkpoint_hash = NULL, checkpointed_at = NULL WHERE data_scope_id = ? AND ordinal = ?", f.scope, ordinal))
+                TerminalCatalogRecurrentRowFaultV1.FOREIGN_SOURCE_IDENTITY -> assertEquals(1, jdbc.update("UPDATE complaint_test_active_recurrent_seal_intents SET database_identity = ? WHERE data_scope_id = ? AND operation_token = ?", UUID.randomUUID(), f.scope, token))
+                TerminalCatalogRecurrentRowFaultV1.REWRITTEN_SOURCE_XMIN -> assertEquals(1, jdbc.update("UPDATE complaint_test_active_recurrent_seal_intents SET charged_storage_bytes = charged_storage_bytes WHERE data_scope_id = ? AND operation_token = ?", f.scope, token))
+                TerminalCatalogRecurrentRowFaultV1.REWRITTEN_ARCHIVE_XMIN -> assertEquals(1, jdbc.update("UPDATE complaint_test_active_checkpoint_history SET charged_storage_bytes = charged_storage_bytes WHERE data_scope_id = ? AND ordinal = ?", f.scope, ordinal))
+                TerminalCatalogRecurrentRowFaultV1.REORDERED_ARCHIVES -> {
+                    assertEquals(3, ordinal)
+                    listOf(2 to 4, 3 to 2, 4 to 3).forEach { (from, to) -> assertEquals(1,
+                        jdbc.update("UPDATE complaint_test_active_checkpoint_history SET ordinal = ? WHERE data_scope_id = ? AND ordinal = ?", to, f.scope, from)) }
+                }
+            }
+        }
+        try {
+            if (fault === TerminalCatalogRecurrentRowFaultV1.REWRITTEN_SOURCE_XMIN) {
+                assertEquals(oldSource, f.observer.queryForObject("SELECT to_jsonb(i)::text FROM complaint_test_active_recurrent_seal_intents i WHERE data_scope_id = ? AND operation_token = ?", String::class.java, f.scope, token))
+                assertNotEquals(before.getValue("V31_INTENT"), terminalCatalogActiveRows(f).getValue("V31_INTENT"))
+            }
+            if (fault === TerminalCatalogRecurrentRowFaultV1.REWRITTEN_ARCHIVE_XMIN) {
+                assertEquals(oldArchive, f.observer.queryForObject("SELECT to_jsonb(h)::text FROM complaint_test_active_checkpoint_history h WHERE data_scope_id = ? AND ordinal = ?", String::class.java, f.scope, ordinal))
+                assertNotEquals(before.getValue("V31_HISTORY"), terminalCatalogActiveRows(f).getValue("V31_HISTORY"))
+            }
+            action()
+        } finally {
+            changeRecurrentRows(f, sourceChange) { jdbc -> when (fault) {
+                TerminalCatalogRecurrentRowFaultV1.MISSING_LATEST_ARCHIVE, TerminalCatalogRecurrentRowFaultV1.MISSING_LATEST_SOURCE -> {
+                    if (sourceChange) assertEquals(1, jdbc.update("INSERT INTO complaint_test_active_recurrent_seal_intents SELECT * FROM jsonb_populate_record(NULL::complaint_test_active_recurrent_seal_intents, ?::jsonb)", oldSource))
+                    assertEquals(1, jdbc.update("INSERT INTO complaint_test_active_checkpoint_history SELECT * FROM jsonb_populate_record(NULL::complaint_test_active_checkpoint_history, ?::jsonb)", oldArchive))
+                }
+                TerminalCatalogRecurrentRowFaultV1.PARTIAL_CHECKPOINT -> assertEquals(1, jdbc.update("UPDATE complaint_test_active_checkpoint_history SET checkpoint_bytes = ?, checkpoint_hash = ?, checkpointed_at = ? WHERE data_scope_id = ? AND ordinal = ?",
+                    latest["checkpoint_bytes"], latest["checkpoint_hash"], latest["checkpointed_at"], f.scope, ordinal))
+                TerminalCatalogRecurrentRowFaultV1.FOREIGN_SOURCE_IDENTITY -> assertEquals(1, jdbc.update("UPDATE complaint_test_active_recurrent_seal_intents SET database_identity = ? WHERE data_scope_id = ? AND operation_token = ?", source["database_identity"], f.scope, token))
+                TerminalCatalogRecurrentRowFaultV1.REORDERED_ARCHIVES -> listOf(3 to 4, 2 to 3, 4 to 2).forEach { (from, to) -> assertEquals(1,
+                    jdbc.update("UPDATE complaint_test_active_checkpoint_history SET ordinal = ? WHERE data_scope_id = ? AND ordinal = ?", to, f.scope, from)) }
+                TerminalCatalogRecurrentRowFaultV1.REWRITTEN_SOURCE_XMIN, TerminalCatalogRecurrentRowFaultV1.REWRITTEN_ARCHIVE_XMIN -> Unit
+            } }
+        }
+    }
+
+    private fun changeRecurrentRows(f: TestRunPurgeFixtureV1, source: Boolean, action: (JdbcTemplate) -> Unit) {
+        requireConnectionFree()
+        val guards = listOf("complaint_test_active_checkpoint_history" to "complaint_test_active_history_immutable") +
+            if (source) listOf("complaint_test_active_recurrent_seal_intents" to "complaint_test_active_recurrent_seal_immutable") else emptyList()
+        f.raw { connection ->
+            connection.autoCommit = false
+            val jdbc = JdbcTemplate(SingleConnectionDataSource(connection, true))
+            try {
+                guards.forEach { (table, trigger) -> jdbc.execute("ALTER TABLE $table DISABLE TRIGGER $trigger") }
+                action(jdbc)
+                guards.asReversed().forEach { (table, trigger) -> jdbc.execute("ALTER TABLE $table ENABLE TRIGGER $trigger") }
+                connection.commit()
+            } catch (problem: Throwable) { connection.rollback(); throw problem }
+        }
     }
 
     /** Independent LP32 range roots over the original PUT, not a supplied inventory/readback. */

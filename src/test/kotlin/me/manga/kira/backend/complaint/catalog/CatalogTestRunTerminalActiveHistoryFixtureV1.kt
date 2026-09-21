@@ -11,6 +11,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveCheckpointHistoryV1
 import me.manga.kira.backend.complaint.domain.terminal.TestOrdinaryDeniedPathV1
 import me.manga.kira.backend.complaint.domain.terminal.TestOrdinaryDenialStatementV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEvidenceDigestV1
@@ -19,10 +20,13 @@ import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveQueueHistoricalAllObjectV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentFixtureV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialDeletionNativeRecordV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.withActiveQueueFixture
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.withRecurrentFixture
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.withRegisteredInitialCheckpointCreate
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.withRegisteredInitialCheckpointDeletion
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestPublicationResultV1
@@ -49,6 +53,7 @@ import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.JournalKmsHttpRequest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -108,6 +113,140 @@ internal enum class TerminalCatalogAllRecoveryHistoryV1 {
     RECONSTRUCTED_PUBLICATION_AND_RECEIPTS, LATER_DOMAIN_AND_RESOURCE,
     HISTORICAL_ALIAS_BEFORE_PRIMARY_VERIFY, HISTORICAL_ALIAS_BEFORE_PRIMARY_COMPLETION,
 }
+
+/**
+ * Actual initial checkpoint -> registered CREATE/A PUT/B APPLY -> N-1 completed recurrent
+ * checkpoints. The finite raw depot recipe is chosen before full D/activation by C's shared
+ * join; no successful checkpoint, history row, native object or admitted D input is supplied.
+ * This helper also stops before sealing for the separate genuine over-bound refusal.
+ */
+internal fun withCompletedRecurrentTerminalHistory(tls: VersionBoundPersistenceConnectedFixture, activeSeals: Int,
+    action: (TestActiveRecurrentFixtureV1, TestOrdinaryDrainFixtureInputsV1) -> Unit) {
+    require(activeSeals in 2..14)
+    val inputs = TestOrdinaryDrainFixtureInputsV1(terminalQuiescence = TestTerminalQuiescenceFixtureInputsV1(),
+        maximumActiveHistorySeals = activeSeals)
+    withRecurrentFixture(tls, terminalHistory = inputs) { r ->
+        val initial = (r.control().getValue("checkpoint_bytes") as ByteArray).copyOf()
+        try {
+            assertEquals("SETTLED", r.queue.observation()?.get("state"))
+            assertEquals(1L, r.queue.count("complaint_deletion_journal_applied"))
+            for (ordinal in 2..activeSeals) {
+                val prior = (r.control().getValue("checkpoint_bytes") as ByteArray).copyOf()
+                val physical = terminalCatalogActiveRows(r.observer, r.scope)
+                val before = r.counters(); val puts = r.first.native.requests.count { it.kind == "PUT" }
+                try {
+                    val completed = assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, r.checkpoint())
+                    r.assertSuccessful() // Before D only; it requires actual SUCCESS and no V21 rows/staging/lease.
+                    assertEquals(r.scope, completed.scope); assertEquals(ordinal.toLong(), completed.cutoffEpoch)
+                    assertEquals(ordinal + 1L, r.control()["publication_epoch"])
+                    val archive = r.history()
+                    assertEquals(ordinal, archive.size); assertEquals(ordinal - 1, r.intents().size)
+                    assertArrayEquals(initial, archive.first()["checkpoint_bytes"] as ByteArray)
+                    assertArrayEquals(prior, archive[ordinal - 2]["checkpoint_bytes"] as ByteArray)
+                    assertArrayEquals(r.control()["checkpoint_bytes"] as ByteArray, archive.last()["checkpoint_bytes"] as ByteArray)
+                    val current = terminalCatalogActiveRows(r.observer, r.scope)
+                    physical.forEach { (table, rows) -> assertTrue(current.getValue(table).containsAll(rows),
+                        "Every earlier source/archive row, checkpoint and xmin survives the actual next checkpoint: $table") }
+                    r.assertCharge(before, ComplaintCapacityVector.units(ComplaintCapacityCounter.STORAGE_BYTES,
+                        2_097_152L * (if (ordinal == 2) 3L else 2L)))
+                    assertEquals(puts + 1, r.first.native.requests.count { it.kind == "PUT" })
+                    val document = r.document()
+                    assertEquals(completed.checkpointSha256, Sha256.hex(document.canonicalBytes()))
+                    assertEquals(1L, document.objectCount); assertEquals(r.record.stored.bytes.size.toLong(), document.byteCount)
+                    assertEquals(List(ordinal) { if (it == 1) 1L else 0L }, document.ranges.map { it.eventCount })
+                } finally { prior.fill(0) }
+            }
+            assertEquals(2 * (activeSeals - 1), r.raw.requests.count { it.kind == "GET" },
+                "Even each later empty range rereads the original nonempty full inventory twice.")
+            action(r, inputs)
+        } finally { initial.fill(0) }
+    }
+}
+
+/** Same genuine chain stopped after real sealing, not a supplied closed-D capability. */
+internal fun withSealedRecurrentTerminalRun(tls: VersionBoundPersistenceConnectedFixture, activeSeals: Int = 2,
+    action: (TestRunPurgeFixtureV1, TestActiveRecurrentFixtureV1, TestOrdinaryDrainFixtureInputsV1) -> Unit) =
+    withCompletedRecurrentTerminalHistory(tls, activeSeals) { r, inputs ->
+        val a = r.precursor; val b = r.queue; val sealer = a.checkpoint.sealer
+        val producer = a.native.counts(); val bytes = r.record.stored.bytes.copyOf()
+        val queueOrder = b.raw.order.toList(); val acknowledgements = b.raw.ackRequests.toList(); val queueCalls = b.calls.size
+        val queueClients = listOf(b.raw.sts.createdClients, b.raw.kms.createdClients, b.raw.sqs.createdClients, b.raw.s3Created)
+        val recurrentOrder = r.raw.order.toList(); val recurrentCalls = r.probe.calls.size
+        val recurrentClients = listOf(r.raw.sts.createdClients, r.raw.kms.createdClients, r.raw.s3Created)
+        try {
+            val primaryBeforeChildClose = TestRunPurgeFixtureV1(sealer.p, a.runtime, a.registration, a.audit,
+                sealer.native, inputs, borrowedPrimaryOwner = a).use { f ->
+                val history = terminalCatalogActiveRows(f)
+                assertEquals(1, history.getValue("V26").size); assertEquals(1, history.getValue("V29").size)
+                assertEquals(activeSeals - 1, history.getValue("V31_INTENT").size)
+                assertEquals(activeSeals, history.getValue("V31_HISTORY").size)
+                CatalogTerminalHistorySealingProbeV1(f).use { probe ->
+                    assertEquals(TestRunSealingResultV1.SEALED_AND_AUDITED, probe.begin().seal())
+                    probe.assertReleased(); f.assertReleased()
+                }
+                assertEquals(history, terminalCatalogActiveRows(f))
+                action(f, r, inputs)
+                // A refused case may restore contents for teardown, never its original xmin or authority.
+                a.image()
+            }
+            assertEquals(primaryBeforeChildClose, a.image(), "D child cleanup leaves the outer original A primary to its own owner.")
+            assertArrayEquals(bytes, r.record.stored.bytes)
+            assertEquals(producer, a.native.counts(), "No A producer encryption/PUT or old native graph is reopened by D/E.")
+            assertEquals(queueOrder, b.raw.order); assertEquals(acknowledgements, b.raw.ackRequests); assertEquals(queueCalls, b.calls.size)
+            assertEquals(queueClients, listOf(b.raw.sts.createdClients, b.raw.kms.createdClients, b.raw.sqs.createdClients, b.raw.s3Created))
+            assertEquals(recurrentOrder, r.raw.order); assertEquals(recurrentCalls, r.probe.calls.size)
+            assertEquals(recurrentClients, listOf(r.raw.sts.createdClients, r.raw.kms.createdClients, r.raw.s3Created),
+                "D/E owns its readers; the retired recurrent inventory owner is never revived.")
+            r.assertReleased(); b.assertReleased()
+        } finally { bytes.fill(0) }
+    }
+
+/** Complete original recurrent history -> genuine full ordinary D -> manifest/purge/terminal D -> E. */
+internal fun withRecurrentTerminalCatalogRun(tls: VersionBoundPersistenceConnectedFixture, activeSeals: Int = 2,
+    action: (CatalogTestRunTerminalActiveHistoryFixtureV1, TestActiveRecurrentFixtureV1) -> Unit) =
+    withSealedRecurrentTerminalRun(tls, activeSeals) { f, r, inputs ->
+        val history = terminalCatalogActiveRows(f)
+        val entries = r.history().map { TestActiveCheckpointHistoryV1.Entry.parse(it["entry_bytes"] as ByteArray) }
+        val nativeStart = f.sealHttp.requests.size
+        CatalogTerminalHistoryDrainProbeV1(f, r.precursor).use { probe ->
+            val native = CatalogTerminalOriginalOrdinaryHttpV1(r.process.consumers.journalConfiguration, r.record, probe::assertReleased)
+            val drain = probe.begin(native::client, native.keys::httpClient)
+            val approval = activeHistoryOrdinaryApproval(f, inputs, drain, activeSeals + 1L); val raw = f.rawEvidence
+            var sealCounters: Map<String, ProjectionCounterObservation>? = null
+            var sealReserve: ComplaintCapacityVector? = null
+            try {
+                terminalCatalogHistoryBoundaries(f, {
+                    probe.assertReleased()
+                    if (sealCounters == null) {
+                        // The full inventories, paid cut, P-U closeout and scan recycle are already
+                        // real. Historical native reads still precede the NEW ordinary V21 charge.
+                        probe.assertBeforeRecurrentHistoryNative()
+                        sealCounters = f.p.counters(); sealReserve = terminalCatalogUnusedReserve(f)
+                    }
+                }) {
+                    assertEquals(TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED,
+                        drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS))
+                }
+                probe.assertReleased(); native.assertReadPairs(2, recovery = true); f.assertReleased()
+                probe.assertRetainedInventoryRecovery(r.record.stored); probe.assertPrimaryApplied(false)
+                probe.assertRecurrentHistoryReads(); probe.assertOrdinaryResidualConversion()
+                assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
+                assertEquals(history, terminalCatalogActiveRows(f))
+                assertTerminalCatalogSealCharge(f, checkNotNull(sealCounters), checkNotNull(sealReserve))
+                val reads = f.sealHttp.requests.drop(nativeStart)
+                entries.forEach { entry ->
+                    val exact = reads.filter { it.kind == "GET" && it.http.encodedPath().endsWith("/${entry.objectKey}") }
+                    assertTrue(exact.isNotEmpty(), "D independently rereads every historical seal, not only the latest recurrent tail.")
+                    exact.forEach { assertEquals(listOf(entry.objectVersion), it.http.rawQueryParameters()["versionId"]) }
+                    assertTrue(reads.none { it.kind == "PUT" && it.http.encodedPath().endsWith("/${entry.objectKey}") })
+                }
+                withDrainedActiveHistoryCatalog(f, inputs, drain, approval, history, r.record) { terminal ->
+                    terminal.awaitRealLeaseExpiry() // Same actual global setup-lease wait as N0, never a lease UPDATE.
+                    action(CatalogTestRunTerminalActiveHistoryFixtureV1(terminal, r.precursor.creators.single(), r.precursor, r.queue), r)
+                }
+            } finally { approval.fill(0); raw.forEach { it.fill(0) }; native.assertClosed() }
+        }
+    }
 
 /**
  * Genuine A AUTH -> original PUT/readback -> optional SQL VERIFY, optionally genuine B APPLY/ACK/SETTLED
@@ -716,6 +855,8 @@ private fun withDrainedActiveHistoryCatalog(f: TestRunPurgeFixtureV1, inputs: Te
         }
         probe.assertReleased(); f.assertReleased(); value
     }
+    val terminalSealCounters = if (inputs.maximumActiveHistorySeals > 1) f.p.counters() else null
+    val terminalSealReserve = terminalSealCounters?.let { terminalCatalogUnusedReserve(f) }
     val seal = TestTerminalEpochSealSqlProbeV1(f).use { probe ->
         val value = purge.beginTerminalEpochSeal().also { probe.original = it }
         terminalCatalogHistoryBoundaries(f, { probe.assertReleased(requireCommitted = false) }) {
@@ -723,6 +864,7 @@ private fun withDrainedActiveHistoryCatalog(f: TestRunPurgeFixtureV1, inputs: Te
         }
         probe.assertReleased(); f.assertReleased(); value
     }
+    terminalSealCounters?.let { assertTerminalCatalogSealCharge(f, it, checkNotNull(terminalSealReserve)) }
     TestTerminalQuiescenceSqlProbeV1(f).use { probe ->
         val d = seal.beginTerminalQuiescence().also { probe.original = it }
         val terminalInputs = checkNotNull(inputs.terminalQuiescence)
@@ -751,14 +893,41 @@ internal class CatalogTestRunTerminalActiveHistoryFixtureV1(
 }
 
 /** Exact row+xmin observations, not a current-history admission or recovery capability. */
-private fun terminalCatalogActiveRows(f: TestRunPurgeFixtureV1): Map<String, List<String>> = mapOf(
+internal fun terminalCatalogActiveRows(f: TestRunPurgeFixtureV1): Map<String, List<String>> = terminalCatalogActiveRows(f.observer, f.scope)
+internal fun terminalCatalogActiveRows(observer: JdbcTemplate, scope: UUID): Map<String, List<String>> = mapOf(
     "V26" to "complaint_test_active_seal_intents", "V29" to "complaint_test_active_queue_observations",
-).mapValues { (_, table) -> f.observer.queryForList("SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t " +
-    "WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text", String::class.java, f.scope) }
+    "V31_INTENT" to "complaint_test_active_recurrent_seal_intents", "V31_HISTORY" to "complaint_test_active_checkpoint_history",
+).mapValues { (_, table) -> observer.queryForList("SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t " +
+    "WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text", String::class.java, scope) }
+
+internal fun terminalCatalogUnusedReserve(f: TestRunPurgeFixtureV1): ComplaintCapacityVector = f.raw { connection ->
+    connection.prepareStatement("SELECT unused_reserve FROM complaint_test_runs WHERE data_scope_id = ?").use { statement ->
+        statement.setObject(1, f.scope); statement.executeQuery().use { row ->
+            assertTrue(row.next()); val array = row.getArray(1)
+            try { ComplaintCapacityVector.of((array.array as Array<*>).map { (it as Number).toLong() }.toLongArray()) }
+            finally { array.free() }
+        }
+    }
+}
+
+/** Each of D's TWO new V21 seals spends one original terminal slot, not the N paid ACTIVE seals. */
+private fun assertTerminalCatalogSealCharge(f: TestRunPurgeFixtureV1, before: Map<String, ProjectionCounterObservation>,
+    reserve: ComplaintCapacityVector) {
+    val sidecar = ComplaintCapacityVector.units(ComplaintCapacityCounter.STORAGE_BYTES, 1_340_736L)
+    assertEquals(reserve - sidecar, terminalCatalogUnusedReserve(f))
+    val after = f.p.counters()
+    ComplaintCapacityCounter.entries.forEach { counter ->
+        val old = before.getValue(counter.storedName); val current = after.getValue(counter.storedName)
+        assertEquals(old.actual + sidecar[counter], current.actual, counter.storedName)
+        assertEquals(old.reserved - sidecar[counter], current.reserved, counter.storedName)
+        assertEquals(old.free, current.free); assertEquals(old.recovery, current.recovery); assertEquals(old.preserved, current.preserved)
+        assertEquals(current.hard, current.free + current.actual + current.reserved + current.recovery)
+    }
+}
 
 /** Input signing only, distinct from the legacy helper's asserted no-A 1..1 history. */
-private fun activeHistoryOrdinaryApproval(f: TestRunPurgeFixtureV1, inputs: TestOrdinaryDrainFixtureInputsV1,
-    original: TestRunOrdinaryDrainV1): ByteArray {
+internal fun activeHistoryOrdinaryApproval(f: TestRunPurgeFixtureV1, inputs: TestOrdinaryDrainFixtureInputsV1,
+    original: TestRunOrdinaryDrainV1, cutoff: Long = 2L): ByteArray {
     val journal = f.registration.process.consumers.journalConfiguration
     val pin = inputs.authorityInput(journal, f.registration.process.catalogReadback.chainPolicy.trustBundlePolicy.expectedEnvironment)
     val role = journal.declaration().authorities.ordinary; val context = original.runContext
@@ -768,13 +937,13 @@ private fun activeHistoryOrdinaryApproval(f: TestRunPurgeFixtureV1, inputs: Test
         pin.implementationAcceptance, pin.evidenceRetentionPolicy, pin.environment, context.dataScopeId,
         context.activationCatalogGeneration, context.activationCatalogSha256, context.configurationSha256, context.terminalEncodingSha256,
         f.registration.process.catalogActivation.initialWriterRegistrySha256, pin.writerGeneration, pin.databaseIdentity, pin.restoreIdentity,
-        1, 2, pin.bucket, pin.accountId, pin.region, journal.ordinaryPrefix, role.roleId,
+        1, cutoff, pin.bucket, pin.accountId, pin.region, journal.ordinaryPrefix, role.roleId,
         TestTerminalPolicyRefV1(role.policy.policyId, role.policy.version, role.policy.sha256), at, at, 1, 0,
         f.sealHttp.horizon.epochSecond, digest(raw[1]), listOf(TestOrdinaryDeniedPathV1("synthetic-terminal-active-history-path", role.roleId, at, at, digest(raw[0])))), pin.keyId)
     } finally { raw.forEach { it.fill(0) } }
 }
 
-private fun <T> terminalCatalogHistoryBoundaries(f: TestRunPurgeFixtureV1, check: () -> Unit, action: () -> T): T {
+internal fun <T> terminalCatalogHistoryBoundaries(f: TestRunPurgeFixtureV1, check: () -> Unit, action: () -> T): T {
     val boundary = f.sealHttp.boundary; val close = f.sealHttp.nativeBoundary
     f.sealHttp.boundary = { boundary(); check() }; f.sealHttp.nativeBoundary = { close(); check() }
     return try { action() } finally { f.sealHttp.boundary = boundary; f.sealHttp.nativeBoundary = close }
