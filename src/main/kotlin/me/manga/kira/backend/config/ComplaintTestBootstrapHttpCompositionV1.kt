@@ -11,17 +11,23 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.common.web.DisabledComplaintRoutesFilter
 import me.manga.kira.backend.complaint.api.ComplaintInstallationBootstrapHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerCreateHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDetailHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerEditHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerOperationResponse
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
 import me.manga.kira.backend.complaint.application.ComplaintInstallationBootstrapService
+import me.manga.kira.backend.complaint.application.ComplaintInstallationMeService
 import me.manga.kira.backend.complaint.application.ComplaintInstallationService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerCreateService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerDetailService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerEditService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerHistoryService
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationMeAuthentication
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationMeFailure
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationMeReadPort
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetailAuthentication
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetailFailure
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetailReadPort
@@ -31,11 +37,13 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryFailure
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryQuery
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryReadPort
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRequestContext
+import me.manga.kira.backend.complaint.domain.rejectInstallationMe
 import me.manga.kira.backend.complaint.domain.rejectOwnerDetail
 import me.manga.kira.backend.complaint.domain.rejectOwnerHistory
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationBearerAuthenticator
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationBootstrapReadAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationExchangeAdapter
+import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationMeReadAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerEditAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDetailReadAdapter
@@ -72,7 +80,8 @@ import java.util.UUID
  * registered identity exchange and current CREATE/status. A further explicit factory adds the two
  * existing owner reads only. A separate born-with reply selection adds only OWNER_REPLY;
  * a further explicit EDIT selection retains its own operation boundary.
- * No /me, delete, LIVE/restart/quarantine or broad Core.
+ * An explicit read/CREATE/me sibling adds only the existing installation projection.
+ * No delete, LIVE/restart/quarantine or broad Core; all earlier selectors still exclude /me.
  */
 internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     registration: ComplaintTestNamespaceRegistrationV1,
@@ -83,12 +92,14 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     private val reads: RegisteredOwnerReads? = null,
     private val replyStore: JdbcComplaintOwnerCreateStore? = null,
     private val editStore: JdbcComplaintOwnerEditStore? = null,
+    private val me: ComplaintInstallationMeHttpHandler? = null,
 ) {
     init {
         require((assembly == null) == (audit == null))
         require(reads == null || assembly != null)
         require(replyStore == null || reads != null)
         require(editStore == null || replyStore != null)
+        require(me == null || (reads != null && replyStore == null && editStore == null))
     }
 
     private val producer = ComplaintInstallationBootstrapHttpHandler(
@@ -122,7 +133,11 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         // AUTH remains early rejection only. Direct CREATE constructs no read producer/handler.
         val authentication = ComplaintInstallationBearerAuthenticator(scope, jwt,
             reads?.authenticationPhases ?: ComplaintOwnerHistoryPhaseExecutor(ownership, JdbcComplaintOwnerHistoryStore(jdbc, scope)), ingress)
-        if (edit != null) {
+        if (me != null) {
+            val selectedReads = checkNotNull(reads)
+            ComplaintInstallationSecurityChainFactory.registeredReadCreateMeSubset(
+                bridge, producer, authentication, installations, create, selectedReads.history, selectedReads.detail, me)
+        } else if (edit != null) {
             val selectedReads = checkNotNull(reads)
             ComplaintInstallationSecurityChainFactory.registeredReadCreateReplyEditSubset(
                 bridge, producer, authentication, installations, create, selectedReads.history, selectedReads.detail, edit)
@@ -135,10 +150,10 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     }
     private val disabled = DisabledComplaintRoutesFilter()
 
-    private val literalPaths: Set<String> = if (assembly == null) setOf(ComplaintInstallationRoutes.BOOTSTRAP) else setOf(
+    private val literalPaths: Set<String> = (if (assembly == null) setOf(ComplaintInstallationRoutes.BOOTSTRAP) else setOf(
         ComplaintInstallationRoutes.BOOTSTRAP, ComplaintInstallationRoutes.ENROLLMENT, ComplaintInstallationRoutes.SESSION,
         ComplaintInstallationRoutes.HISTORY, ComplaintInstallationRoutes.STATUS,
-    )
+    )) + (if (me == null) emptySet() else setOf(ComplaintInstallationRoutes.ME))
 
     /** MVC templates do not grant ingress. Both pre-buffer guards use the concrete method/path predicates below. */
     val mappedPaths: Set<String> = literalPaths +
@@ -167,7 +182,8 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         } else {
             bridge.doFilter(request, response, FilterChain { admitted, output ->
                 val selected = admitted as HttpServletRequest
-                if ((selected.method == "GET" && (path == ComplaintInstallationRoutes.HISTORY || ComplaintInstallationRoutes.isDetail(selected))) ||
+                if ((selected.method == "GET" && (path == ComplaintInstallationRoutes.ME ||
+                        path == ComplaintInstallationRoutes.HISTORY || ComplaintInstallationRoutes.isDetail(selected))) ||
                     (replyStore != null && selected.method == "POST" && ComplaintInstallationRoutes.isReply(selected)) ||
                     (editStore != null && selected.method == "PATCH" && ComplaintInstallationRoutes.isContent(selected))) {
                     reads?.requireWithinIngress()
@@ -221,6 +237,17 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
                 detailUse { detailReader.read(context, authentication) }
         }), ingress)
 
+        /** Constructed only by the explicit me selector; no new phase owner, SQL or mode authority. */
+        fun installationMe(): ComplaintInstallationMeHttpHandler {
+            val reader = ComplaintInstallationMeReadAdapter(scope, jwt, authenticationPhases, ingress)
+            return ComplaintInstallationMeHttpHandler(ComplaintInstallationMeService(object : ComplaintInstallationMeReadPort {
+                override fun authenticate(context: ComplaintInstallationRequestContext, bearer: String) =
+                    installationUse { reader.authenticate(context, bearer) }
+                override fun read(context: ComplaintInstallationRequestContext, authentication: ComplaintInstallationMeAuthentication) =
+                    installationUse { reader.read(context, authentication) }
+            }), ingress)
+        }
+
         private fun requireCurrent() {
             requireConnectionFree()
             registration.requireActiveIdentityTarget(assembly)
@@ -247,6 +274,14 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             operation().also { requireCurrent() }
         } catch (failure: ComplaintTestNamespaceRegistrationExceptionV1) {
             rejectOwnerDetail(ComplaintOwnerDetailFailure.UNAVAILABLE)
+        }
+
+        @Suppress("SwallowedException")
+        private fun <T> installationUse(operation: () -> T): T = try {
+            requireCurrent()
+            operation().also { requireCurrent() }
+        } catch (failure: ComplaintTestNamespaceRegistrationExceptionV1) {
+            rejectInstallationMe(ComplaintInstallationMeFailure.UNAVAILABLE)
         }
     }
 
@@ -278,6 +313,21 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             registration.requireInstallationResources(ownership, jdbc)
             return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
                 RegisteredOwnerReads(registration, assembly, ownership, jdbc))
+        }
+
+        /** Concrete me reader on the same registered read/CREATE graph; no earlier selector expands. */
+        fun fromRegisteredInitialCheckpointReadCreateMe(
+            registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership,
+            jdbc: JdbcTemplate,
+            audit: AuditService,
+        ): ComplaintTestBootstrapHttpCompositionV1 {
+            registration.requireActiveIdentityTarget(assembly)
+            registration.requireInstallationResources(ownership, jdbc)
+            val reads = RegisteredOwnerReads(registration, assembly, ownership, jdbc)
+            return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
+                reads, me = reads.installationMe())
         }
 
         /** Separate concrete reply-capable store/handler selection. All earlier factories retain their narrower routes. */

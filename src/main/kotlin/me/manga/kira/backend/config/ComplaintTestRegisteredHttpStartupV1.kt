@@ -72,6 +72,7 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
     private val registration: ComplaintTestNamespaceRegistrationV1,
     private val replyPolicy: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1? = null,
     private val editPolicy: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1? = null,
+    private val selectMe: Boolean = false, // Private route choice only; every original registration/owner check still applies.
 ) : AutoCloseable {
     private val startupBudget = PersistenceTimeBudget.start(60_000)
     private val ingress = registration.process.consumers.ingressAdmission
@@ -121,6 +122,7 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             replyPolicy?.requireReplies()
             requireTestDeployment(editPolicy == null || editPolicy === replyPolicy, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             editPolicy?.requireEdits()
+            requireTestDeployment(!selectMe || (replyPolicy == null && editPolicy == null), ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             val pool = registration.process.pools.ordinary
             val originalFactory = LocalContainerEntityManagerFactoryBean().also { factory = it }
             originalFactory.dataSource = pool
@@ -153,7 +155,9 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             val repositories = JpaRepositoryFactory(SharedEntityManagerCreator.createSharedEntityManager(checkNotNull(emf)))
             val counted = JpaAuditRepositoryAdapter(repositories.getRepository(SpringDataAuditLogRepository::class.java))
             val service = AuditService(counted, CurrentUser(), Clock.systemUTC()).also { audit = it }
-            val composition = if (editPolicy != null) {
+            val composition = if (selectMe) {
+                ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateMe(registration, assembly, owner, template, service)
+            } else if (editPolicy != null) {
                 ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateReplyEdit(registration, assembly, owner, template, service)
             } else if (replyPolicy == null) {
                 ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreate(registration, assembly, owner, template, service)
@@ -308,6 +312,10 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
         /** Inert child construction only. start/close require the assembly's exact retained identity/caller. */
         internal fun retained(assembly: ComplaintTestProcessAssemblyV1, registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 =
             ComplaintTestRegisteredHttpStartupV1(assembly, registration)
+
+        /** Explicit read-only projection selection, never a new birth policy, readiness grant or default mount. */
+        internal fun retainedWithMe(assembly: ComplaintTestProcessAssemblyV1, registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 =
+            ComplaintTestRegisteredHttpStartupV1(assembly, registration, selectMe = true)
 
         /** Original reply-capable full-D/pool pin, not a public readiness switch or default startup expansion. */
         internal fun retainedWithReplies(assembly: ComplaintTestProcessAssemblyV1, registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
