@@ -148,23 +148,36 @@ internal object OfflineCatalogTestRunTerminalSyntaxV4 {
             closure.sealTerminalPrefix == TestTerminalSyntaxV1.sealTerminalPrefix(closure.writerGeneration, context.dataScopeId))
         val seals = record.sealSet
         val records = seals.records()
-        // E's initial-writer/first-rotation implementation closes one ordinary range and its dedicated terminal epoch.
+        // Exactly the old first range OR A's initial EMPTY 1..1, one 2..2 successor and terminal 3.
+        // This is declaration grammar, not evidence that A's seal/checkpoint or empty prefix exists.
         requireOfflineTrustBundle(seals.dataScopeId == context.dataScopeId && seals.activationCatalogGeneration == context.activationCatalogGeneration &&
-            seals.activationCatalogSha256 == context.activationCatalogSha256 && records.size == 2 &&
-            records.all { it.writerGeneration == closure.writerGeneration } && records[0].role == TestTerminalSealRoleV1.ORDINARY &&
-            records[0].epochStartInclusive == 1L && records[0].epochEndInclusive == closure.finalOrdinaryEpoch && records[0].precedingSealSha256.isEmpty() &&
-            records[1].role == TestTerminalSealRoleV1.TERMINAL && records[1].epochStartInclusive == closure.terminalEpoch &&
-            records[1].epochEndInclusive == closure.terminalEpoch && records[1].precedingSealSha256 == records[0].objectRef.canonicalSha256)
+            seals.activationCatalogSha256 == context.activationCatalogSha256 && records.size in 2..3 &&
+            records.all { it.writerGeneration == closure.writerGeneration })
+        val ordinary = records.dropLast(1)
+        val terminal = records.last()
+        requireOfflineTrustBundle(ordinary.all { it.role == TestTerminalSealRoleV1.ORDINARY } &&
+            ordinary.first().epochStartInclusive == 1L && ordinary.first().precedingSealSha256.isEmpty() &&
+            ordinary.last().epochEndInclusive == closure.finalOrdinaryEpoch &&
+            terminal.role == TestTerminalSealRoleV1.TERMINAL && terminal.epochStartInclusive == closure.terminalEpoch &&
+            terminal.epochEndInclusive == closure.terminalEpoch && terminal.precedingSealSha256 == ordinary.last().objectRef.canonicalSha256)
+        if (records.size == 3) requireOfflineTrustBundle(closure.finalOrdinaryEpoch == 2L &&
+            ordinary[0].epochEndInclusive == 1L && ordinary[1].epochStartInclusive == 2L &&
+            ordinary[1].precedingSealSha256 == ordinary[0].objectRef.canonicalSha256)
         val purge = record.purge.document
         requireOfflineTrustBundle(purge.context().run == context && purge.writerGeneration == closure.writerGeneration &&
-            purge.publicationEpoch == closure.terminalEpoch && purge.finalOrdinaryEpoch == closure.finalOrdinaryEpoch && purge.finalOrdinarySeal == records[0] &&
+            purge.publicationEpoch == closure.terminalEpoch && purge.finalOrdinaryEpoch == closure.finalOrdinaryEpoch && purge.finalOrdinarySeal == ordinary.last() &&
             purge.installationManifest == record.installationManifest.summary)
         val canonical = CanonicalJson.canonicalize(TestTerminalPurgeV1.serializer(), purge)
         requireOfflineTrustBundle(Sha256.hexUtf8(canonical) == record.purge.objectRef.canonicalSha256)
+        // Payload IDs and object-key suffixes have independent HMAC domains. Syntax checks both;
+        // the actual retained-route codec/readers additionally bind their exact derived pair.
+        TestTerminalSyntaxV1.opaque(purge.eventId)
         TestTerminalSyntaxV1.terminalKey(record.purge.objectRef.objectKey, closure.writerGeneration, context.dataScopeId, closure.terminalEpoch, "test-run-purge")
-        requireOfflineTrustBundle(record.purge.objectRef.objectKey.endsWith("/${purge.eventId}.kjev") &&
-            records.all { it.objectRef.objectKey.endsWith("/${it.sealId}.kjev") })
-        requireOfflineTrustBundle(CatalogTestRunTerminalHistoryV1.sealHead(records.take(1)).let {
+        records.forEach {
+            TestTerminalSyntaxV1.opaque(it.sealId)
+            TestTerminalSyntaxV1.terminalKey(it.objectRef.objectKey, closure.writerGeneration, context.dataScopeId, it.epochEndInclusive, "epoch-seal")
+        }
+        requireOfflineTrustBundle(CatalogTestRunTerminalHistoryV1.sealHead(ordinary).let {
             it.count == purge.preTerminalSeals.count && it.sha256 == purge.preTerminalSeals.sha256
         })
         val cuts = record.progress.completedCuts()

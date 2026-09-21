@@ -77,9 +77,10 @@ internal data class CatalogTestRunTerminalHistoryV1(
                     chunk.retiredCount + chunk.deletedCount == chunk.installationCount && OfflineBootstrapGrammar.sha256(chunk.entriesSha256) && ids.add(chunk.eventId))
                 requireOfflineTrustBundle(index == chunks.lastIndex || chunk.installationCount == TestTerminalProfileV1.MAX_ENTRIES_PER_CHUNK.toLong())
                 TestTerminalSyntaxV1.opaque(chunk.eventId)
+                // Independently domain-separated payload/object-key IDs are both committed below;
+                // exact retained-route derivation belongs to the native codec, not this declaration.
                 TestTerminalSyntaxV1.terminalKey(chunk.objectRef.objectKey, record.closure.writerGeneration, context.dataScopeId,
                     record.closure.terminalEpoch, "installation-manifest")
-                requireOfflineTrustBundle(chunk.objectRef.objectKey.endsWith("/${chunk.eventId}.kjev"))
                 installations = Math.addExact(installations, chunk.installationCount)
                 retired = Math.addExact(retired, chunk.retiredCount)
                 deleted = Math.addExact(deleted, chunk.deletedCount)

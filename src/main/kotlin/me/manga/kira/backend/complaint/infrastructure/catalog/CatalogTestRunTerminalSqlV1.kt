@@ -153,11 +153,7 @@ internal object CatalogTestRunTerminalPreflightSqlV1 {
     """.trimIndent()
     val readRecovery = lockRecovery.removeSuffix(" FOR UPDATE")
     val control = TestTerminalQuiescenceSqlV1.control.removeSuffix(" FOR UPDATE")
-    // This first-history producer does NOT accept upstream ACTIVE/A history. No V27 assumption.
-    val noActiveHistory = """
-        SELECT NOT EXISTS (SELECT 1 FROM complaint_test_active_seal_intents
-            WHERE data_scope_id = ?::uuid OR object_key LIKE ?::text) AS valid
-    """.trimIndent()
+    val controlWithActiveHistory = TestTerminalQuiescenceSqlV1.controlWithActiveHistory.removeSuffix(" FOR UPDATE OF c")
     val appliedPage = """
         SELECT a.event_id, a.data_scope_id, a.test_only, a.writer_generation, a.journal_epoch, a.event_kind, a.target_count,
             CASE WHEN octet_length(a.object_key) BETWEEN 1 AND 1024 THEN a.object_key END AS object_key,

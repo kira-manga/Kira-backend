@@ -1,4 +1,4 @@
-# TEST terminal catalog: first-history schema4 and PURGING only
+# TEST terminal catalog: bounded two/three-seal schema4 and PURGING only
 
 2026-09-21. **Source implementation and authored tests only:
 NOT_COMPILED / NOT_RUN / NOT_RUNTIME_ACCEPTED.** No endpoint, job, deployment,
@@ -57,9 +57,12 @@ The distinct schema is `schemaVersion: 4`,
 `profile: NEW_BACKEND_TEST_RUN_TERMINAL_V1`,
 `operation: TEST_RUN_TERMINAL`, canonicalized with `kcj-1`. Old V3 parsing is not
 widened. The terminal parser/chain entry can read the existing V1/V2 prefix, one
-V3 activation, then exactly its immediate V4 successor. Suffix, repeated terminal,
-unsupported ACTIVE/A/V26 or multiwriter history is refused, not truncated or
-reinterpreted. B/V29 queue observations and full ACTIVE recurrence are not joined.
+V3 activation, then exactly its immediate V4 successor. The permitted seal history
+is the unchanged one-ordinary/one-terminal form, or exactly A's initial EMPTY
+ordinary **1..1**, one final ordinary **2..2**, and terminal **3**. Suffix, repeated
+terminal, arbitrary ACTIVE recurrence or multiwriter history is refused, not
+truncated or reinterpreted. Optional B/V29 preservation is described below; it
+does not extend the wire grammar or establish a completed drain.
 
 The record retains the complete unchanged restore inventory, initial registry,
 oldest-restore floor, exact activation hash, dedicated terminal epoch, both full
@@ -75,7 +78,7 @@ All seven typed history heads are reduced from complete declared history:
 | `testRunActivations` | Exact one-activation head from the authenticated V3 chain |
 | `testRunTerminals` | One complete terminal record |
 | `installationManifests` | One complete contextual manifest record, including all chunks |
-| `epochSeals` | Both complete contextual seal records, in order |
+| `epochSeals` | All two or three complete contextual seal records, in order |
 | `retirementAuthorizations` / `retirementCompletions` | Empty canonical lists |
 
 The terminal record excludes its own envelope hash, signatures and current history
@@ -87,6 +90,45 @@ bytes or explicit fields, not reference equality of parsed immutable classes.
 
 Parser/signature/chain success is a checked declaration only. It is not denial,
 native readback, a SQL lease, a projected run or a restore capability.
+
+### Exact A/V26 and optional B/V29 preservation
+
+Three is not an acceptance count. Every phase binds the actual V26 initial slot,
+complete retained seal/checkpoint bytes, full configuration/activation/database/
+restore/trust/writer identities, and exact V26 row+xmin. The completed checkpoint
+is independently reconstructed as two EMPTY passes over 1..1; no APPLIED epoch1
+entry may be substituted. D's whole 1..2 denial root remains distinct from the
+successor seal's 2..2 root. Both ordinary seals enter the purge's preterminal roots
+and the full terminal inventory. A's original pre-SEALED V26 row is loaded as V26,
+never invented as post-SEALED V21 ordinal0; the real final ordinary V21 ordinal0
+and terminal V21 ordinal1 keep their existing provenance and chronology.
+
+Both actual native passes revisit A's exact existing key/version/canonical and
+ciphertext bytes, original verification last-modified timestamp, byte count,
+requested retention and actual retention. No A re-encryption, replacement PUT,
+new charge or omitted inventory record is permitted. Native last-modified is
+second-granularity and is not falsely required to follow subsecond creation.
+Original E additionally compares D's retained A preimage during initial CAPTURE.
+Fresh PREPARED recovery does not fabricate the old D registration: its freshly
+validated history must match the original E custody before any new authority.
+
+B's optional observation is read over the complete scope/full-D/journal relation,
+including foreign aliases and absence, not a filtered SETTLED subset. Exactly
+SETTLED with all retained identities, finite chronology, fencing and ack bounds
+is allowed; **POLLING refuses**. The whole row+xmin is retained across catalog
+phases, preflights and recovery. SETTLED is permanent accounting/bookkeeping, not
+queue health, drain, checkpoint or denial evidence. E never polls, settles,
+deletes, refunds or rewrites it. Its **8192 ordinary actual STORAGE_BYTES**, and
+A's **2097152 ordinary actual STORAGE_BYTES**, remain accounted alongside the
+unchanged terminal payments; neither uses or replenishes the TEST reserve.
+
+The no-A/no-B case appends no history tags or counts to the prior precondition
+frame: old two-seal canonical wire and custody bytes stay unchanged. Additional
+bounded absence reads do not create a new authority or lock class. Lease-only
+ACQUIRE/RELEASE compare already captured physical history/absence under existing
+controls without an additional run read or run lock; their unchanged control
+predicate retains its existing bounded run-identity join. The original native reader stack is
+unchanged. This bounded join adds no erasure handoff or migration.
 
 ## Bounds and qualification limits
 
@@ -207,10 +249,24 @@ timeout is not proof of native resource retirement.
 
 ## Authored TEST surface, not evidence of execution
 
-`CatalogTestRunTerminalIT` currently contains **29 textually authored selectors**:
-13 workflow/refusal, 13 recovery and 3 offline declaration/chain/bound cases, across
-9 new/touched TEST files (including the existing phase-classification regression
-oracle). This is not test discovery or a passed-test count.
+`CatalogTestRunTerminalIT` currently contains **43 textually authored selectors**:
+the prior 29 plus 14 bounded-history cases. This extension authors exactly six
+TEST paths, including two new fixture/case files. This is not test discovery or
+a passed-test count. The new cases compose reviewed C's real global predecessor,
+fresh TEST registration, A's real initial EMPTY checkpoint, actual C CREATE and
+D's full three-seal completion; retained complaint/installation data is nonempty
+while their ordinary deletion journal is genuinely empty. They cover A's full
+native inventories/retention/accounting, PREPARED continuation, read-only projected
+replay, missing/wrong/physically rewritten A, native history mutations, strict
+ordered declarations and the old no-A/no-B LP32/custody framing equation.
+
+**Still pending:** the genuine nonempty ordinary-deletion and A/B SETTLED/POLLING
+composition tests require the separately authored, reviewed A event/original-PUT/
+KMS-context helper and B's real queue producer. They are not replaced with seeded
+success rows, synthetic events, re-encryption or a copied completion/authority.
+The current B MAIN checks are source implementation, not a claimed B-positive
+producer test or runtime acceptance. The exact freeze must retain this open
+obligation until those prerequisites and tests are actually composed.
 
 The fixtures compose actual predecessor producers and raw HTTP SDK transports,
 retain each real synthetic approval once, observe actual SQL/holders/counter
@@ -226,7 +282,7 @@ denial/lease authority.
 Unqualified obligations include independent installed denial and credential-path
 completeness, authoritative finite request bounds/grant provenance, immutable
 external evidence retention, actual dual-region provider behavior, NEW-data
-restore, nonempty/mixed/>50 histories, full recurrence, exhaustive stale-current /
+restore, nonempty/mixed/>50 ordinary-deletion histories, full recurrence, exhaustive stale-current /
 concurrent-boundary negatives, every native/unknown cut, and maximum-N/deadline
 performance. Existing precursor/focused test results do not execute or accept this
 new E slice. Source hashes, a textual apply/whitespace check or independent source
