@@ -14,6 +14,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleTestSc
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFact
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
+import me.manga.kira.backend.common.infrastructure.persistence.persistenceFactoryRemainingMillis
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityEncoding
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
@@ -24,6 +25,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesired
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredDeploymentInputsV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredDeploymentJsonV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationFailureV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationFixture
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredProcessAssemblyV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDInputsV1
@@ -36,6 +38,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.DesiredInstallat
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredInstallationTestClock
 import me.manga.kira.backend.complaint.infrastructure.admission.SignedGenesisFirstDInvocation
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
+import me.manga.kira.backend.complaint.infrastructure.admission.requireDesiredInstallation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseAcquisitionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseBindingV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseTransitionV1
@@ -60,6 +63,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.locks.LockSupport
 
 /** Independent raw D7 inputs. No supplied effective D, accepted head, lease, provider receipt or detached approval protocol. */
 internal object CatalogSignerRotationD7Inputs {
@@ -390,7 +394,23 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
                 stage = "ASSEMBLY_CLOSE"
                 assembly.close()
                 stage = "REQUIRE_CLEANUP"
-                assembly.requireCleanup(PersistenceTimeBudget.start(10_000))
+                val cleanupBudget = PersistenceTimeBudget.start(10_000)
+                val caller = Thread.currentThread()
+                var interrupted = false
+                try {
+                    // Actual pool close can return before its owned worker/creator tails end.
+                    // Wait only for natural local custody, sharing the unchanged cleanup allowance.
+                    while (true) {
+                        if (Thread.interrupted()) interrupted = true
+                        requireDesiredInstallation(persistenceFactoryRemainingMillis(cleanupBudget) > 0L, ComplaintDesiredInstallationFailureV1.CLEANUP_UNPROVEN)
+                        val ended = owners.all { it.versionBoundPools?.poolsEndedForTrust() != false }
+                        val remaining = persistenceFactoryRemainingMillis(cleanupBudget)
+                        requireDesiredInstallation(remaining > 0L, ComplaintDesiredInstallationFailureV1.CLEANUP_UNPROVEN)
+                        if (ended) break
+                        LockSupport.parkNanos(minOf(remaining, 10L) * 1_000_000L)
+                    }
+                } finally { if (interrupted) caller.interrupt() }
+                assembly.requireCleanup(cleanupBudget)
             }
             runtimeRetired = true
         } catch (failure: ComplaintDesiredInstallationExceptionV1) {
