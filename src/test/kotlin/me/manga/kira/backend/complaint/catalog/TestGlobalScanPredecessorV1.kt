@@ -42,6 +42,7 @@ import kotlin.concurrent.withLock
 internal fun withTestGlobalScanPredecessor(
     tls: VersionBoundPersistenceConnectedFixture,
     capacity: ComplaintCapacityPolicyV1,
+    ordinaryPoolSize: Int = 2,
     action: (VersionBoundPersistenceConnectedFixture, TestGlobalScanPredecessorV1) -> Unit,
 ) = CatalogSignerRotationD7Fixture(tls).use { live ->
     live.prepareEpochRotation(capacity)
@@ -57,8 +58,10 @@ internal fun withTestGlobalScanPredecessor(
         me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationFixture.OPERATOR,
     ))
     predecessor.assertReadyForActivation(live.observer)
+    // The new TEST full D is born with the same pool size as its protected runtime intake.
+    // The retired LIVE/G1 graph above is unchanged and is never relabelled as this successor.
     VersionBoundPersistenceConnectedFixture(tls.database, testActivation = true, activeFirstCut = true,
-        endpointPort = tls.endpointPort).use { fresh ->
+        endpointPort = tls.endpointPort, ordinaryPoolSize = ordinaryPoolSize).use { fresh ->
         fresh.bind()
         action(fresh, predecessor)
     }
