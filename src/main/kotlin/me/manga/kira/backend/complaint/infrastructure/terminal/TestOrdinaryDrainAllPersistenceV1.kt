@@ -5,6 +5,7 @@ import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyRows
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllInventorySqlV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
 import java.sql.Timestamp
@@ -17,11 +18,32 @@ import java.util.UUID
 internal object TestOrdinaryDrainAllPersistenceV1 {
     fun requirePrimaryFacts(jdbc: JdbcTemplate, facts: TestOrdinaryDrainPersistenceV1.FamilyFacts, run: TestOrdinaryDrainRowsV1.Run,
         value: TestOrdinaryDrainPersistenceV1.AllPrimary, family: List<TestOrdinaryDrainPersistenceV1.Applied>, converted: Boolean, lockDomain: Boolean) {
+        requireDrain(value.publication.createdAt <= run.sealedAt && (run.progress != null || value.recovery.state == "PARTIAL") &&
+            (!converted || value.recovery.state == "CONVERTED"))
+        requireCompletedFacts(jdbc, facts, value, family, lockDomain)
+    }
+
+    /** The registered caller already owns N/P/L before counters/domain. These fixed, non-locking
+     * rereads compare the retained family; they issue no work, verifier, native or drain authority. */
+    fun requireCompletedReplayFacts(jdbc: JdbcTemplate, binding: OwnerDeleteAllJournalBindingV1,
+        event: OwnerDeleteAllJournalEventV1): TestOrdinaryDrainPersistenceV1.AllPrimary {
+        requireDrain(event.belongsTo(binding))
+        val facts = TestOrdinaryDrainPersistenceV1.FamilyFacts(checkNotNull(binding.test), event.tuple.epoch)
+        val value = TestOrdinaryDrainPersistenceV1.closedPrimary(jdbc, facts, event.route.eventId) as? TestOrdinaryDrainPersistenceV1.AllPrimary
+            ?: throw TestOrdinaryDrainExceptionV1()
+        requireDrain(value.recovery.state == "PARTIAL" && value.event.canonicalBytes().contentEquals(event.canonicalBytes()))
+        val family = TestOrdinaryDrainPersistenceV1.readFamilyFacts(jdbc, facts, value, checkNotNull(value.publication.verifiedAt))
+        requireCompletedFacts(jdbc, facts, value, family, lockDomain = false)
+        return value
+    }
+
+    private fun requireCompletedFacts(jdbc: JdbcTemplate, facts: TestOrdinaryDrainPersistenceV1.FamilyFacts,
+        value: TestOrdinaryDrainPersistenceV1.AllPrimary, family: List<TestOrdinaryDrainPersistenceV1.Applied>, lockDomain: Boolean) {
         val p = value.publication
         val event = value.event
         facts.requireEvent(event)
         requireDrain(p.kind.name == "OWNER_DELETE_ALL" && p.state == "APPLIED" && p.scope == facts.scope &&
-            p.writer.toString() == facts.writer && p.createdAt <= run.sealedAt)
+            p.writer.toString() == facts.writer)
         val r = value.receipt
         val tuple = event.tuple
         requireDrain(value.installationId == tuple.actorId && r.key == tuple.operationKey && r.version == tuple.credentialVersion &&
@@ -38,15 +60,17 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
         val now = TestOrdinaryDrainPersistenceV1.now(jdbc)
         val verifiedAt = Instant.parse(proof.verifiedAt)
         val recovery = value.recovery
-        requireDrain(p.createdAt <= verifiedAt && verifiedAt <= value.appliedAt && value.appliedAt <= recovery.lastAppliedAt && recovery.lastAppliedAt <= now &&
-            Instant.parse(proof.retainUntil).isAfter(now) && (run.progress != null || recovery.state == "PARTIAL") && (!converted || recovery.state == "CONVERTED"))
+        // A is the actual stored/reconstructed comparison time, not an invented earlier AUTH.
+        // Native V, primary completion T and last counted application R keep their own clocks.
+        requireDrain(p.createdAt <= value.appliedAt && verifiedAt <= value.appliedAt && value.appliedAt <= recovery.lastAppliedAt &&
+            recovery.lastAppliedAt <= now && r.createdAt <= recovery.lastAppliedAt && Instant.parse(proof.retainUntil).isAfter(now))
         val suffix = if (lockDomain) " FOR UPDATE" else ""
         val identity = jdbc.query(TestOrdinaryDrainSqlV1.ownerIdentity + suffix, { row, _ ->
             requireScope(row, facts)
             requireDrain(row.getString("state") == "DELETED")
             row.getTimestamp("created_at").toInstant() to checkNotNull(row.getTimestamp("terminal_at")).toInstant()
         }, tuple.actorId).single()
-        requireDrain(identity.second in value.appliedAt..recovery.lastAppliedAt)
+        requireDrain(identity.second in p.createdAt..recovery.lastAppliedAt)
         if (recovery.used[ComplaintCapacityCounter.INSTALLATION_IDS] != 0L) requireDrain(identity.first in p.createdAt..recovery.lastAppliedAt)
         val credentials = jdbc.query(OwnerDeleteAllInventorySqlV1(facts.routing.journalConfiguration.scope).credential.removeSuffix(" FOR UPDATE") + suffix,
             { row, _ -> OwnerDeleteAllApplyRows.credential(row) }, tuple.actorId)
@@ -70,9 +94,12 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
         val installationSummaries = jdbc.query(primaryAudit, { row, _ -> Summary.read(row, recovery.lastAppliedAt, value.appliedAt, installation = true) },
             Math.addExact(tuple.credentialVersion, 1L), facts.scope, facts.scope.toString(), Timestamp.from(value.appliedAt))
         val routes = facts.routing.derive(tuple).candidates()
-        val recoverySummaries = jdbc.query(recoveryAudits, { row, _ -> Summary.read(row, recovery.lastAppliedAt, value.appliedAt, installation = false) },
+        val recoverySummaries = jdbc.query(recoveryAudits, { row, _ -> Summary.read(row, recovery.lastAppliedAt, p.createdAt, installation = false) },
             facts.scope, facts.scope.toString(), routes.joinToString(",", "{", "}") { it.eventId })
-        requireDrain(recoverySummaries.size <= 4 && recoverySummaries.map { it.at }.distinct().size == recoverySummaries.size)
+        // Four E versions do not mean four lifetime summaries. Every retained summary still
+        // spends the unchanged original 113-audit promise, including bounded bookkeeping repair.
+        requireDrain(recoverySummaries.size <= 113 && recoverySummaries.size.toLong() <= recovery.used[ComplaintCapacityCounter.AUDIT_ROWS] &&
+            recoverySummaries.map { it.at }.distinct().size == recoverySummaries.size)
         val systemPrimaries = recoverySummaries.filter { it.at == value.appliedAt }
         // The native proof and exact N/P/E/L comparisons precede this accounting check. The
         // producer's audit corroborates effects: one INSTALLATION or SYSTEM shape, never both.
@@ -82,13 +109,20 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
         requireDrain(primaryActor == "INSTALLATION" || primarySummary.eventId == p.eventId)
         requireRemovalAudits(jdbc, facts, primarySummary, primaryActor)
         val summaries = recoverySummaries.filterNot { it === primarySummary }
+        val allSummaries = listOf(primarySummary) + summaries
+        requireDrain(allSummaries.maxOf { it.at } == recovery.lastAppliedAt && allSummaries.any { it.at == identity.second })
+        val receiptRepaired = r.createdAt > value.appliedAt && summaries.any { it.eventId == p.eventId && it.at >= r.createdAt }
         summaries.forEach { summary ->
-            requireDrain(summary.at > value.appliedAt)
+            val introduced = family.filter { it.eventId == summary.eventId && it.at == summary.at }
+            requireDrain(introduced.size <= 1 && family.any { it.eventId == summary.eventId && checkNotNull(it.at) <= summary.at })
             requireRemovalAudits(jdbc, facts, summary, "SYSTEM")
-            // A summary not introducing an exact version must describe real new data/identity work.
-            requireDrain(family.any { it.eventId == summary.eventId && it.at == summary.at } ||
+            // Earlier aliases describe their own E. Later zero-effect primary summaries can
+            // corroborate repeated missing-N repair only with an actually recreated retained N.
+            // Their audit charges never supply missing family evidence or authenticate a caller.
+            requireDrain(introduced.isNotEmpty() ||
                 summary.removed + summary.resources + summary.installations > 0 ||
-                identity.second == summary.at || summary.at in resourceDeletions)
+                identity.second == summary.at || summary.at in resourceDeletions ||
+                receiptRepaired && summary.eventId == p.eventId && summary.at > value.appliedAt)
         }
         family.filterNot { it.key == p.objectKey && it.version == p.objectVersion }.forEach { applied ->
             requireDrain(summaries.count { it.eventId == applied.eventId && it.at == applied.at } == 1)
@@ -154,7 +188,7 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
                 jsonb_build_object('eventId', detail->>'eventId', 'removed', (detail->>'removed')::int,
                     'reconstructed', (detail->>'reconstructed')::int, 'installation', (detail->>'installation')::int)) IS TRUE AS valid
         FROM audit_log WHERE complaint_data_scope_id = ?::uuid AND entity_type = 'complaint_scope' AND entity_id = ?
-            AND action = 'COMPLAINT_RECOVERY_APPLIED' AND detail->>'eventId' = ANY (?::text[]) ORDER BY id LIMIT 5
+            AND action = 'COMPLAINT_RECOVERY_APPLIED' AND detail->>'eventId' = ANY (?::text[]) ORDER BY id LIMIT 114
     """.trimIndent()
     private val removalAudits = """
         SELECT entity_id, (complaint_data_scope_id = ?::uuid AND actor_user_id IS NULL AND complaint_actor_kind = ?

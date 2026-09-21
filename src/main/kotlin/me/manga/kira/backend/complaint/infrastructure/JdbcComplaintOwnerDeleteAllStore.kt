@@ -10,7 +10,6 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseP
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
-import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
@@ -30,6 +29,7 @@ import me.manga.kira.backend.security.ComplaintJournalRoutingCandidateV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainAllPersistenceV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalJsonV1
@@ -279,8 +279,7 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         val reserve = jdbc.query(appliedSql.LOCK_RECOVERY, { result, _ -> OwnerDeleteAllApplyRows.recovery(result) }, receipt.reference).single()
         check(reserve.promise == OwnerDeleteAllCapacityCharges.RECOVERY && reserve.used.fitsWithin(reserve.promise))
         check(reserve.state == if (receipt.state == "COMPLETED") "PARTIAL" else "RESERVED")
-        if (receipt.state == "COMPLETED") check(reserve.used[ComplaintCapacityCounter.JOURNAL_APPLIED] == 1L &&
-            (OwnerDeleteAllCapacityCharges.APPLIED + ComplaintCapacityCharges.AUDIT).fitsWithin(reserve.used))
+        if (receipt.state == "COMPLETED") check((OwnerDeleteAllCapacityCharges.APPLIED + ComplaintCapacityCharges.AUDIT).fitsWithin(reserve.used))
         registeredRecovery = reserve.remaining
         stage = Stage.COUNTERS_READY
         check(capacity.lockForOwnerDeleteAll(this).settledFor(this))
@@ -292,10 +291,21 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         val credential = jdbc.query(appliedSql.LOCK_CREDENTIAL, { result, _ -> OwnerDeleteAllApplyRows.credential(result) }, registered.actorId).single()
         check(installation.state == expectedState && credential.state == expectedState &&
             credential.credentialVersion == if (expectedState == "DELETED") Math.addExact(receipt.version, 1) else receipt.version)
-        check(installation.terminalAt == receipt.completedAt && credential.deletedAt == receipt.completedAt && credential.expiresAt == receipt.expiresAt)
+        if (receipt.state == "COMPLETED") {
+            val deletedAt = checkNotNull(installation.terminalAt)
+            check(credential.deletedAt == deletedAt && credential.expiresAt == deletedAt.plus(java.time.Duration.ofHours(192)))
+        } else check(installation.terminalAt == null && credential.deletedAt == null && credential.expiresAt == null)
         val now = checkNotNull(jdbc.queryForObject("SELECT clock_timestamp()", { result, _ -> result.getTimestamp(1).toInstant() }))
         check(!receipt.authorizedAt.isAfter(now) && receipt.completedAt?.isAfter(now) != true && reserve.convertedAt?.isAfter(now) != true)
-        persistedProof?.let { check(!it.verifiedAt.isAfter(now) && it.retainUntil.isAfter(now) && !receipt.authorizedAt.isAfter(it.verifiedAt)) }
+        persistedProof?.let { check(!it.verifiedAt.isAfter(now) && it.retainUntil.isAfter(now)) }
+        if (receipt.state == "COMPLETED") {
+            // Completed replay has no mutation or new publication branch. The same retained
+            // N/P/L locks protect these bounded family/accounting rereads after domain locks.
+            check(OwnerDeleteAllApplyRows.completedReplayWindowsLive(receipt.expiresAt, credential.expiresAt, now))
+            val retained = TestOrdinaryDrainAllPersistenceV1.requireCompletedReplayFacts(jdbc, routing, event)
+            check(retained.recovery.promise == reserve.promise && retained.recovery.used == reserve.used &&
+                retained.recovery.lastAppliedAt == reserve.convertedAt)
+        } else persistedProof?.let { check(!receipt.authorizedAt.isAfter(it.verifiedAt)) }
         verifier = credential.verifier.copyOf()
         requireRetained()
         stage = Stage.COMPLETE

@@ -8,7 +8,7 @@ internal class OwnerDeleteAllApplySql private constructor(scope: ComplaintDataSc
     val NOW = "SELECT clock_timestamp()"
 
     val LOCK_RECEIPTS = """
-        SELECT deletion_key, submitted_credential_version, fingerprint, publication_ref, authorized_at, state,
+        SELECT deletion_key, created_at, submitted_credential_version, fingerprint, publication_ref, authorized_at, state,
             external_event_id, external_epoch, external_object_version, external_ciphertext_hash, completed_at, expires_at,
             ($LIVE) AS live,
             (complaint_digest_valid(fingerprint) AND submitted_credential_version > 0

@@ -11,6 +11,8 @@ import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalActiveHistorySqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalPreflightSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalProjectionSqlV1
@@ -18,6 +20,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerm
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialDeletionSqlCallV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainStepV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
@@ -26,6 +29,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDelet
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPreparedOwnerDeleteAllV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
+import me.manga.kira.backend.complaint.journal.JournalPublisherObject
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -255,6 +259,10 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
     private val calls = mutableListOf<TestRegisteredInitialDeletionSqlCallV1>()
     private val owners = linkedMapOf<PersistencePhaseContext, TestRunOwnerDeleteContinuationV1>()
     private val allOwners = linkedMapOf<PersistencePhaseContext, TestRunOwnerDeleteAllContinuationV1>()
+    private val inventoryOwners = linkedMapOf<PersistencePhaseContext, TestRunOrdinaryDrainV1>()
+    private val inventoryLocators = linkedMapOf<PersistencePhaseContext, Pair<String, String>>()
+    private val refusedAll = mutableSetOf<TestRunOwnerDeleteAllContinuationV1>()
+    private val mutation = Regex("\\b(?:UPDATE|INSERT|DELETE)\\s+(?:INTO\\s+|FROM\\s+)?(?:complaint_|installation_|app_|audit_)")
     private val assertion = AtomicReference<AssertionError?>()
     private var original: TestRunOrdinaryDrainV1? = null
     private var allReplay: TestRunOwnerDeleteAllContinuationV1? = null
@@ -272,19 +280,43 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
 
     /** Internal registered privacy caller, not an authenticated HTTP request or a new primary. */
     fun replayAll() {
-        requireConnectionFree(); check(original == null && allReplay == null)
-        assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, a.family)
-        val replay = TestRunPreparedOwnerDeleteAllV1.withHttpFixture(a.registration, a.deletionOwner, a.deletion, a.audit,
-            a.actor.id, a.key, AwsJournalKmsFixture.CREDENTIALS,
-            { error("Completed registered ALL replay must not open S3 or republish.") },
-            { error("Completed registered ALL replay must not open KMS or re-encrypt.") }, Clock.systemUTC(), System::nanoTime)
-        allReplay = replay
+        val start = calls.size
+        val replay = freshAllReplay()
         assertEquals(204, replay.complete().responseStatus) // Internal completion metadata only.
         assertReleased()
         assertEquals(listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY),
-            calls.map { it.phase to it.path }.distinct().map { it.second })
-        assertTrue(calls.none { Regex("\\b(?:UPDATE|INSERT|DELETE)\\s+(?:INTO\\s+|FROM\\s+)?(?:complaint_|installation_|app_|audit_)").containsMatchIn(it.sql) },
+            calls.drop(start).map { it.phase to it.path }.distinct().map { it.second })
+        assertNoAllReplayMutation(start); assertConsumed(replay)
+    }
+
+    /** A distinct failed original: missing credential is read under the normal N/P/L/counter/domain
+     * order. Only its RELOAD rolls back; this never weakens successful-original COMMITTED checks. */
+    fun refuseMissingAllVerifier() {
+        val start = calls.size
+        val replay = freshAllReplay().also { refusedAll.add(it) }
+        assertThrows<TestRunOwnerDeleteAllExceptionV1> { replay.complete() }
+        assertReleased()
+        assertEquals(listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD),
+            calls.drop(start).map { it.phase to it.path }.distinct().map { it.second })
+        assertTrue(calls.drop(start).any { it.sql == OwnerDeleteAllApplySql.test(a.process.consumers.journalConfiguration.scope).LOCK_CREDENTIAL },
+            "Refusal must reach the actual retained credential lookup, not stop at an unrelated earlier check.")
+        assertNoAllReplayMutation(start); assertConsumed(replay)
+    }
+
+    private fun freshAllReplay(): TestRunOwnerDeleteAllContinuationV1 {
+        requireConnectionFree(); check(original == null)
+        assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, a.family)
+        return TestRunPreparedOwnerDeleteAllV1.withHttpFixture(a.registration, a.deletionOwner, a.deletion, a.audit,
+            a.actor.id, a.key, AwsJournalKmsFixture.CREDENTIALS,
+            { error("Completed registered ALL replay must not open S3 or republish.") },
+            { error("Completed registered ALL replay must not open KMS or re-encrypt.") }, Clock.systemUTC(), System::nanoTime).also { allReplay = it }
+    }
+
+    private fun assertNoAllReplayMutation(start: Int) {
+        assertTrue(calls.drop(start).none { mutation.containsMatchIn(it.sql) },
             "Retained completed replay performs comparison SQL only.")
+    }
+    private fun assertConsumed(replay: TestRunOwnerDeleteAllContinuationV1) {
         val count = calls.size
         assertThrows<TestRunOwnerDeleteAllExceptionV1> { replay.complete() }
         assertEquals(count, calls.size, "A new owner may reload retained facts; the consumed original cannot be reset.")
@@ -300,8 +332,24 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
         }
     }
     private fun observeDeletion(call: TestRegisteredInitialDeletionSqlCallV1) = try {
+        val inventory = ownedCutField(call.phase, "testOrdinaryDrain") as TestRunOrdinaryDrainV1?
         val all = ownedCutField(call.phase, "testRunOwnerDeleteAll") as TestRunOwnerDeleteAllContinuationV1?
-        if (all != null) {
+        val primary = ownedCutField(call.phase, "testRunOwnerDelete") as TestRunOwnerDeleteContinuationV1?
+        assertEquals(1, listOfNotNull(inventory, all, primary).size, "Exactly one actual original owns the deletion holder.")
+        assertNull(ownedCutField(call.phase, "testActiveQueue"))
+        if (inventory != null) {
+            assertSame(checkNotNull(original), inventory); assertEquals(TestOrdinaryDrainStepV1.RECOVERY_APPLY, inventory.step)
+            assertEquals(if (a.family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL)
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY else PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, call.path)
+            assertSame(a.registration, inventory.registration)
+            assertSame(a.deletionOwner, ownedCutField(inventory, "deletionOwner")); assertSame(a.deletion, ownedCutField(inventory, "deletionJdbc"))
+            val entry = ownedCutField(inventory, "currentEntry") as TestOrdinaryDrainRowsV1.Entry
+            assertEquals(a.family.name, entry.kind); assertEquals("PENDING", entry.replay)
+            assertEquals(entry.locator, inventoryLocators.getOrPut(call.phase) { entry.locator })
+            assertSame(inventory, inventoryOwners.getOrPut(call.phase) { inventory })
+            if (mutation.containsMatchIn(call.sql)) assertEquals(TestOrdinaryDrainSqlV1.markApplied, call.sql,
+                "Already-applied inventory versions may mark only the two paid scan rows, never E/domain/U again.")
+        } else if (all != null) {
             assertSame(checkNotNull(allReplay), all); assertNull(original)
             assertNull(ownedCutField(all, "drainBy")); assertSame(a.registration, ownedCutField(all, "registration"))
             assertSame(a.deletionOwner, ownedCutField(all, "ownership")); assertSame(a.deletion, ownedCutField(all, "jdbc"))
@@ -313,15 +361,14 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
             val drain = checkNotNull(original)
             assertEquals(TestOrdinaryDrainStepV1.PRIMARIES, drain.step)
             assertTrue(call.path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY),
-                "The original verified primary resumes and applies; it neither republishes nor needs inventory recovery.")
-            val owner = ownedCutField(call.phase, "testRunOwnerDelete") as TestRunOwnerDeleteContinuationV1
+                "The original verified primary resumes and applies without a new publication or native VERIFY in PRIMARIES.")
+            val owner = checkNotNull(primary)
             val selectedBy = ownedCutField(owner, "selectedBy") as TestRunOwnerDeleteContinuationV1?
             val selecting = selectedBy ?: owner
             assertNull(ownedCutField(selecting, "selectedBy")); assertSame(drain, ownedCutField(selecting, "drainBy"))
             assertSame(drain.budget, owner.budget)
             assertSame(owner, owners.getOrPut(call.phase) { owner })
         }
-        assertNull(ownedCutField(call.phase, "testOrdinaryDrain"))
         val source = checkNotNull(a.deletion.dataSource)
         val connection = (TransactionSynchronizationManager.getResource(source) as ConnectionHolder).connection
         assertEquals(setOf(source), TransactionSynchronizationManager.getResourceMap().keys)
@@ -344,29 +391,46 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
         }
         allOwners.forEach { (phase, owner) ->
             assertTrue(a.deletion.observations.getValue(phase).lease.completion.quiescent())
-            assertTrue(phase.testRunOwnerDeleteAllCleanupProven(owner)); assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+            assertTrue(phase.testRunOwnerDeleteAllCleanupProven(owner))
+            assertEquals(if (owner in refusedAll) PersistenceDatabaseOutcome.ROLLED_BACK else PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+        }
+        inventoryOwners.forEach { (phase, drain) ->
+            assertTrue(a.deletion.observations.getValue(phase).lease.completion.quiescent())
+            assertTrue(phase.testOrdinaryDrainCleanupProven(drain)); assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
         }
         assertion.get()?.let { throw it }
     }
     fun assertPrimaryApplied(expected: Boolean) {
         assertReleased()
-        assertEquals(if (expected) 1 else 0, calls.filter { it.path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY }.map { it.phase }.distinct().size,
+        assertEquals(if (expected) 1 else 0, calls.filter { it.phase in owners && it.path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY }.map { it.phase }.distinct().size,
             "B's actual SETTLED APPLY must not be repeated by D; a VERIFIED A/POLLING primary is completed by D itself.")
         if (a.family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) {
-            assertFalse(expected); assertEquals(2, allOwners.size)
-            assertTrue(allOwners.values.all { it === allReplay }, "D excludes the completed ALL primary; only the explicit private replay uses ALL RELOAD/APPLY.")
+            assertFalse(expected); assertTrue(allOwners.isNotEmpty()); assertTrue(refusedAll.isEmpty())
+            assertTrue(allOwners.values.groupingBy { it }.eachCount().values.all { it == 2 },
+                "D excludes the completed ALL primary; each fresh explicit original owns only its RELOAD/APPLY.")
+        }
+    }
+
+    /** APPEND always starts PENDING. D's real exact-version reread then compares the retained E
+     * in its own inventory holder and marks BOTH scan copies; that is not another primary apply. */
+    fun assertRetainedInventoryRecovery(vararg objects: JournalPublisherObject) {
+        assertReleased()
+        val expected = objects.sortedWith(compareBy<JournalPublisherObject>({ it.key }, { it.version })).map { it.key to it.version }
+        assertEquals(expected, inventoryLocators.values.toList()); assertEquals(expected.size, inventoryOwners.size)
+        inventoryOwners.keys.forEach { phase ->
+            assertEquals(listOf(TestOrdinaryDrainSqlV1.markApplied), calls.filter { it.phase === phase && mutation.containsMatchIn(it.sql) }.map { it.sql })
         }
     }
 
     /** Literal P-U release observed in the actual CONVERT SQL, never a calculator as oracle. */
-    fun assertAllResidualConversion() {
+    fun assertAllResidualConversion(used: ComplaintCapacityVector = TerminalCatalogAllLiteralChargesV1.applied) {
         assertReleased(); assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, a.family)
         val conversion = coordinator.calls.filter { it.step === TestOrdinaryDrainStepV1.CONVERT }
         val mark = conversion.single { it.sql == TestOrdinaryDrainSqlV1.convert }
         assertEquals(checkNotNull(a.event).route.eventId, mark.arguments[0]); assertEquals(a.scope, mark.arguments[1])
         assertEquals(TerminalCatalogAllLiteralChargesV1.promise.toLongArray().joinToString(",", "{", "}"), mark.arguments[2])
-        assertEquals(TerminalCatalogAllLiteralChargesV1.applied.toLongArray().joinToString(",", "{", "}"), mark.arguments[3])
-        val remainder = TerminalCatalogAllLiteralChargesV1.promise - TerminalCatalogAllLiteralChargesV1.applied
+        assertEquals(used.toLongArray().joinToString(",", "{", "}"), mark.arguments[3])
+        val remainder = TerminalCatalogAllLiteralChargesV1.promise - used
         val updates = conversion.filter { it.sql.startsWith("UPDATE complaint_capacity_counters") }
         assertEquals(ComplaintCapacityCounter.entries.filter { remainder[it] != 0L }.map { it.storedName }.toSet(), updates.map { it.arguments[4] }.toSet())
         assertEquals(updates.size, updates.map { it.arguments[4] }.distinct().size)

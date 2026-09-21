@@ -22,6 +22,8 @@ import org.junit.jupiter.api.parallel.ExecutionMode
  * Endpoint is PURGING. Exact A1/ordinary2/terminal3 declarations/producers are authored below.
  * B's original-object SETTLED/POLLING and one nonempty OWNER_DELETE composition are authored below.
  * Retained-N/P/L ALL PREPARED/VERIFIED queue -> registered privacy replay -> D/E is separate from HTTP authentication.
+ * Reconstructed/later-domain/historical-alias ALL histories stop at registered comparison/replay or ordinary D,
+ * not E. The missing-bookkeeping dataset deliberately does not claim consistent-restore closure.
  * No full ACTIVE recurrence, erasure, PURGED or supported-maximum-N qualification.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -86,6 +88,14 @@ class CatalogTestRunTerminalIT {
     @Test fun genuineVerifiedAllQueuePrimaryReplaysRegisteredAndCompletesTerminalWithSystemAudit() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allQueueSuccessful(it, verifyPublication = true) }
     @Test fun allSystemPrimaryAuditCannotReplaceMissingOrMismatchedFamilyEvidence() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allFamilyEvidenceRefuses(it) }
     @Test fun allSystemPrimaryAuditRequiresOneExactPrimaryEventTimeActorAndCountedOutcome() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allPrimarySummaryRefuses(it) }
+
+    @Test fun allReconstructedPublicationAndReceiptRepairPreserveNativeTimelineOnRegisteredReplay() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allRecoveredChronology(it, reconstructed = true) }
+    @Test fun allLaterDomainAndResourceRepairPreservePrimaryCompletionAndBothRetryWindows() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allRecoveredChronology(it, reconstructed = false) }
+    @Test fun historicalPreparedAllAliasBeforePrimaryVerifyReplaysAndDrainsWithoutChangingEitherExpiry() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allHistoricalChronology(it, prepared = true) }
+    @Test fun historicalVerifiedAllAliasBeforePrimaryCompletionReplaysAndDrainsWithoutChangingEitherExpiry() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allHistoricalChronology(it, prepared = false) }
+    @Test fun allRetainedFamilyTimelineOrAccountingMismatchRefusesWithoutConsumerMutation() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allRetainedTimelineRefuses(it) }
+    // Expiry half is pure boundary-policy coverage; only missing verifier is an actual registered original refusal.
+    @Test fun allRegisteredFamilyReplayRefusesMissingOrIndependentlyExpiredVerifier() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allRegisteredReplayRefusals(it) }
 
     private fun evidence(fault: TerminalCatalogEvidenceFaultV1) = withFixture { CatalogTestRunTerminalCasesV1.badEvidence(it, fault) }
     private fun delivery(fault: TerminalCatalogDeliveryFaultV1) = withFixture { CatalogTestRunTerminalCasesV1.badDelivery(it, fault) }

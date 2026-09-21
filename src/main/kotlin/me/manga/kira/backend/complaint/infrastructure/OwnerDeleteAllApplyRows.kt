@@ -8,12 +8,18 @@ import java.util.UUID
 
 /** Bounded SQL comparison rows only. No row or constructible scalar supplies APPLY/provider authority. */
 internal object OwnerDeleteAllApplyRows {
+    /** Necessary comparison only, not replay authority. Registered RELOAD/APPLY supply their
+     * actual sampled database time; exact T/D + 192h shape and all family guards remain separate. */
+    fun completedReplayWindowsLive(receiptExpiry: Instant?, verifierExpiry: Instant?, comparisonAt: Instant): Boolean =
+        receiptExpiry?.isAfter(comparisonAt) == true && verifierExpiry?.isAfter(comparisonAt) == true
+
     class Receipt(
         val key: UUID,
         val version: Long,
         val fingerprint: ByteArray,
         val reference: String,
         val authorizedAt: Instant,
+        val createdAt: Instant,
         val state: String,
         val completedAt: Instant?,
         val expiresAt: Instant?,
@@ -77,7 +83,7 @@ internal object OwnerDeleteAllApplyRows {
         val state = string(row, "state")
         return Receipt(
             row.getObject("deletion_key", UUID::class.java), long(row, "submitted_credential_version"), bytes(row, "fingerprint"),
-            string(row, "publication_ref"), instant(row, "authorized_at"), state, time(row, "completed_at"), time(row, "expires_at"),
+            string(row, "publication_ref"), instant(row, "authorized_at"), instant(row, "created_at"), state, time(row, "completed_at"), time(row, "expires_at"),
             if (state == "COMPLETED") {
                 External(
                     string(row, "external_event_id"),

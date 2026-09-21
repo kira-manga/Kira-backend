@@ -1,6 +1,7 @@
 package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.DeleteAllCounter
 import me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteLiteralCharges
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
@@ -15,6 +16,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEvidenceDiges
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalPolicyRefV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueFixtureV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveQueueHistoricalAllObjectV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialDeletionNativeRecordV1
@@ -31,6 +33,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingRes
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalEpochSealResultV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalQuiescenceResultV1
 import me.manga.kira.backend.complaint.journal.JournalPublisherHttpRequest
+import me.manga.kira.backend.complaint.journal.JournalPublisherObject
 import me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherFixture
 import me.manga.kira.backend.complaint.journal.journalPublisherRawAssertSigned
 import me.manga.kira.backend.complaint.journal.journalPublisherRawGetReply
@@ -41,6 +44,7 @@ import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.JournalKmsHttpRequest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
@@ -94,6 +98,10 @@ internal fun withActiveHistoryTerminalCatalogRun(tls: VersionBoundPersistenceCon
 }
 
 internal enum class TerminalCatalogQueueHistoryV1 { ABSENT, SETTLED, POLLING }
+internal enum class TerminalCatalogAllRecoveryHistoryV1 {
+    RECONSTRUCTED_PUBLICATION_AND_RECEIPTS, LATER_DOMAIN_AND_RESOURCE,
+    HISTORICAL_ALIAS_BEFORE_PRIMARY_VERIFY, HISTORICAL_ALIAS_BEFORE_PRIMARY_COMPLETION,
+}
 
 /**
  * Genuine A AUTH -> original PUT/readback -> SQL VERIFY, optionally genuine B APPLY/ACK/SETTLED
@@ -108,7 +116,7 @@ internal fun withNonemptyActiveHistoryTerminalCatalogRun(tls: VersionBoundPersis
     family: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE,
     verifyPublication: Boolean = true,
     action: (CatalogTestRunTerminalActiveHistoryFixtureV1) -> Unit) =
-    withSealedNonemptyActiveHistoryTerminalRun(tls, queue, family, verifyPublication) { f, a, b, inputs ->
+    withSealedNonemptyActiveHistoryTerminalRun(tls, queue, family, verifyPublication) { f, a, b, inputs, _ ->
         val record = checkNotNull(a.record)
         val history = terminalCatalogActiveRows(f)
         val retainedAll = if (family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) terminalCatalogAllPrimaryRows(f.observer, f.scope) else null
@@ -129,7 +137,8 @@ internal fun withNonemptyActiveHistoryTerminalCatalogRun(tls: VersionBoundPersis
                     assertEquals(TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED,
                         drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS))
                 }
-                probe.assertReleased(); native.assertReadPairs(2); f.assertReleased(); a.assertReleased()
+                probe.assertReleased(); native.assertReadPairs(2, recovery = true); f.assertReleased(); a.assertReleased()
+                probe.assertRetainedInventoryRecovery(record.stored)
                 assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty(), "The empty helper's new deletion pair and raw graph are never used.")
                 assertEquals(history, terminalCatalogActiveRows(f))
                 assertEquals("APPLIED", a.publication()["state"])
@@ -152,11 +161,15 @@ internal fun withNonemptyActiveHistoryTerminalCatalogRun(tls: VersionBoundPersis
 /** Shared genuine producers; refusal cases stop here, never manufacture or reset a D/E capability. */
 internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersistenceConnectedFixture,
     queue: TerminalCatalogQueueHistoryV1, family: ComplaintJournalDeletionKindV1, verifyPublication: Boolean,
-    action: (TestRunPurgeFixtureV1, TestRegisteredInitialCheckpointDeletionFixtureV1, TestActiveOwnerDeleteQueueFixtureV1?, TestOrdinaryDrainFixtureInputsV1) -> Unit) {
+    allRecovery: TerminalCatalogAllRecoveryHistoryV1? = null,
+    action: (TestRunPurgeFixtureV1, TestRegisteredInitialCheckpointDeletionFixtureV1, TestActiveOwnerDeleteQueueFixtureV1?,
+        TestOrdinaryDrainFixtureInputsV1, TestActiveQueueHistoricalAllObjectV1?) -> Unit) {
     require(family in setOf(ComplaintJournalDeletionKindV1.OWNER_DELETE, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL))
     require(if (family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) queue === TerminalCatalogQueueHistoryV1.SETTLED else verifyPublication)
+    require(allRecovery == null || family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL &&
+        verifyPublication == (allRecovery !== TerminalCatalogAllRecoveryHistoryV1.HISTORICAL_ALIAS_BEFORE_PRIMARY_VERIFY))
     val inputs = TestOrdinaryDrainFixtureInputsV1(terminalQuiescence = TestTerminalQuiescenceFixtureInputsV1())
-    fun continueFrom(a: TestRegisteredInitialCheckpointDeletionFixtureV1, b: TestActiveOwnerDeleteQueueFixtureV1?) {
+    fun continueFrom(a: TestRegisteredInitialCheckpointDeletionFixtureV1, b: TestActiveOwnerDeleteQueueFixtureV1?, historical: TestActiveQueueHistoricalAllObjectV1? = null) {
         a.assertReleased()
         val record = checkNotNull(a.record)
         assertSame(checkNotNull(a.event), record.event); assertEquals(2L, record.event.comparison.epoch)
@@ -175,7 +188,7 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
                 probe.assertReleased(); f.assertReleased()
             }
             assertEquals(history, terminalCatalogActiveRows(f))
-            action(f, a, b, inputs)
+            action(f, a, b, inputs, historical)
             assertEquals(history, terminalCatalogActiveRows(f))
         }
         assertArrayEquals(originalBytes, record.stored.bytes); originalBytes.fill(0)
@@ -196,6 +209,15 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
                 assertEquals(old.copy(free = old.free - auth - promise, actual = old.actual + auth, recovery = old.recovery + promise),
                     b.afterAuthorization.getValue(counter), counter.storedName)
             }
+        }
+        if (allRecovery != null) {
+            val historical = when (allRecovery) {
+                TerminalCatalogAllRecoveryHistoryV1.HISTORICAL_ALIAS_BEFORE_PRIMARY_VERIFY,
+                TerminalCatalogAllRecoveryHistoryV1.HISTORICAL_ALIAS_BEFORE_PRIMARY_COMPLETION -> authorAllHistoricalAlias(b)
+                else -> { authorAllRecoveryHistory(b, allRecovery); null }
+            }
+            continueFrom(b.precursor, b, historical)
+            return@withActiveQueueFixture
         }
         val before = b.counters()
         if (queue === TerminalCatalogQueueHistoryV1.POLLING) {
@@ -226,12 +248,175 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
     }
 }
 
-/** Independent ALL v1 literals: one retained primary, one existing report, no reconstruction. */
+/** Independent ALL v1 literals: unchanged promise plus exact materialized version/repair costs. */
 internal object TerminalCatalogAllLiteralChargesV1 {
     val authorization = ComplaintCapacityVector.of(longArrayOf(0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 376832, 0))
     val promise = ComplaintCapacityVector.of(longArrayOf(0, 113, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0, 4, 0, 0, 0, 0, 100, 0, 0, 10240000, 0))
     val applied = ComplaintCapacityVector.of(longArrayOf(0, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 163840, 0))
     val content = ComplaintCapacityVector.of(longArrayOf(0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 262144, 0))
+    val receipt = ComplaintCapacityVector.units(ComplaintCapacityCounter.INSTALLATION_RECEIPTS, 1).with(ComplaintCapacityCounter.STORAGE_BYTES, 32768)
+    val publication = ComplaintCapacityVector.units(ComplaintCapacityCounter.JOURNAL_PUBLICATIONS, 1).with(ComplaintCapacityCounter.STORAGE_BYTES, 262144)
+    val reservation = ComplaintCapacityVector.units(ComplaintCapacityCounter.RECOVERY_RESERVATIONS, 1).with(ComplaintCapacityCounter.STORAGE_BYTES, 16384)
+    val resource = ComplaintCapacityVector.units(ComplaintCapacityCounter.RESOURCE_IDS, 1).with(ComplaintCapacityCounter.STORAGE_BYTES, 16384)
+    val audit = ComplaintCapacityVector.units(ComplaintCapacityCounter.AUDIT_ROWS, 1).with(ComplaintCapacityCounter.STORAGE_BYTES, 65536)
+    val appliedEvent = ComplaintCapacityVector.units(ComplaintCapacityCounter.JOURNAL_APPLIED, 1).with(ComplaintCapacityCounter.STORAGE_BYTES, 32768)
+}
+
+/** One actual A producer plus B's separately labeled protocol-history object. No alias AUTH/PUT,
+ * active-key switch or crypto construction here; the real queue authenticates both immutable wires. */
+private fun authorAllHistoricalAlias(b: TestActiveOwnerDeleteQueueFixtureV1): TestActiveQueueHistoricalAllObjectV1 {
+    val a = b.precursor; val charge = TerminalCatalogAllLiteralChargesV1
+    val native = a.native.counts(); val originalWire = b.record.stored.bytes.copyOf()
+    val pending = terminalCatalogAllPrimaryRows(b.observer, b.scope).filterKeys {
+        it in setOf("installation_deletion_receipts", "complaint_journal_publications")
+    }
+    fun reservationIdentity() = b.observer.queryForObject("SELECT (to_jsonb(l) - ARRAY['state','converted_amounts','converted_at'])::text " +
+        "FROM complaint_recovery_capacity_reservations l WHERE event_id = ?", String::class.java, b.record.event.route.eventId)
+    val reservation = reservationIdentity(); val before = b.counters()
+    val alias = b.raw.protocolHistoricalAllObject()
+    assertSame(b.record.event, b.raw.event); assertSame(b.record.stored, b.raw.stored)
+    assertNotEquals(b.record.event.route, alias.event.route)
+    val original = b.record.event.tuple; val other = alias.event.tuple
+    assertEquals(original.scope, other.scope); assertEquals(original.eventKind, other.eventKind)
+    assertEquals(original.actorKind, other.actorKind); assertEquals(original.actorId, other.actorId)
+    assertEquals(original.credentialVersion, other.credentialVersion); assertEquals(original.epoch, other.epoch)
+    assertEquals(original.operationKey, other.operationKey); assertEquals(original.encodedFingerprint(), other.encodedFingerprint())
+    assertEquals(b.record.event.complaintIds(), alias.event.complaintIds())
+    assertNotEquals(b.record.event.semanticSha256, alias.event.semanticSha256,
+        "Alternate route eventId is in the canonical bytes; equal semantics do not mean equal hashes.")
+    b.raw.selectHistorical(alias); b.expectAppliedObjects(alias.stored)
+    assertEquals(1, b.poll().primaryAcknowledged); b.assertReleased(); b.assertNoAuthority(); b.assertExpectedAppliedObjects()
+    assertAllHistoryTransfer(before, b.counters(), use = charge.applied, refund = charge.content, observation = true)
+    assertEquals(pending, terminalCatalogAllPrimaryRows(b.observer, b.scope).filterKeys { it in pending.keys }, "Alias cannot complete or VERIFY primary N/P, even xmin.")
+    assertEquals(if (b.verifiedPublication) "VERIFIED" else "PREPARED", a.publication()["state"])
+    assertEquals("AUTHORIZED_DELETE", b.receipt()["state"]); assertEquals(b.proofBeforeQueue, b.publicationProof())
+    assertEquals(reservation, reservationIdentity())
+    val erased = terminalCatalogAllPrimaryRows(b.observer, b.scope).filterKeys {
+        it in setOf("app_installations", "complaint_installation_ids", "complaint_resource_ids")
+    }
+    val aliasApplied = terminalCatalogAllPrimaryRows(b.observer, b.scope).getValue("complaint_deletion_journal_applied").single()
+    val paid = b.counters()
+    b.raw.selectOriginal(); b.expectAppliedObjects(alias.stored, b.record.stored)
+    assertEquals(1, b.poll().primaryAcknowledged); b.assertReleased(); b.assertNoAuthority(); b.assertExpectedAppliedObjects()
+    assertAllHistoryTransfer(paid, b.counters(), use = charge.appliedEvent + charge.audit)
+    assertEquals(erased, terminalCatalogAllPrimaryRows(b.observer, b.scope).filterKeys { it in erased.keys }, "Original primary completion preserves earlier domain rows/xmin and D+192h.")
+    assertTrue(aliasApplied in terminalCatalogAllPrimaryRows(b.observer, b.scope).getValue("complaint_deletion_journal_applied"))
+    assertEquals(reservation, reservationIdentity()); assertEquals(b.receiptBeforeQueue, b.receiptIdentity())
+    if (b.verifiedPublication) assertEquals(b.proofBeforeQueue, b.publicationProof())
+    assertEquals("COMPLETED", b.receipt()["state"]); assertEquals("APPLIED", a.publication()["state"])
+    assertEquals("SETTLED", b.observation()?.get("state"))
+    assertEquals(native, a.native.counts()); assertArrayEquals(originalWire, b.record.stored.bytes); originalWire.fill(0)
+    return alias
+}
+
+/** Explicit missing-row/restored-domain INPUTS, not a consistent backup, another AUTH or seeded
+ * success. Only B's fresh original native GET/decrypt/APPLY commits the recovered family. */
+private fun authorAllRecoveryHistory(b: TestActiveOwnerDeleteQueueFixtureV1, history: TerminalCatalogAllRecoveryHistoryV1) {
+    require(history in setOf(TerminalCatalogAllRecoveryHistoryV1.RECONSTRUCTED_PUBLICATION_AND_RECEIPTS, TerminalCatalogAllRecoveryHistoryV1.LATER_DOMAIN_AND_RESOURCE))
+    val a = b.precursor; val charge = TerminalCatalogAllLiteralChargesV1
+    val originalNative = a.native.counts(); val originalWire = b.record.stored.bytes.copyOf()
+    val credential = b.observer.queryForMap("SELECT platform, owner_reference, last_authenticated_at, secret_verifier FROM app_installations WHERE id = ?", a.actor.id)
+    val content = checkNotNull(b.observer.queryForObject("SELECT to_jsonb(c)::text FROM complaints c WHERE owner_id = ?", String::class.java, a.actor.id))
+    val before = b.counters()
+    if (history === TerminalCatalogAllRecoveryHistoryV1.RECONSTRUCTED_PUBLICATION_AND_RECEIPTS) {
+        b.adversarialTransaction { jdbc ->
+            listOf("installation_deletion_receipts", "complaint_recovery_capacity_reservations", "complaint_journal_publications").forEach { table ->
+                assertEquals(1, jdbc.update("DELETE FROM $table WHERE data_scope_id = ?", b.scope))
+            }
+        }
+        assertEquals(before, b.counters(), "The cut does not refund the old unrepresented aggregate Y or actual charges.")
+    }
+    assertEquals(1, b.poll().primaryAcknowledged); b.assertReleased(); b.assertNoAuthority()
+    val rebuilt = history === TerminalCatalogAllRecoveryHistoryV1.RECONSTRUCTED_PUBLICATION_AND_RECEIPTS
+    assertAllHistoryTransfer(before, b.counters(), use = charge.applied, refund = charge.content, observation = true,
+        actual = if (rebuilt) charge.receipt + charge.publication + charge.reservation else ComplaintCapacityVector.ZERO,
+        reserve = if (rebuilt) charge.promise else ComplaintCapacityVector.ZERO)
+    val primary = terminalCatalogAllPrimaryRows(b.observer, b.scope).filterKeys {
+        it in setOf("installation_deletion_receipts", "complaint_journal_publications", "complaint_deletion_journal_applied")
+    }
+    if (rebuilt) {
+        assertEquals(true, b.observer.queryForObject("SELECT verified_at < created_at AND created_at <= applied_at " +
+            "FROM complaint_journal_publications WHERE event_id = ?", Boolean::class.java, b.record.event.route.eventId))
+        val originalReceipt = b.receipt()
+        // Five paid summaries for ONE E: four actual missing-N repairs, never a reset of U.
+        repeat(4) {
+            val paid = b.counters()
+            assertEquals(1, b.observer.update("DELETE FROM installation_deletion_receipts WHERE data_scope_id = ?", b.scope))
+            assertEquals(paid, b.counters())
+            assertEquals(1, b.poll().primaryAcknowledged); b.assertReleased(); b.assertNoAuthority()
+            assertAllHistoryTransfer(paid, b.counters(), actual = charge.receipt, use = charge.audit)
+            for (field in listOf("authorized_at", "completed_at", "expires_at", "external_event_id", "external_object_version")) {
+                assertEquals(originalReceipt[field], b.receipt()[field], field)
+            }
+            assertEquals(primary - "installation_deletion_receipts", terminalCatalogAllPrimaryRows(b.observer, b.scope).filterKeys {
+                it in setOf("complaint_journal_publications", "complaint_deletion_journal_applied")
+            })
+        }
+        assertEquals(5L, b.observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_RECOVERY_APPLIED'",
+            Long::class.java, b.scope))
+    } else {
+        val later = UUID.randomUUID()
+        b.adversarialTransaction { jdbc ->
+            // Preserve the genuine verifier; restore only the earlier pair's public input fields.
+            assertEquals(1, jdbc.update("UPDATE complaint_installation_ids SET state = 'ACTIVE', terminal_at = NULL WHERE id = ? AND state = 'DELETED'", a.actor.id))
+            assertEquals(1, jdbc.update("UPDATE app_installations SET state = 'ACTIVE', credential_version = ?, platform = ?, owner_reference = ?, " +
+                "last_authenticated_at = ?, deleted_at = NULL, verifier_expires_at = NULL WHERE id = ? AND state = 'DELETED'",
+                b.record.event.tuple.credentialVersion, credential["platform"], credential["owner_reference"], credential["last_authenticated_at"], a.actor.id))
+            assertEquals(1, jdbc.update("DELETE FROM complaint_resource_ids WHERE id = ? AND data_scope_id = ?", b.record.event.complaintIds().single(), b.scope))
+            val paidInput = charge.resource + charge.content
+            ComplaintCapacityCounter.entries.filter { paidInput[it] > 0 }.sortedBy { it.storedName }.forEach { counter ->
+                assertEquals(1, jdbc.update("UPDATE complaint_capacity_counters SET free_units = free_units - ?, actual_units = actual_units + ? " +
+                    "WHERE name = ? AND free_units >= ?", paidInput[counter], paidInput[counter], counter.storedName, paidInput[counter]))
+            }
+            assertEquals(1, jdbc.update("INSERT INTO complaint_resource_ids(id,data_scope_id,test_only,state,created_at) VALUES (?, ?, true, 'LIVE', clock_timestamp())", later, b.scope))
+            assertEquals(1, jdbc.update("INSERT INTO complaints SELECT r.* FROM jsonb_populate_record(NULL::complaints, ?::jsonb || " +
+                "jsonb_build_object('id', ?::uuid, 'version', 17)) r", content, later))
+        }
+        val paid = b.counters()
+        assertEquals(1, b.poll().primaryAcknowledged); b.assertReleased(); b.assertNoAuthority()
+        assertAllHistoryTransfer(paid, b.counters(), use = charge.resource + charge.audit.scaled(2), refund = charge.content)
+        assertEquals(primary, terminalCatalogAllPrimaryRows(b.observer, b.scope).filterKeys { it in primary.keys }, "Repair never rewrites original N/P/E/VERIFY or N's expiry.")
+        assertEquals(0L, b.observer.queryForObject("SELECT count(*) FROM complaints WHERE owner_id = ?", Long::class.java, a.actor.id))
+    }
+    assertArrayEquals(credential["secret_verifier"] as ByteArray,
+        b.observer.queryForObject("SELECT secret_verifier FROM app_installations WHERE id = ?", ByteArray::class.java, a.actor.id))
+    assertEquals(originalNative, a.native.counts()); assertArrayEquals(originalWire, b.record.stored.bytes); originalWire.fill(0)
+    assertEquals("SETTLED", b.observation()?.get("state")); assertEquals(1L, b.count("complaint_deletion_journal_applied"))
+}
+
+private fun assertAllHistoryTransfer(before: Map<ComplaintCapacityCounter, DeleteAllCounter>, after: Map<ComplaintCapacityCounter, DeleteAllCounter>,
+    actual: ComplaintCapacityVector = ComplaintCapacityVector.ZERO, reserve: ComplaintCapacityVector = ComplaintCapacityVector.ZERO,
+    use: ComplaintCapacityVector, refund: ComplaintCapacityVector = ComplaintCapacityVector.ZERO, observation: Boolean = false) {
+    assertEquals(22, after.size)
+    before.forEach { (counter, old) ->
+        val observed = if (observation && counter === ComplaintCapacityCounter.STORAGE_BYTES) 8192L else 0L
+        assertEquals(old.copy(free = old.free - actual[counter] - reserve[counter] + refund[counter] - observed,
+            actual = old.actual + actual[counter] + use[counter] - refund[counter] + observed,
+            recovery = old.recovery + reserve[counter] - use[counter]), after.getValue(counter), counter.storedName)
+    }
+}
+
+/** C stops at the actual ordinary D closeout; no E erasure files or successor authority are borrowed. */
+internal fun drainRetainedAllHistory(f: TestRunPurgeFixtureV1, a: TestRegisteredInitialCheckpointDeletionFixtureV1,
+    inputs: TestOrdinaryDrainFixtureInputsV1, probe: CatalogTerminalHistoryDrainProbeV1, used: ComplaintCapacityVector,
+    historical: TestActiveQueueHistoricalAllObjectV1? = null) {
+    val retained = terminalCatalogAllPrimaryRows(f.observer, f.scope)
+    val recovery = terminalCatalogAllRecoveryWithoutState(f.observer, f.scope)
+    val native = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, checkNotNull(a.record), probe::assertReleased, historical)
+    val drain = probe.begin(native::client, native.keys::httpClient)
+    val approval = activeHistoryOrdinaryApproval(f, inputs, drain); val raw = f.rawEvidence
+    try {
+        terminalCatalogHistoryBoundaries(f, probe::assertReleased) {
+            assertEquals(TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED,
+                drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS))
+        }
+        probe.assertReleased(); probe.assertPrimaryApplied(expected = false); probe.assertAllResidualConversion(used); native.assertReadPairs(2, recovery = true)
+        probe.assertRetainedInventoryRecovery(*(listOf(checkNotNull(a.record).stored) + listOfNotNull(historical?.stored)).toTypedArray())
+        assertEquals(retained, terminalCatalogAllPrimaryRows(f.observer, f.scope))
+        assertEquals(recovery, terminalCatalogAllRecoveryWithoutState(f.observer, f.scope))
+        assertEquals("CONVERTED", f.observer.queryForObject("SELECT state FROM complaint_recovery_capacity_reservations WHERE event_id = ?",
+            String::class.java, checkNotNull(a.event).route.eventId))
+    } finally { approval.fill(0); raw.forEach { it.fill(0) }; native.assertClosed() }
 }
 
 internal fun terminalCatalogAllPrimaryRows(jdbc: JdbcTemplate, scope: UUID): Map<String, List<String>> = listOf(
@@ -381,12 +566,14 @@ private fun <T> terminalCatalogHistoryBoundaries(f: TestRunPurgeFixtureV1, check
 }
 
 /**
- * Read-only raw transport over ONE original A object and its private wrapped-key responder.
- * D and E open their own actual readers/clients. This is not another producer, key export,
- * reconstructed event, supplied readback, SQL result or native-cleanup receipt.
+ * Read-only raw transport over the original A object/private responder, optionally plus ONE
+ * separate labeled protocol-history object from B's frozen seam. D/E open their own readers;
+ * this never reclassifies history as A's PUT, exports a key or supplies a readback/cleanup result.
  */
 internal class CatalogTerminalOriginalOrdinaryHttpV1(private val journal: TestOwnerDeleteJournalConfigurationV1,
-    private val record: TestRegisteredInitialDeletionNativeRecordV1, private val boundary: () -> Unit) {
+    private val record: TestRegisteredInitialDeletionNativeRecordV1, private val boundary: () -> Unit,
+    private val historical: TestActiveQueueHistoricalAllObjectV1? = null) {
+    private val objects = (listOf(record.stored) + listOfNotNull(historical?.stored)).sortedWith(compareBy<JournalPublisherObject>({ it.key }, { it.version }))
     val requests = mutableListOf<JournalPublisherHttpRequest>()
     val keys = AwsJournalKmsFixture()
     private var created = 0
@@ -394,14 +581,21 @@ internal class CatalogTerminalOriginalOrdinaryHttpV1(private val journal: TestOw
     private var returnedCloses = 0
     private val assertion = AtomicReference<AssertionError?>()
     init {
+        assertEquals(objects.size, objects.map { it.key to it.version }.distinct().size)
+        historical?.let { assertNotEquals(record.kmsContext, it.kmsContext) }
         keys.beforePrepare = { checked { boundary() } }
         keys.onClientClose = { checked { boundary() } }
         keys.respond = { request -> checked {
             boundary(); signedKms(request)
             assertEquals(AwsJournalKmsFixture.DECRYPT_TARGET, request.target(), "Readback cannot generate another data key.")
             assertEquals(journal.declaration().encryption.keyArn, request.fields()["KeyId"].textValue())
-            assertEquals(record.kmsContext, request.fields()["EncryptionContext"].fields().asSequence().associate { it.key to it.value.textValue() })
-            record.decrypt(request).apply {
+            val context = request.fields()["EncryptionContext"].fields().asSequence().associate { it.key to it.value.textValue() }
+            val reply = if (context == record.kmsContext) record.decrypt(request) else {
+                val selected = checkNotNull(historical)
+                assertEquals(selected.kmsContext, context)
+                selected.decrypt(request) // B's exact immutable wrapped-token/context map, not a copied key or second codec.
+            }
+            reply.apply {
                 beforeCall = { checked { boundary() } }; beforeRead = { checked { boundary() } }
                 onAbort = { checked { boundary() } }; onClose = { checked { boundary() } }
             }
@@ -413,7 +607,7 @@ internal class CatalogTerminalOriginalOrdinaryHttpV1(private val journal: TestOw
             closed++; checked { boundary() }; returnedCloses++
         }) { request -> checked {
             boundary()
-            val location = journal.declaration().journalLocation; val stored = record.stored
+            val location = journal.declaration().journalLocation
             journalPublisherRawAssertSigned(request, location.region, location.accountId, AwsJournalKmsFixture.CREDENTIALS)
             assertTrue(request.body.isEmpty())
             when (request.kind) {
@@ -421,9 +615,10 @@ internal class CatalogTerminalOriginalOrdinaryHttpV1(private val journal: TestOw
                     assertEquals(listOf(journal.ordinaryPrefix), request.http.rawQueryParameters()["prefix"])
                     assertEquals(listOf("2"), request.http.rawQueryParameters()["max-keys"])
                     assertTrue(request.http.rawQueryParameters().keys.none { it in setOf("key-marker", "version-id-marker") })
-                    OwnerDeleteAllJournalPublisherFixture.xmlReply(journalPublisherRawListDocument(location.bucket, journal.ordinaryPrefix, listOf(stored)))
+                    OwnerDeleteAllJournalPublisherFixture.xmlReply(journalPublisherRawListDocument(location.bucket, journal.ordinaryPrefix, objects))
                 }
                 "GET" -> {
+                    val stored = objects.single { request.http.encodedPath() == "/${location.bucket}/${it.key}" && request.http.rawQueryParameters()["versionId"] == listOf(it.version) }
                     assertEquals("/${location.bucket}/${stored.key}", request.http.encodedPath())
                     assertEquals(listOf(stored.version), request.http.rawQueryParameters()["versionId"])
                     journalPublisherRawGetReply(location.region, stored.copy(bytes = stored.bytes.copyOf()))
@@ -432,11 +627,18 @@ internal class CatalogTerminalOriginalOrdinaryHttpV1(private val journal: TestOw
             }
         } }
     }
-    fun assertReadPairs(passes: Int) {
-        assertEquals(List(passes) { listOf("LIST", "GET") }.flatten(), requests.map { it.kind })
-        assertEquals(passes, keys.requests.size)
+    fun assertReadPairs(passes: Int, recovery: Boolean = false) {
+        // D additionally rereads each PENDING scan version after the two complete inventories;
+        // E's separate raw reader uses only its own inventory pairs (the unchanged default).
+        val reads = passes + if (recovery) 1 else 0
+        val scans = List(passes) { listOf("LIST") + List(objects.size) { "GET" } }.flatten()
+        assertEquals(scans + (if (recovery) List(objects.size) { "GET" } else emptyList()), requests.map { it.kind })
+        assertEquals(reads * objects.size, keys.requests.size)
         keys.requests.forEach { assertEquals(AwsJournalKmsFixture.DECRYPT_TARGET, it.target()) }
-        requests.filter { it.kind == "GET" }.forEach { assertArrayEquals(record.stored.bytes, checkNotNull(it.reply).bytes) }
+        objects.forEach { stored ->
+            val exact = requests.filter { it.kind == "GET" && it.http.encodedPath().endsWith("/${stored.key}") && it.http.rawQueryParameters()["versionId"] == listOf(stored.version) }
+            assertEquals(reads, exact.size); exact.forEach { assertArrayEquals(stored.bytes, checkNotNull(it.reply).bytes) }
+        }
         assertClosed()
     }
     fun assertClosed() {

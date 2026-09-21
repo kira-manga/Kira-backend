@@ -35,6 +35,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVeri
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainAllPersistenceV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainPersistenceV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
@@ -242,6 +243,8 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     private var queueCounts: OwnerDeleteAllMaterializedCountsV1? = null
     private var queueAt: Instant? = null
     private var retainedVerification: OwnerDeleteAllApplyRows.Verification? = null
+    private var completedFamily: TestOrdinaryDrainPersistenceV1.AllPrimary? = null
+    private val registeredReplay get() = replay && controls.testGraph?.recoveryRegistration != null
 
     fun belongsTo(selected: PersistencePhaseContext): Boolean = phase === selected
     fun completedFor(selected: PersistencePhaseContext): Boolean = belongsTo(selected) && stage === Stage.COMPLETE &&
@@ -307,6 +310,14 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         expiry = if (replay) checkNotNull(receipt.expiresAt) else now.plus(RETRY_RETENTION)
         check(!checkNotNull(completion).isAfter(now) && checkNotNull(expiry).isAfter(now))
         check(!checkNotNull(completion).isBefore(observed.verifiedAt))
+        if (registeredReplay) {
+            check(OwnerDeleteAllApplyRows.completedReplayWindowsLive(receipt.expiresAt, credential.expiresAt, now))
+            completedFamily = TestOrdinaryDrainAllPersistenceV1.requireCompletedReplayFacts(jdbc, routing, observed.event).also {
+                val reserve = checkNotNull(recovery)
+                check(it.appliedAt == completion && it.recovery.promise == reserve.promise && it.recovery.used == reserve.used &&
+                    it.recovery.lastAppliedAt == reserve.convertedAt)
+            }
+        }
         lockResources()
         val content = lockContent()
         requireReducer(installation, credential, content.isNotEmpty())
@@ -363,8 +374,9 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         retainedVerification = proof
         val now = databaseNow()
         requireRetention(now)
-        check(!publication.createdAt.isAfter(now) && !publication.createdAt.isAfter(proof.verifiedAt))
         replay = receipt.state == "COMPLETED"
+        check(!publication.createdAt.isAfter(now) &&
+            !publication.createdAt.isAfter(if (registeredReplay) checkNotNull(receipt.completedAt) else proof.verifiedAt))
         check(publication.state == if (replay) "APPLIED" else "VERIFIED")
         check(publication.appliedAt == receipt.completedAt)
         if (replay) {
@@ -740,10 +752,11 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         family.forEach { applied ->
             val route = routes.single { it.eventId == applied.eventId }
             check(applied.key == route.objectKey && applied.epoch == tuple.epoch && applied.targetCount == observed.targets.size &&
-                applied.kind == "OWNER_DELETE_ALL" && checkNotNull(applied.at) in verified.verifiedAt..checkNotNull(reserve.convertedAt))
+                applied.kind == "OWNER_DELETE_ALL" && checkNotNull(applied.at) in publication.createdAt..checkNotNull(reserve.convertedAt))
             if (applied.key == observed.record.objectKey) check(applied.ciphertext == observed.record.ciphertextSha256)
         }
-        check(family.single { it.key == primary.route.objectKey && it.version == verified.version }.ciphertext == HexFormat.of().formatHex(verified.hash))
+        val primaryApplied = family.single { it.key == primary.route.objectKey && it.version == verified.version }
+        check(primaryApplied.ciphertext == HexFormat.of().formatHex(verified.hash) && primaryApplied.at == receipt.completedAt)
         val exact = family.any { it.locator == (observed.record.objectKey to observed.record.objectVersion) }
         check(exact || family.size < 4) // The existing promise pays FOUR exact versions total, not four per key.
         stage = Stage.COUNTERS_READY
@@ -757,8 +770,9 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         val now = databaseNow()
         inventoryAt = now
         requireRetention(now)
-        check(verified.retainUntil.isAfter(now) && verified.verifiedAt <= checkNotNull(receipt.completedAt) &&
-            checkNotNull(receipt.completedAt) <= now && checkNotNull(reserve.convertedAt) <= now)
+        check(verified.retainUntil.isAfter(now) && publication.createdAt <= checkNotNull(receipt.completedAt) &&
+            verified.verifiedAt <= checkNotNull(receipt.completedAt) && checkNotNull(receipt.completedAt) <= checkNotNull(reserve.convertedAt) &&
+            receipt.createdAt <= checkNotNull(reserve.convertedAt) && checkNotNull(reserve.convertedAt) <= now)
         completion = receipt.completedAt; expiry = receipt.expiresAt
         val identity = ScopedInstallationId(tuple.actorId, controls.scope)
         val decision = InstallationRecoveryReducer.reduce(InstallationRecoverySnapshot(identity,
@@ -769,7 +783,8 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         check(decision.identityState === InstallationIdentityState.DELETED && decision.contentEffect === RecoveryContentEffect.ERASE_ALL_OWNED_CONTENT)
         credential?.let {
             check(it.credentialVersion == if (it.state == "DELETED") nextCredentialVersion() else observed.credentialVersion)
-            if (it.state == "DELETED") check(it.deletedAt == installation?.terminalAt && checkNotNull(it.deletedAt) in checkNotNull(completion)..now)
+            if (it.state == "DELETED") check(it.deletedAt == installation?.terminalAt &&
+                checkNotNull(it.deletedAt) in publication.createdAt..checkNotNull(reserve.convertedAt))
         }
         val installationCount = if (decision.reserveIdentityCapacity) 1 else 0
         val time = Timestamp.from(now)
@@ -844,7 +859,10 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         check(credential.credentialVersion == if (replay) nextCredentialVersion() else observed.credentialVersion)
         check(credential.rowVersion > 0 && (!replay || credential.rowVersion > 1))
         check(MessageDigest.isEqual(credential.verifier, primary().verifier))
-        check(installation.terminalAt == receipt.completedAt && credential.deletedAt == receipt.completedAt && credential.expiresAt == receipt.expiresAt)
+        if (registeredReplay) {
+            val deletedAt = checkNotNull(installation.terminalAt)
+            check(credential.deletedAt == deletedAt && credential.expiresAt == deletedAt.plus(RETRY_RETENTION))
+        } else check(installation.terminalAt == receipt.completedAt && credential.deletedAt == receipt.completedAt && credential.expiresAt == receipt.expiresAt)
     }
 
     private fun lockResources() {
@@ -857,7 +875,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
             requireRetained()
             val found = jdbc.query(sql.LOCK_RESOURCE, { row, _ -> OwnerDeleteAllApplyRows.resource(row) }, id).singleOrNull()
             if (found != null) {
-                check(found.id == id && found.deletedAt?.isAfter(checkNotNull(completion)) != true)
+                check(found.id == id && found.deletedAt?.isAfter(completedFamily?.recovery?.lastAppliedAt ?: checkNotNull(completion)) != true)
                 check(!replay || found.state == "DELETED")
                 found
             } else {

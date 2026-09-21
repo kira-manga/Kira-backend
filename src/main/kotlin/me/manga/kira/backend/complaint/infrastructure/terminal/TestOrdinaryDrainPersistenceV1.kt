@@ -388,11 +388,17 @@ internal object TestOrdinaryDrainPersistenceV1 {
         var primarySeen = false
         family.forEach { applied ->
             val route = routes.single { it.eventId == applied.eventId }
+            // A retained ALL alias can erase before the primary's own native VERIFY. Its E is
+            // still bound to this exact authenticated family, never to another primary's clock.
+            val first = if (value is AllPrimary) p.createdAt else verifiedAt
             requireDrain(applied.key == route.objectKey && applied.epoch == p.epoch && applied.kind == p.kind.name && applied.targetCount == p.targetCount &&
-                checkNotNull(applied.at) in verifiedAt..value.recovery.lastAppliedAt)
+                checkNotNull(applied.at) in first..value.recovery.lastAppliedAt)
             if (route == event.route) {
                 requireDrain(applied.ciphertext == HexFormat.of().formatHex(p.ciphertextHash))
-                if (applied.version == p.objectVersion) primarySeen = true
+                if (applied.version == p.objectVersion) {
+                    if (value is AllPrimary) requireDrain(applied.at == value.appliedAt && verifiedAt <= value.appliedAt)
+                    primarySeen = true
+                }
             }
         }
         requireDrain(primarySeen)
