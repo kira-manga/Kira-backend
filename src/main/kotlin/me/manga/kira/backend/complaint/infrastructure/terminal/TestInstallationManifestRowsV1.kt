@@ -72,7 +72,8 @@ internal object TestInstallationManifestRowsV1 {
         val frozenAt = checkNotNull(row.getTimestamp("frozen_at")).toInstant()
         OrdinaryJournalRetentionV1.requireInstant(retainUntil, true); OrdinaryJournalRetentionV1.requireInstant(frozenAt, true)
         requireManifest(frozenAt >= b.createdAt && frozenAt <= now && retainUntil >= b.retentionFloor && retainUntil > now)
-        val bytes = checkNotNull(row.getBytes("canonical_bytes"))
+        // pgjdbc may lend the row's binary bytea buffer; wipe only our copy before inventory rereads.
+        val bytes = checkNotNull(row.getBytes("canonical_bytes")).copyOf()
         try {
             val seal = TestTerminalJsonV1(original.routing.journalConfiguration).epochSeal(bytes)
             requireManifest(seal.sealId == expected.sealId && seal.writerGeneration == original.writer && seal.dataScopeId == original.runContext.dataScopeId &&
