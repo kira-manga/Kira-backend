@@ -53,6 +53,7 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoun
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveInitialCheckpointV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1
 import me.manga.kira.backend.security.BoundTestComplaintConsumerFixture
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.AwsSecretVersionFixture
@@ -171,6 +172,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         require(ordinaryRawHttp?.initialCheckpoint == null || (activeFirstCut && ordinarySealHttp?.protectedIntake == true))
         require(ordinaryRawHttp?.initialCheckpointCreate == null || ordinaryRawHttp.initialCheckpoint != null)
         require(ordinaryRawHttp?.shortInitialCheckpointFreshness != true || ordinaryRawHttp.initialCheckpointCreate != null)
+        require(ordinaryRawHttp?.activeOwnerDeleteQueue == null || ordinaryRawHttp?.initialCheckpoint != null)
         require(!activeSealRecovery || activeFirstCut)
         require(ordinaryRawHttp?.activeSealRecovery == null || activeSealRecovery)
         require(!activeFirstCut || (ordinarySealHttp?.protectedIntake == true && intakeTls != null &&
@@ -228,6 +230,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
     // The pool pins the exact policy instance; keep its independently constructed reader with it.
     private val projectedCheckpointGraphs = IdentityHashMap<VersionBoundPersistencePools,
         Pair<VersionBoundTestActiveInitialCheckpointV1, VersionBoundTestInitialCheckpointCreateV1?>>()
+    private val projectedActiveQueues = mutableListOf<VersionBoundTestActiveOwnerDeleteQueueV1>()
     /** Exact raw fixture inputs only; no acquired secret, target, registration or projection is exported. */
     internal fun coldInputBytes(): ByteArray = checkNotNull(originalIntakeBytes).copyOf()
     internal fun coldSecretObjects(): List<ColdSecretObjectV1> = originalSecretReplies.toList()
@@ -310,10 +313,21 @@ internal class CatalogTestRunActivationEvidenceFixture(
             }
             val checkpoint = checkpointGraph?.first
             val initialCheckpointCreate = checkpointGraph?.second
+            val queue = native.activeOwnerDeleteQueue?.let { original ->
+                if (pools === native.pools) original else {
+                    val raw = checkNotNull(ordinaryRawHttp?.activeOwnerDeleteQueue)
+                    val inputs = ComplaintTestDeploymentInputsV1.fromDecoded(checkNotNull(intakeDocument))
+                    check(inputs.activeOwnerDeleteQueue == raw.input)
+                    VersionBoundTestActiveOwnerDeleteQueueV1.fromIndependentInputs(
+                        raw.input, native.consumers.journalRouting, pools, inputs.sealerMapping, raw.credentials,
+                        inputs.sealerLimits, original.clock, original.nanoTime, raw.sts, raw.kms, raw.s3, raw.sqs,
+                    ).also { projectedActiveQueues.add(it) }
+                }
+            }
             return VersionBoundTestNamespaceProcessV1.fromRetained(native.consumers, pools, 1, desiredGeneration,
                 native.databaseIdentity, native.restoreIdentity, native.publicationLanes, native.catalogReadback, selected,
                 native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, activeFirstCutSuccessor = successor, initialCheckpoint = checkpoint, activeOrdinarySealRecovery = sealRecovery, terminalDenial = native.terminalDenial,
-                initialCheckpointCreate = initialCheckpointCreate)
+                initialCheckpointCreate = initialCheckpointCreate, activeOwnerDeleteQueue = queue)
         }
         val writer = journal.declaration().writer
         val activation = FullTestCatalogInputs.activation(
@@ -388,6 +402,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             initialCheckpoint = ordinaryRawHttp?.initialCheckpoint?.input,
             activeOrdinarySealRecovery = activeSealRecoveryInput,
             initialCheckpointCreate = ordinaryRawHttp?.initialCheckpointCreate,
+            activeOwnerDeleteQueue = ordinaryRawHttp?.activeOwnerDeleteQueue?.input,
         )
         intakeDocument = document
         val inputBytes = TestDeploymentInputFixture.bytes(document)
@@ -399,10 +414,13 @@ internal class CatalogTestRunActivationEvidenceFixture(
             PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY, http::nativeSts, http::nativeKms, http::nativeS3,
             ordinarySts = ordinaryRawHttp?.sts, ordinaryKms = ordinaryRawHttp?.kms, ordinaryS3 = ordinaryRawHttp?.s3,
             scannerSts = ordinaryRawHttp?.initialCheckpoint?.sts, scannerKms = ordinaryRawHttp?.initialCheckpoint?.kms,
-            scannerS3 = ordinaryRawHttp?.initialCheckpoint?.s3).also { intakeAssembly = it }
+            scannerS3 = ordinaryRawHttp?.initialCheckpoint?.s3,
+            queueSqs = ordinaryRawHttp?.activeOwnerDeleteQueue?.sqs, queueSts = ordinaryRawHttp?.activeOwnerDeleteQueue?.sts,
+            queueKms = ordinaryRawHttp?.activeOwnerDeleteQueue?.kms, queueS3 = ordinaryRawHttp?.activeOwnerDeleteQueue?.s3).also { intakeAssembly = it }
         TestDeploymentInputFixture.withManifest(inputBytes) { path ->
             assembly.assemble(path, AwsSecretVersionFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS,
-                activeFirstCutInput?.let { TestActiveFirstCutInputFixtureV1.ordinaryCredentials }, ordinaryRawHttp?.initialCheckpoint?.credentials)
+                activeFirstCutInput?.let { TestActiveFirstCutInputFixtureV1.ordinaryCredentials }, ordinaryRawHttp?.initialCheckpoint?.credentials,
+                ordinaryRawHttp?.activeOwnerDeleteQueue?.credentials)
         }
         check(secrets.createdClients == secrets.closedClients && secrets.requests.size > 1)
         check(secrets.requests.size == secrets.replies.size)
@@ -437,11 +455,14 @@ internal class CatalogTestRunActivationEvidenceFixture(
             PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY, http::nativeSts, http::nativeKms, http::nativeS3,
             ordinarySts = ordinaryRawHttp?.sts, ordinaryKms = ordinaryRawHttp?.kms, ordinaryS3 = ordinaryRawHttp?.s3,
             scannerSts = ordinaryRawHttp?.initialCheckpoint?.sts, scannerKms = ordinaryRawHttp?.initialCheckpoint?.kms,
-            scannerS3 = ordinaryRawHttp?.initialCheckpoint?.s3)
+            scannerS3 = ordinaryRawHttp?.initialCheckpoint?.s3,
+            queueSqs = ordinaryRawHttp?.activeOwnerDeleteQueue?.sqs, queueSts = ordinaryRawHttp?.activeOwnerDeleteQueue?.sts,
+            queueKms = ordinaryRawHttp?.activeOwnerDeleteQueue?.kms, queueS3 = ordinaryRawHttp?.activeOwnerDeleteQueue?.s3)
         try {
             TestDeploymentInputFixture.withManifest(TestDeploymentInputFixture.bytes(document)) { path ->
                 assembly.assemble(path, AwsSecretVersionFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS,
-                    document.activeFirstCut?.let { TestActiveFirstCutInputFixtureV1.ordinaryCredentials }, ordinaryRawHttp?.initialCheckpoint?.credentials)
+                    document.activeFirstCut?.let { TestActiveFirstCutInputFixtureV1.ordinaryCredentials }, ordinaryRawHttp?.initialCheckpoint?.credentials,
+                    ordinaryRawHttp?.activeOwnerDeleteQueue?.credentials)
             }
             check(secrets.createdClients == secrets.closedClients && secrets.requests.size > 1)
             return assembly
@@ -454,7 +475,8 @@ internal class CatalogTestRunActivationEvidenceFixture(
     override fun close() {
         // These extra recipes stay cold and fixture-owned. Each clears only its own read credential
         // reference; the actual runtime reader remains exclusively owned/closed by its assembly.
-        val failures = projectedInitialCheckpoints.asReversed().mapNotNull { runCatching(it::close).exceptionOrNull() }.toMutableList()
+        val failures = projectedActiveQueues.asReversed().mapNotNull { runCatching(it::close).exceptionOrNull() }.toMutableList()
+        projectedInitialCheckpoints.asReversed().mapNotNullTo(failures) { runCatching(it::close).exceptionOrNull() }
         runCatching { intakeAssembly?.close() }.exceptionOrNull()?.let(failures::add)
         failures.firstOrNull()?.let { first ->
             failures.drop(1).forEach(first::addSuppressed)

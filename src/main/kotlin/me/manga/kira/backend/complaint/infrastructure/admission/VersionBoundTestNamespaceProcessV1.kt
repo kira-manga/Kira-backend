@@ -46,6 +46,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     val activeOrdinarySealRecovery: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1?,
     val terminalDenial: TestTerminalDenialAuthorityPolicyV1?,
     val initialCheckpointCreate: VersionBoundTestInitialCheckpointCreateV1?,
+    val activeOwnerDeleteQueue: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val canonical: ByteArray
@@ -170,6 +171,8 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         require(initialCheckpoint == null || activeFirstCut != null && activeCutoffPublication != null) { INVALID_TEST_PROCESS_CONFIGURATION }
         initialCheckpoint?.requireRetained(consumers.journalRouting, pools, ordinarySeal)
         initialCheckpointCreate?.requireRetained(pools, consumers.journalRouting, initialCheckpoint)
+        require(activeOwnerDeleteQueue == null || initialCheckpoint != null && activeFirstCut != null) { INVALID_TEST_PROCESS_CONFIGURATION }
+        activeOwnerDeleteQueue?.requireRetained(consumers.journalRouting, pools)
         catalogActivation.requireRetained(pools, catalogReadback, journal)
         ordinarySeal?.requireRetained(consumers.journalRouting, publicationLanes)
         ordinarySeal?.requireCatalogReferences(catalogActivation.putAuthority, catalogActivation.signAuthority)
@@ -207,12 +210,14 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             activeOrdinarySealRecovery: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1? = null,
             terminalDenial: TestTerminalDenialAuthorityPolicyV1? = null,
             initialCheckpointCreate: VersionBoundTestInitialCheckpointCreateV1? = null,
+            activeOwnerDeleteQueue: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1? = null,
         ): VersionBoundTestNamespaceProcessV1 {
             requireConnectionFree()
             return VersionBoundTestNamespaceProcessV1(
                 consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
                 publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication, activeFirstCutSuccessor, initialCheckpoint, activeOrdinarySealRecovery, terminalDenial = terminalDenial,
                 initialCheckpointCreate = initialCheckpointCreate,
+                activeOwnerDeleteQueue = activeOwnerDeleteQueue,
             )
         }
 

@@ -116,6 +116,9 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     val initialCheckpointCreate = document.initialCheckpointCreate?.also(
         me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1::requireInput,
     )
+    val activeOwnerDeleteQueue = document.activeOwnerDeleteQueue?.also(
+        me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1::requireInput,
+    )
     val sealerSessionName = document.sealer.bootstrapSessionName
     val sealerLimits = document.sealer.sdkLimits.let {
         AwsEpochSealStsLimits(it.requestTimeoutMillis, it.connectTimeoutMillis, it.readTimeoutMillis, it.maxResponseBytes, it.clockUncertaintyMillis)
@@ -148,6 +151,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         valid(initialCheckpointCreate == null || initialCheckpoint != null)
         valid((document.profile == ACTIVE_SEAL_RECOVERY_PROFILE || combinedInitialRecovery) == (activeOrdinarySealRecovery != null))
         valid((activeFirstCut != null) == (ordinaryPublication != null))
+        valid(activeOwnerDeleteQueue == null || initialCheckpoint != null && activeFirstCut != null && journal.declaration().limits.deadlines.queueCallMillis >= 1500)
         // Explicit independent opt-in before full D; never a replacement for the ordinary grant.
         valid(terminalDenial == null || ordinaryDenial != null)
         valid(when (document.profile) {
@@ -194,6 +198,10 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
             sealerMapping.ordinary.principal.callerUserId(it.sessionName)
         }
         initialCheckpoint?.let {
+            sealerMapping.recovery.principal.callerArn(it.recoverySessionName)
+            sealerMapping.recovery.principal.callerUserId(it.recoverySessionName)
+        }
+        activeOwnerDeleteQueue?.let {
             sealerMapping.recovery.principal.callerArn(it.recoverySessionName)
             sealerMapping.recovery.principal.callerUserId(it.recoverySessionName)
         }

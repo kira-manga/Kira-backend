@@ -14,6 +14,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNam
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestV1
@@ -151,6 +152,10 @@ internal class PersistencePhaseOwnership private constructor(
         enter(original.path, testActiveSealer = original)
     internal fun enterTestActiveInitialCheckpoint(original: TestActiveInitialCheckpointV1): PersistencePhaseContext =
         enter(original.path, testInitialCheckpoint = original)
+    internal fun enterTestActiveOwnerDeleteQueue(original: TestActiveOwnerDeleteQueueV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE, testActiveQueue = original)
+    internal fun enterTestActiveQueueOwnerDeleteRecovery(original: TestActiveOwnerDeleteQueueV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, testActiveQueue = original)
 
     internal fun enterTestTerminalEpochSeal(original: TestRunTerminalEpochSealV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL, testTerminalEpochSeal = original)
@@ -559,6 +564,7 @@ internal class PersistencePhaseOwnership private constructor(
         testActiveSealer: TestActiveOrdinarySealV1? = null,
         testTerminalEpochSeal: TestRunTerminalEpochSealV1? = null,
         testInitialCheckpoint: TestActiveInitialCheckpointV1? = null,
+        testActiveQueue: TestActiveOwnerDeleteQueueV1? = null,
         testActiveSealRecovery: TestActiveOrdinarySealRecoveryV1? = null,
         testTerminalQuiescence: TestRunTerminalQuiescenceV1? = null,
     ): PersistencePhaseContext {
@@ -611,6 +617,11 @@ internal class PersistencePhaseOwnership private constructor(
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         if ((path === PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL) != (testTerminalEpochSeal != null)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if ((path.testActiveOwnerDeleteQueue && testActiveQueue == null) ||
+            (testActiveQueue != null && (path !in setOf(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY) ||
+                testOrdinaryDrain != null || testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testRunAdminDelete != null))) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         if (path.testActiveInitialCheckpoint != (testInitialCheckpoint != null)) {
@@ -666,6 +677,7 @@ internal class PersistencePhaseOwnership private constructor(
         testOrdinarySealer?.requirePhaseEntry(this, path)
         testActiveSealer?.requirePhaseEntry(this, path)
         testInitialCheckpoint?.requirePhaseEntry(this, path)
+        testActiveQueue?.requirePhaseEntry(this, path)
         testActiveSealRecovery?.requirePhaseEntry(this, path)
         testInstallationManifest?.requirePhaseEntry(this, path)
         testInstallationManifestPublication?.requirePhaseEntry(this, path)
@@ -701,6 +713,7 @@ internal class PersistencePhaseOwnership private constructor(
         val testOrdinarySealWork = testOrdinarySealer?.budget?.capped(2_000)
         val testActiveOrdinarySealWork = testActiveSealer?.phaseBudget()
         val testActiveInitialCheckpointWork = testInitialCheckpoint?.phaseBudget()
+        val testActiveOwnerDeleteQueueWork = testActiveQueue?.budget?.capped(2_000)
         val testActiveOrdinarySealRecoveryWork = testActiveSealRecovery?.phaseBudget()
         val testInstallationManifestWork = testInstallationManifest?.budget?.capped(2_000)
         val testInstallationManifestPublicationWork = testInstallationManifestPublication?.phaseBudget()?.capped(2_000)
@@ -797,6 +810,8 @@ internal class PersistencePhaseOwnership private constructor(
                 testTerminalEpochSealWork = testTerminalEpochSealWork,
                 testInitialCheckpoint = testInitialCheckpoint,
                 testActiveInitialCheckpointWork = testActiveInitialCheckpointWork,
+                testActiveQueue = testActiveQueue,
+                testActiveOwnerDeleteQueueWork = testActiveOwnerDeleteQueueWork,
                 testActiveSealRecovery = testActiveSealRecovery,
                 testActiveOrdinarySealRecoveryWork = testActiveOrdinarySealRecoveryWork,
                 testTerminalQuiescence = testTerminalQuiescence,
@@ -820,6 +835,7 @@ internal class PersistencePhaseOwnership private constructor(
             testOrdinarySealer?.retainPhase(prepared)
             testActiveSealer?.retainPhase(prepared)
             testInitialCheckpoint?.retainPhase(prepared)
+            testActiveQueue?.retainPhase(prepared)
             testActiveSealRecovery?.retainPhase(prepared)
             testInstallationManifest?.retainPhase(prepared)
             testInstallationManifestPublication?.retainPhase(prepared)
@@ -853,6 +869,7 @@ internal class PersistencePhaseOwnership private constructor(
             testOrdinarySealer?.observeFailure(failure)
             testActiveSealer?.observeFailure(failure)
             testInitialCheckpoint?.observeFailure(failure)
+            testActiveQueue?.observeFailure(failure)
             testActiveSealRecovery?.observeFailure(failure)
             testInstallationManifest?.observeFailure(failure)
             testInstallationManifestPublication?.observeFailure(failure)
@@ -882,6 +899,7 @@ internal class PersistencePhaseOwnership private constructor(
                 testOrdinarySealer?.observeFailure(cleanup)
                 testActiveSealer?.observeFailure(cleanup)
                 testInitialCheckpoint?.observeFailure(cleanup)
+                testActiveQueue?.observeFailure(cleanup)
                 testActiveSealRecovery?.observeFailure(cleanup)
                 testInstallationManifest?.observeFailure(cleanup)
                 testInstallationManifestPublication?.observeFailure(cleanup)
@@ -909,6 +927,7 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { testOrdinarySealer?.observePhaseCleanup(it) }
                 phase?.let { testActiveSealer?.observePhaseCleanup(it) }
                 phase?.let { testInitialCheckpoint?.observePhaseCleanup(it) }
+                phase?.let { testActiveQueue?.observePhaseCleanup(it) }
                 phase?.let { testActiveSealRecovery?.observePhaseCleanup(it) }
                 phase?.let { testInstallationManifest?.observePhaseCleanup(it) }
                 phase?.let { testInstallationManifestPublication?.observePhaseCleanup(it) }
@@ -1141,6 +1160,7 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
                 PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL,
                 PersistencePhasePath.COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT,
+                PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE,
                 PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL_RECOVERY,
                 PersistencePhasePath.COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE,
                 PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
@@ -1346,6 +1366,7 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT,
+            PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL_RECOVERY,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE,
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
@@ -1532,6 +1553,7 @@ internal enum class PersistencePhasePath {
     COMPLAINT_TEST_ORDINARY_SEAL,
     COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL,
     COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT,
+    COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE,
     COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL_RECOVERY,
     COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE,
     COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
@@ -1585,6 +1607,9 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK,
     ;
 
+    internal val testActiveOwnerDeleteQueue: Boolean
+        get() = this === COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE
+
     internal val testActiveInitialCheckpoint: Boolean
         get() = this === COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT
     internal val testActiveOrdinarySealRecovery: Boolean
@@ -1637,6 +1662,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_TEST_ORDINARY_SEAL,
             COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL,
             COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT,
+            COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE,
             COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL_RECOVERY,
             COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE,
             COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,

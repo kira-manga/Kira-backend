@@ -9,6 +9,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBu
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestInitialAdmissionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRecoveryRegistrationAttemptV1
@@ -147,6 +148,19 @@ internal class CatalogReadbackRefreshCustodyV1 {
         requireCatalogReadback(active.get() === original, CatalogReadbackFailure.INVALID_POLICY)
     }
     internal fun releaseTestActiveInitialCheckpointAfterCleanup(original: TestActiveInitialCheckpointV1) {
+        requireConnectionFree(); original.requireActualReadbackCleanup()
+        requireCatalogReadback(active.compareAndSet(original, null), CatalogReadbackFailure.CLOSE_FAILURE)
+    }
+
+    internal fun reserveTestActiveOwnerDeleteQueue(original: TestActiveOwnerDeleteQueueV1) {
+        requireConnectionFree(); original.requireCustody(this)
+        requireCatalogReadback(active.compareAndSet(null, original), CatalogReadbackFailure.LIMIT_EXCEEDED)
+    }
+    internal fun requireTestActiveOwnerDeleteQueue(original: TestActiveOwnerDeleteQueueV1) {
+        original.requireCustody(this)
+        requireCatalogReadback(active.get() === original, CatalogReadbackFailure.INVALID_POLICY)
+    }
+    internal fun releaseTestActiveOwnerDeleteQueueAfterCleanup(original: TestActiveOwnerDeleteQueueV1) {
         requireConnectionFree(); original.requireActualReadbackCleanup()
         requireCatalogReadback(active.compareAndSet(original, null), CatalogReadbackFailure.CLOSE_FAILURE)
     }

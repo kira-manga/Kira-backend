@@ -16,6 +16,12 @@ internal class TestOwnerDeleteControlBindingV1(private val graph: TestOwnerDelet
     fun lock(jdbc: JdbcTemplate, authorizing: Boolean): Locked {
         graph.requireDeletion(jdbc)
         check(!authorizing || graph.recoveryRegistration == null)
+        PersistencePhaseOwnership.current()?.registeredActiveQueueControls(graph, jdbc)?.let { epoch ->
+            // Separate ACTIVE original: exact current full D, raw catalog and its live lease were
+            // rechecked on this APPLY holder. No checkpoint health or SEALED exception is borrowed.
+            check(!authorizing && graph.recoveryRegistration != null)
+            return Locked(epoch, 0)
+        }
         PersistencePhaseOwnership.current()?.registeredInventoryControls(graph, jdbc)?.let { epoch ->
             // Only the retained original's paid, native inventory recovery may use its captured
             // SEALED cut. This does not weaken the historical AUTH/ordinary continuation reader.

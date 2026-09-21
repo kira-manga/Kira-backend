@@ -63,6 +63,10 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
     private val scannerStsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
     private val scannerKmsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
     private val scannerS3HttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
+    private val queueSqsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
+    private val queueStsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
+    private val queueKmsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
+    private val queueS3HttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
 ) : AutoCloseable {
     private val caller = Thread.currentThread()
     private val setupBudget = PersistenceTimeBudget.start(60_000, nanoClock)
@@ -82,6 +86,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
     private var seal: VersionBoundTestOrdinarySealV1? = null
     private var activePublication: VersionBoundTestActiveCutoffPublicationV1? = null
     private var initialCheckpoint: VersionBoundTestActiveInitialCheckpointV1? = null
+    private var activeQueue: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1? = null
     private var assembled: VersionBoundTestNamespaceProcessV1? = null
     private var closeFailure: Throwable? = null
 
@@ -100,7 +105,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
 
     @Suppress("TooGenericExceptionCaught")
     fun assemble(manifest: Path, secretCredentials: AwsSessionCredentials, sealBootstrapCredentials: AwsSessionCredentials,
-        ordinaryPublicationCredentials: AwsSessionCredentials? = null, initialCheckpointReadCredentials: AwsSessionCredentials? = null) {
+        ordinaryPublicationCredentials: AwsSessionCredentials? = null, initialCheckpointReadCredentials: AwsSessionCredentials? = null, queueRecoveryCredentials: AwsSessionCredentials? = null) {
         var failureCode = ComplaintTestDeploymentFailureV1.INPUT_REFUSED
         try {
             checkpoint()
@@ -109,6 +114,11 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             val inputs = readManifest(manifest)
             requireTestDeployment((inputs.activeFirstCut != null) == (ordinaryPublicationCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
             requireTestDeployment((inputs.initialCheckpoint != null) == (initialCheckpointReadCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
+            requireTestDeployment((inputs.activeOwnerDeleteQueue != null) == (queueRecoveryCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
+            if (queueRecoveryCredentials != null) requireTestDeployment(
+                queueRecoveryCredentials.accessKeyId() != sealBootstrapCredentials.accessKeyId() &&
+                    queueRecoveryCredentials.accessKeyId() != ordinaryPublicationCredentials?.accessKeyId(), ComplaintTestDeploymentFailureV1.INPUT_REFUSED,
+            )
             if (ordinaryPublicationCredentials != null) requireTestDeployment(
                 ordinaryPublicationCredentials.accessKeyId() != sealBootstrapCredentials.accessKeyId(), ComplaintTestDeploymentFailureV1.INPUT_REFUSED,
             )
@@ -120,7 +130,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             failureCode = ComplaintTestDeploymentFailureV1.PROVIDER_REFUSED
             val acquired = inputs.allBindings().map { acquire(it, secretCredentials) }
             failureCode = ComplaintTestDeploymentFailureV1.PROCESS_REFUSED
-            assembleAcquired(inputs, acquired, sealBootstrapCredentials, ordinaryPublicationCredentials, initialCheckpointReadCredentials)
+            assembleAcquired(inputs, acquired, sealBootstrapCredentials, ordinaryPublicationCredentials, initialCheckpointReadCredentials, queueRecoveryCredentials)
             checkpoint()
             checkNotNull(assembled).requireUnchangedConfiguration()
             ready = true
@@ -204,6 +214,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         credentials: AwsSessionCredentials,
         ordinaryCredentials: AwsSessionCredentials?,
         scannerCredentials: AwsSessionCredentials?,
+        queueCredentials: AwsSessionCredentials?,
     ) {
         checkpoint()
         val expected = inputs.allBindings()
@@ -257,6 +268,12 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
                 checkNotNull(scannerCredentials), inputs.sealerLimits, AssemblyClock(wallClock), nanoClock::nanoTime,
                 scannerStsHttpFixture, scannerKmsHttpFixture, scannerS3HttpFixture).also { retained -> initialCheckpoint = retained }
         }
+        val queue = inputs.activeOwnerDeleteQueue?.let {
+            me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1.fromIndependentInputs(
+                it, consumers.journalRouting, pools, inputs.sealerMapping, checkNotNull(queueCredentials), inputs.sealerLimits,
+                AssemblyClock(wallClock), nanoClock::nanoTime, queueStsHttpFixture, queueKmsHttpFixture, queueS3HttpFixture, queueSqsHttpFixture,
+            ).also { retained -> activeQueue = retained }
+        }
         val activeOrdinarySealRecovery = inputs.activeOrdinarySealRecovery?.let {
             me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1.fromRetained(
                 it, pools, consumers.journalRouting, checkNotNull(activeFirstCut), ordinarySeal,
@@ -270,6 +287,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
                     it, pools, routing, checkNotNull(scanner),
                 )
             },
+            activeOwnerDeleteQueue = queue,
         )
         // No public-trust preparation, JDBC connection, STS/KMS/S3 construction, activation or registration was performed.
     }
@@ -333,6 +351,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         attempt { owner?.requestShutdown() }
         attempt { closeChannel() }
         attempt { closeResolver() }
+        attempt { activeQueue?.close() }
         attempt { initialCheckpoint?.close() }
         attempt { activePublication?.close() }
         attempt { seal?.close() }
@@ -375,7 +394,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
     companion object {
         /** Begin BEFORE manifest I/O; default launch remains UNKNOWN and cannot be upgraded on this owner. */
         fun begin(): ComplaintTestProcessAssemblyV1 = ComplaintTestProcessAssemblyV1(
-            SystemPersistenceNanoClock, Instant::now, PersistencePoolLaunchProfile.UNKNOWN, null, null, null, null, null, null, null, null, null, null,
+            SystemPersistenceNanoClock, Instant::now, PersistencePoolLaunchProfile.UNKNOWN, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
         )
 
         /** Only raw provider HTTP/clocks and the existing explicit cold controlled launch selection may vary in tests. */
@@ -393,11 +412,15 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             scannerSts: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
             scannerKms: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
             scannerS3: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+            queueSqs: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+            queueSts: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+            queueKms: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+            queueS3: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
         ): ComplaintTestProcessAssemblyV1 = ComplaintTestProcessAssemblyV1(
             nanoClock, wallClock, runtimeLaunchProfile, secretHttpFactory, sts, kms, s3,
             // Distinct raw responders are fixed before intake/full D, never by editing a retained recipe.
             // Absent opt-in preserves the historical shared fixture spelling; production remains all-null.
-            ordinarySts ?: sts, ordinaryKms ?: kms, ordinaryS3 ?: s3, scannerSts, scannerKms, scannerS3,
+            ordinarySts ?: sts, ordinaryKms ?: kms, ordinaryS3 ?: s3, scannerSts, scannerKms, scannerS3, queueSqs, queueSts, queueKms, queueS3,
         )
     }
 }

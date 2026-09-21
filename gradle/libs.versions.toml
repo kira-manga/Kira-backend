@@ -53,6 +53,7 @@ aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version.ref = "awsSdk" }
 aws-sdk-secretsmanager = { module = "software.amazon.awssdk:secretsmanager", version.ref = "awsSdk" }
 aws-sdk-kms = { module = "software.amazon.awssdk:kms", version.ref = "awsSdk" }
 aws-sdk-sts = { module = "software.amazon.awssdk:sts", version.ref = "awsSdk" }
+aws-sdk-sqs = { module = "software.amazon.awssdk:sqs", version.ref = "awsSdk" }
 aws-sdk-url-connection-client = { module = "software.amazon.awssdk:url-connection-client", version.ref = "awsSdk" }
 postgresql-owned-cut = { module = "me.manga.kira.internal:postgresql-owned-cut", version.ref = "postgresqlOwnedCut" }
 checker-qual = { module = "org.checkerframework:checker-qual", version.ref = "checkerQual" }

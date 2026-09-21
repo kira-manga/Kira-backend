@@ -1,5 +1,8 @@
 package me.manga.kira.backend.complaint.infrastructure.capacity
 
+import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOwnerDeleteQueueStorageV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueOperationV1
+
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointOperationV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveInitialCheckpointStorageV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutOperationV1
@@ -118,6 +121,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForTestRunPurge(operation: TestRunPurgeOperationV1): LockedTestRunPurge = LockedTestRunPurge.lock(this, operation)
     internal fun lockForTestActiveFirstCut(operation: TestActiveFirstCutOperationV1): LockedTestActiveFirstCut = LockedTestActiveFirstCut.lock(this, operation)
     internal fun lockForTestActiveInitialCheckpoint(operation: TestActiveInitialCheckpointOperationV1): LockedTestActiveInitialCheckpoint = LockedTestActiveInitialCheckpoint.lock(this, operation)
+    internal fun lockForTestActiveOwnerDeleteQueue(operation: TestActiveOwnerDeleteQueueOperationV1): LockedTestActiveOwnerDeleteQueue = LockedTestActiveOwnerDeleteQueue.lock(this, operation)
 
     internal fun lockForTestTerminalEpochSeal(operation: TestTerminalEpochSealOperationV1): LockedTestTerminalEpochSeal = LockedTestTerminalEpochSeal.lock(this, operation)
     internal fun lockForTestOrdinarySeal(operation: TestOrdinarySealOperationV1): LockedTestOrdinarySeal = LockedTestOrdinarySeal.lock(this, operation)
@@ -1794,6 +1798,49 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }
+            }
+        }
+    }
+
+    /** One permanent ordinary-paid observation per run. No ordinal, test reserve or recovery reserve changes. */
+    internal class LockedTestActiveOwnerDeleteQueue private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: TestActiveOwnerDeleteQueueOperationV1,
+        private val counters: LockedCounters,
+    ) {
+        private var issued = false
+        private var completed = false
+        internal fun completedFor(candidate: TestActiveOwnerDeleteQueueOperationV1) = operation === candidate && completed
+        internal fun settle(candidate: TestActiveOwnerDeleteQueueOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                val charge = operation.chargeRequired(this, store.jdbc); issued = true
+                if (charge) {
+                    val expected = checkNotNull(store.expectedPolicyDigest)
+                    val before = counters.ledger.balance
+                    val after = counters.ledger.chargeCreation(expected, TestActiveOwnerDeleteQueueStorageV1.ROW).balance
+                    check(after.testReserved == before.testReserved && after.recoveryReserved == before.recoveryReserved &&
+                        after.hardLimit == before.hardLimit && after.creationLimit == before.creationLimit)
+                    for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                        if (before.free[counter] == after.free[counter] && before.actual[counter] == after.actual[counter]) continue
+                        check(counter === ComplaintCapacityCounter.STORAGE_BYTES)
+                        check(store.jdbc.update(INITIAL_CHECKPOINT_COUNTER, after.free[counter], after.actual[counter], counter.storedName, counter.storedOrdinal, expected,
+                            before.hardLimit[counter], before.creationLimit[counter], before.free[counter], before.actual[counter],
+                            before.recoveryReserved[counter], before.testReserved[counter]) == 1)
+                    }
+                }
+                check(operation.chargeRequired(this, store.jdbc) == charge); completed = true
+            } catch (problem: Throwable) { operation.failed(problem) }
+        }
+        override fun toString() = "LockedActiveQueueObservation(ordinary-actual8192-once,no-reserve-spend)"
+        companion object {
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: TestActiveOwnerDeleteQueueOperationV1): LockedTestActiveOwnerDeleteQueue {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    val value = LockedTestActiveOwnerDeleteQueue(store, operation, store.readLockedCounters())
+                    operation.requireCounterRead(store.jdbc)
+                    return value
+                } catch (problem: Throwable) { operation.failed(problem) }
             }
         }
     }

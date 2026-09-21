@@ -221,6 +221,10 @@ internal class TestOrdinaryInventoryS3ClientV1 private constructor(
             nanoTime: () -> Long,
         ): TestOrdinaryInventoryS3ClientV1 = openOrigin(TestInventoryS3OriginV1.terminal(reader), credentials, httpFactory, nanoTime)
 
+        fun open(reader: me.manga.kira.backend.complaint.infrastructure.journal.TestActiveQueueJournalReaderV1, credentials: AwsSessionCredentials,
+            httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient, nanoTime: () -> Long,
+        ): TestOrdinaryInventoryS3ClientV1 = openOrigin(TestInventoryS3OriginV1.queue(reader), credentials, httpFactory, nanoTime)
+
         private fun openOrigin(
             reader: TestInventoryS3OriginV1,
             credentials: AwsSessionCredentials,

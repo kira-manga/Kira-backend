@@ -164,6 +164,11 @@ dependencies {
         exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
     }
     implementation(libs.aws.sdk.url.connection.client)
+    implementation(libs.aws.sdk.sqs) {
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+        exclude(group = "software.amazon.awssdk", module = "apache5-client")
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+    }
 
     // --- API docs ---
     implementation(libs.springdoc.openapi.starter.webmvc.ui)

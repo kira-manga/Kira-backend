@@ -62,6 +62,7 @@ internal class TestOrdinaryInventoryS3CallV1 private constructor(
             nanoTime: () -> Long,
         ): TestOrdinaryInventoryS3CallV1 {
             reader.requireNativeRead()
+            reader.requireListing()
             cursor?.let {
                 reader.requireInventoryKey(it.key)
                 requireJournalVersion(it.version)
