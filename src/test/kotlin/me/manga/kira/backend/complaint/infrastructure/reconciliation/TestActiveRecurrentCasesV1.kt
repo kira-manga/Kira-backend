@@ -291,48 +291,96 @@ internal object TestActiveRecurrentCasesV1 {
         family: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE,
         deletionProfile: String = VersionBoundTestInitialCheckpointDeletionV1.RECURRENT_PROFILE,
         shortFreshness: Boolean = false, reconstructPriorReceipt: Boolean = false,
-        action: (TestActiveRecurrentFixtureV1, TestRegisteredInitialCheckpointDeletionFixtureV1) -> Unit) =
-        withRecurrentFixture(tls, initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.RECURRENT_PROFILE),
-            initialCheckpointDeletion = TestInitialCheckpointDeletionInputV1(1, deletionProfile), shortFreshness = shortFreshness,
-            reserveSecondConsumerCreator = family == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) { f ->
-            val precursor = f.precursor
-            val event = checkNotNull(precursor.event); val work = precursor.ownerWork; val lane = precursor.ownerLane
-            val readback = precursor.readback; val record = precursor.record
-            if (reconstructPriorReceipt) reconstructOwnerReceiptThroughB(f)
-            val prior = deletionEvidence(precursor)
-            val initial = (f.control().getValue("checkpoint_bytes") as ByteArray).copyOf()
-            val paid = f.counters()
-            val completed = assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, f.checkpoint())
-            f.assertSuccessful()
-            assertEquals(2L, completed.cutoffEpoch); assertEquals(3L, f.control()["publication_epoch"])
-            assertEquals(1L, f.document().objectCount); assertEquals(f.record.stored.bytes.size.toLong(), f.document().byteCount)
-            assertEquals(listOf("STS", "PASS1", "GET1", "DECRYPT", "PASS2", "GET2", "DECRYPT"), f.raw.order)
-            assertEquals(2, f.history().size)
-            assertArrayEquals(initial, f.history().first()["checkpoint_bytes"] as ByteArray)
-            assertArrayEquals(f.control()["checkpoint_bytes"] as ByteArray, f.history().last()["checkpoint_bytes"] as ByteArray)
-            f.assertCharge(paid, TestActiveRecurrentStorageV1.INTENT + TestActiveRecurrentStorageV1.HISTORY.scaled(2))
-            assertEquals(prior, deletionEvidence(precursor))
-            val creators = if (family == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) f.retainedConsumerCreators else listOf(f.retainedCreator())
-            assertEquals(if (family == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) 2 else 1, creators.size)
-            val providers = f.providerCounts(); val beforeCreate = f.counters()
-            val reports = creators.map { creator ->
-                assertSame(f.process, creator.process); assertSame(f.registration, creator.registration)
-                creator.attempt().also { creator.assertApplied(creator.create(it), it); creator.assertReleased() }
-            }
-            f.assertCharge(beforeCreate, ComplaintCapacityCharges.OWNER_CREATE.scaled(creators.size.toLong()))
-            assertEquals(providers, f.providerCounts(), "The actual recurrent CREATE does not call any native consumer.")
-            f.withIdleDeletionHooks {
-                TestRegisteredInitialCheckpointDeletionFixtureV1(precursor.checkpoint, precursor.exchange, creators, reports, precursor.native,
-                    family, retained = precursor, expectedEpoch = 3).use { d ->
-                    assertEquals(if (deletionProfile == VersionBoundTestInitialCheckpointDeletionV1.RECURRENT_PROFILE)
-                        TestRegisteredRecurrentCheckpointDeletionSqlV1.current else TestRegisteredInitialCheckpointDeletionSqlV1.current, d.currentCheckpointSql())
-                    action(f, d)
-                }
-            }
-            assertSame(event, precursor.event); assertSame(work, precursor.ownerWork); assertSame(lane, precursor.ownerLane)
-            assertSame(readback, precursor.readback); assertSame(record, precursor.record)
-            f.assertReleased()
+        action: (TestActiveRecurrentFixtureV1, TestRegisteredInitialCheckpointDeletionFixtureV1) -> Unit) {
+        var stage = "INITIAL_SETUP"
+        var observedFixture: TestActiveRecurrentFixtureV1? = null
+        var observedDeletion: TestRegisteredInitialCheckpointDeletionFixtureV1? = null
+        var reportedFailure: Throwable? = null
+        fun report(failure: Throwable) {
+            reportedFailure = failure
+            try {
+                // Retained prefix only, not attribution to a failing SQL call. Native proof work
+                // can occur after the last SQL phase; cleanup may also produce a distinct failure.
+                val calls = observedFixture?.precursor?.deletion?.calls
+                val last = calls?.lastOrNull()
+                val ordinal = if (last == null) 0 else calls?.count { it.phase === last.phase } ?: 0
+                println("TEST_ACTIVE_RECURRENT_DELETION_CASE_FAILURE stage=$stage kind=${testDeletionFailureKind(failure)} " +
+                    "fixtureReady=${observedFixture != null} consumerReady=${observedDeletion != null} " +
+                    "observedStep=${observedFixture?.original?.step?.name ?: "NONE"} " +
+                    "lastAttemptedPath=${last?.path?.name ?: "NONE"} lastAttemptedSqlStep=${last?.sqlStep ?: "NONE"} lastPhaseCallOrdinal=$ordinal " +
+                    "eventRetained=${observedDeletion?.event != null} nativeRecordRetained=${observedDeletion?.record != null} readbackRetained=${observedDeletion?.readback != null}")
+            } catch (_: Throwable) { /* Diagnostics must not replace the original failure. */ }
         }
+        try {
+            withRecurrentFixture(tls, initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.RECURRENT_PROFILE),
+                initialCheckpointDeletion = TestInitialCheckpointDeletionInputV1(1, deletionProfile), shortFreshness = shortFreshness,
+                reserveSecondConsumerCreator = family == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) { f ->
+                observedFixture = f
+                try {
+                    stage = "PRIOR_HISTORY"
+                    val precursor = f.precursor
+                    val event = checkNotNull(precursor.event); val work = precursor.ownerWork; val lane = precursor.ownerLane
+                    val readback = precursor.readback; val record = precursor.record
+                    if (reconstructPriorReceipt) {
+                        stage = "PRIOR_B_RECONSTRUCTION"
+                        reconstructOwnerReceiptThroughB(f)
+                        stage = "PRIOR_HISTORY"
+                    }
+                    val prior = deletionEvidence(precursor)
+                    val initial = (f.control().getValue("checkpoint_bytes") as ByteArray).copyOf()
+                    val paid = f.counters()
+                    stage = "RECURRENT_CHECKPOINT"
+                    val completed = assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, f.checkpoint())
+                    stage = "CHECKPOINT_ASSERTIONS"
+                    f.assertSuccessful()
+                    assertEquals(2L, completed.cutoffEpoch); assertEquals(3L, f.control()["publication_epoch"])
+                    assertEquals(1L, f.document().objectCount); assertEquals(f.record.stored.bytes.size.toLong(), f.document().byteCount)
+                    assertEquals(listOf("STS", "PASS1", "GET1", "DECRYPT", "PASS2", "GET2", "DECRYPT"), f.raw.order)
+                    assertEquals(2, f.history().size)
+                    assertArrayEquals(initial, f.history().first()["checkpoint_bytes"] as ByteArray)
+                    assertArrayEquals(f.control()["checkpoint_bytes"] as ByteArray, f.history().last()["checkpoint_bytes"] as ByteArray)
+                    f.assertCharge(paid, TestActiveRecurrentStorageV1.INTENT + TestActiveRecurrentStorageV1.HISTORY.scaled(2))
+                    assertEquals(prior, deletionEvidence(precursor))
+                    stage = "CURRENT_CREATE"
+                    val creators = if (family == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) f.retainedConsumerCreators else listOf(f.retainedCreator())
+                    assertEquals(if (family == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) 2 else 1, creators.size)
+                    val providers = f.providerCounts(); val beforeCreate = f.counters()
+                    val reports = creators.map { creator ->
+                        assertSame(f.process, creator.process); assertSame(f.registration, creator.registration)
+                        creator.attempt().also { creator.assertApplied(creator.create(it), it); creator.assertReleased() }
+                    }
+                    f.assertCharge(beforeCreate, ComplaintCapacityCharges.OWNER_CREATE.scaled(creators.size.toLong()))
+                    assertEquals(providers, f.providerCounts(), "The actual recurrent CREATE does not call any native consumer.")
+                    stage = "CURRENT_DELETION_CONSTRUCTION"
+                    f.withIdleDeletionHooks {
+                        TestRegisteredInitialCheckpointDeletionFixtureV1(precursor.checkpoint, precursor.exchange, creators, reports, precursor.native,
+                            family, retained = precursor, expectedEpoch = 3).use { d ->
+                            observedDeletion = d
+                            try {
+                                stage = "CURRENT_DELETION_ACTION"
+                                assertEquals(if (deletionProfile == VersionBoundTestInitialCheckpointDeletionV1.RECURRENT_PROFILE)
+                                    TestRegisteredRecurrentCheckpointDeletionSqlV1.current else TestRegisteredInitialCheckpointDeletionSqlV1.current, d.currentCheckpointSql())
+                                action(f, d)
+                            } catch (failure: Throwable) {
+                                report(failure)
+                                throw failure
+                            } finally { stage = "CONSUMER_CLEANUP" }
+                        }
+                    }
+                    stage = "FINAL_ASSERTIONS"
+                    assertSame(event, precursor.event); assertSame(work, precursor.ownerWork); assertSame(lane, precursor.ownerLane)
+                    assertSame(readback, precursor.readback); assertSame(record, precursor.record)
+                    f.assertReleased()
+                } catch (failure: Throwable) {
+                    if (reportedFailure !== failure) report(failure)
+                    throw failure
+                } finally { stage = "OUTER_CLEANUP" }
+            }
+        } catch (failure: Throwable) {
+            if (reportedFailure !== failure) report(failure)
+            throw failure
+        }
+    }
 
     private fun reconstructOwnerReceiptThroughB(f: TestActiveRecurrentFixtureV1) {
         val p = f.precursor
