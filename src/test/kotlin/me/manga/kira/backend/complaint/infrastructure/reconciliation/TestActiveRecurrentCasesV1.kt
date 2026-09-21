@@ -214,9 +214,12 @@ internal object TestActiveRecurrentCasesV1 {
                 ready.countDown()
                 var waitingPid: Int? = null
                 awaitLifecycleFact(6_000) {
-                    if (!stop.get()) waitingPid = jdbc.query("SELECT a.pid FROM pg_stat_activity a WHERE a.datname=current_database() AND ?=ANY(pg_blocking_pids(a.pid)) " +
+                    if (!stop.get()) {
+                        jdbc.execute("SELECT pg_stat_clear_snapshot()") // This same blocker transaction must see the newly opened NONPOOLED waiter.
+                        waitingPid = jdbc.query("SELECT a.pid FROM pg_stat_activity a WHERE a.datname=current_database() AND ?=ANY(pg_blocking_pids(a.pid)) " +
                             "AND EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid=a.pid AND l.locktype='advisory' AND l.mode='ExclusiveLock' AND NOT l.granted)",
                             { row, _ -> row.getInt(1) }, holderPid).singleOrNull()
+                    }
                     stop.get() || waitingPid != null
                 }
                 check(!stop.get()) { "Recurrent producer stopped before its actual exclusive epoch wait." }
