@@ -3,6 +3,7 @@ package me.manga.kira.backend.complaint.infrastructure.reconciliation
 /** Closed V31 paid staging; no caller SQL, terminal reserve, temporary table or queue inference. */
 internal object TestActiveRecurrentScanSqlV1 {
     private const val PAGE = 32
+    // Native pass start is retained at microsecond precision, not a whole-second wire instant.
     val runs = """
         SELECT s.scan_id,s.pass,s.data_scope_id,s.test_only,s.restore_identity,s.desired_generation,s.fencing_token,
             s.writer_generation,s.cutoff_epoch,s.maximum_entries,s.maximum_bytes,s.entry_count,s.entry_bytes,
@@ -10,7 +11,8 @@ internal object TestActiveRecurrentScanSqlV1 {
             CASE WHEN octet_length(s.manifest_hash)=32 THEN s.manifest_hash END AS manifest_hash,
             s.started_at,s.finished_at,s.active_initial_seal_token,s.active_initial_storage_bytes,
             s.active_recurrent_seal_token,s.active_recurrent_storage_bytes,
-            (complaint_test_terminal_instant_valid(s.started_at) AND complaint_finite_times(s.finished_at)
+            (isfinite(s.started_at) AND s.started_at >= '1970-01-01T00:00:00Z'::timestamptz AND s.started_at < '10000-01-01T00:00:00Z'::timestamptz
+                AND complaint_finite_times(s.finished_at)
                 AND ((s.state='SCANNING' AND s.manifest_hash IS NULL AND s.finished_at IS NULL)
                     OR (s.state='COMPLETE' AND complaint_digest_valid(s.manifest_hash) AND s.finished_at IS NOT NULL)
                     OR (s.state='ABANDONED' AND s.manifest_hash IS NULL AND s.finished_at IS NOT NULL))) IS TRUE AS valid,

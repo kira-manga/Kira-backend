@@ -13,6 +13,8 @@ internal object TestActiveRecurrentSqlV1 {
     val lockRun = TestActiveFirstCutSqlV1.lockRun
     val lockSlot = "SELECT operation_token FROM complaint_test_active_recurrent_seal_intents WHERE data_scope_id = ?::uuid AND operation_token = ?::uuid AND test_only FOR UPDATE"
 
+    // Operational DB/native times preserve microseconds and the row decoder's [1970,10000)
+    // range. The terminal whole-second helper remains only for wire retention.
     /**
      * Recurrent expected inventory only. UNION selects exact locators, NOT accepted history:
      * every physical P/E overlap is checked below and every E-only ALL row still needs the
@@ -46,7 +48,8 @@ internal object TestActiveRecurrentSqlV1 {
             CASE WHEN octet_length(a.ciphertext_hash)=32 THEN a.ciphertext_hash END AS applied_ciphertext_hash,
             (a.test_only AND complaint_event_id_valid(a.event_id) AND complaint_is_v4(a.writer_generation)
                 AND complaint_ascii_valid(a.object_key,1024) AND complaint_opaque_valid(a.object_version,1024) AND a.object_version<>'null'
-                AND complaint_digest_valid(a.ciphertext_hash) AND complaint_test_terminal_instant_valid(a.applied_at)
+                AND complaint_digest_valid(a.ciphertext_hash) AND isfinite(a.applied_at)
+                AND a.applied_at >= '1970-01-01T00:00:00Z'::timestamptz AND a.applied_at < '10000-01-01T00:00:00Z'::timestamptz
                 AND octet_length(to_jsonb(a)::text) BETWEEN 1 AND 16384) IS TRUE AS applied_valid,
             (CASE WHEN p.event_id IS NOT NULL AND a.object_key IS NOT NULL THEN
                 p.state='APPLIED' AND p.test_only=a.test_only AND p.data_scope_id=a.data_scope_id AND p.writer_generation=a.writer_generation
@@ -116,7 +119,8 @@ internal object TestActiveRecurrentSqlV1 {
                 AND c.seal_retain_until IS NULL AND c.seal_verified_at IS NULL AND c.seal_verification_bytes IS NULL AND c.seal_verification_hash IS NULL)
             OR (c.seal_state='SEAL_VERIFIED' AND complaint_opaque_valid(c.seal_object_version,1024) AND c.seal_object_version<>'null'
                 AND complaint_digest_valid(c.seal_ciphertext_hash) AND complaint_test_terminal_instant_valid(c.seal_retain_until)
-                AND complaint_test_terminal_instant_valid(c.seal_verified_at)
+                AND isfinite(c.seal_verified_at)
+                AND c.seal_verified_at >= '1970-01-01T00:00:00Z'::timestamptz AND c.seal_verified_at < '10000-01-01T00:00:00Z'::timestamptz
                 AND complaint_bytes_match(c.seal_verification_bytes,c.seal_verification_hash,65536)))))
     """.trimIndent()
     private val checkpointShape = """
@@ -158,7 +162,8 @@ internal object TestActiveRecurrentSqlV1 {
             AND complaint_finite_times(c.updated_at, g.updated_at, c.lease_expires_at, c.rotation_requested_at, c.rotation_captured_at,
                 c.seal_retain_until, c.seal_verified_at, c.checkpoint_started_at, c.checkpoint_completed_at, s.sampled_at)
             AND s.sampled_at >= c.updated_at AND s.sampled_at >= g.updated_at
-            AND complaint_test_terminal_instant_valid(s.sampled_at)
+            AND isfinite(s.sampled_at)
+            AND s.sampled_at >= '1970-01-01T00:00:00Z'::timestamptz AND s.sampled_at < '10000-01-01T00:00:00Z'::timestamptz
             AND octet_length(to_jsonb(c)::text) BETWEEN 1 AND 524288 AND octet_length(to_jsonb(g)::text) BETWEEN 1 AND 524288
             AND octet_length(to_jsonb(r)::text) BETWEEN 1 AND 524288
             AND NOT EXISTS (SELECT 1 FROM complaint_test_terminal_intents t WHERE t.data_scope_id = e.scope)
@@ -211,7 +216,8 @@ internal object TestActiveRecurrentSqlV1 {
         sha256(convert_to((to_jsonb(i) || jsonb_build_object('row_xmin',i.xmin::text))::text,'UTF8')) AS slot_fingerprint,
         (i.schema_version = 1 AND i.test_only AND i.state IN ('RESERVED','CANONICAL','WIRE_FROZEN')
             AND octet_length(to_jsonb(i)::text) BETWEEN 1 AND 524288
-            AND complaint_test_terminal_instant_valid(i.run_created_at) AND complaint_test_terminal_instant_valid(i.requested_at)
+            AND isfinite(i.run_created_at) AND i.run_created_at >= '1970-01-01T00:00:00Z'::timestamptz AND i.run_created_at < '10000-01-01T00:00:00Z'::timestamptz
+            AND isfinite(i.requested_at) AND i.requested_at >= '1970-01-01T00:00:00Z'::timestamptz AND i.requested_at < '10000-01-01T00:00:00Z'::timestamptz
             AND complaint_finite_times(i.captured_at)
             AND (i.state<>'RESERVED' OR (i.object_id IS NULL AND i.object_key IS NULL AND i.routing_key_id IS NULL
                 AND i.preparing_fencing_token IS NULL AND i.seal_encoding_hash IS NULL AND i.canonicalizer IS NULL
