@@ -1,0 +1,440 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 18,
+      "class": "me.manga.kira.backend.security.ComplaintBootstrapSecurityBoundaryTest",
+      "cohort": "new_registered_HTTP_and_default_regression",
+      "expected_invocations_from_annotation": 1,
+      "method": "absent registered composition leaves real configuration closed before buffering or account security",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintBootstrapSecurityBoundaryTest.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "d685b833ccd7c309ee6b10fc6e95ed81fcdd7e2c54994bb5a6f27674d6f2e115",
+      "xml_names": [
+        "absent registered composition leaves real configuration closed before buffering or account security()"
+      ]
+    },
+    {
+      "annotation_line": 22,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRegisteredCheckpointAllowsRepeatedCountedCreateAndReceiptReplayBeforeClosedControlAndQuotas",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "genuineRegisteredCheckpointAllowsRepeatedCountedCreateAndReceiptReplayBeforeClosedControlAndQuotas()"
+      ]
+    },
+    {
+      "annotation_line": 25,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "factoryRejectsDesiredOnlyForeignTemplateOwnerIngressReplyAndClosedRegistration",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "factoryRejectsDesiredOnlyForeignTemplateOwnerIngressReplyAndClosedRegistration()"
+      ]
+    },
+    {
+      "annotation_line": 28,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "nativeVerifiedSealAndRegistrationAloneCannotReplaceTheCurrentCheckpoint",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "nativeVerifiedSealAndRegistrationAloneCannotReplaceTheCurrentCheckpoint()"
+      ]
+    },
+    {
+      "annotation_line": 31,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "allSeventeenCheckpointColumnsAndFullCurrentBindingsAreCheckedWithoutMintingEligibilityFromBytes",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "allSeventeenCheckpointColumnsAndFullCurrentBindingsAreCheckedWithoutMintingEligibilityFromBytes()"
+      ]
+    },
+    {
+      "annotation_line": 34,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualClaimLoserObservesWinnerBeforeChangedControlFreshnessOrAnotherCapacityCharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "actualClaimLoserObservesWinnerBeforeChangedControlFreshnessOrAnotherCapacityCharge()"
+      ]
+    },
+    {
+      "annotation_line": 37,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "registered_CREATE_review_corrections",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualClaimLoserRefusesCurrentDesiredIdentityDriftWithoutAnotherCapacityCharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "actualClaimLoserRefusesCurrentDesiredIdentityDriftWithoutAnotherCapacityCharge()"
+      ]
+    },
+    {
+      "annotation_line": 40,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "bornWithShortFreshnessExpiresOnDatabaseTimeAfterActorAcquisitionButExactReceiptsRemainReplayable",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "bornWithShortFreshnessExpiresOnDatabaseTimeAfterActorAcquisitionButExactReceiptsRemainReplayable()"
+      ]
+    },
+    {
+      "annotation_line": 43,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualCredentialRowWaitCannotOutrunCurrentActorRevalidation",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "actualCredentialRowWaitCannotOutrunCurrentActorRevalidation()"
+      ]
+    },
+    {
+      "annotation_line": 46,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "rollbackUnknownCommitAndCommittedTailFailureNeverReleaseAnUnprovedOriginalResult",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "rollbackUnknownCommitAndCommittedTailFailureNeverReleaseAnUnprovedOriginalResult()"
+      ]
+    },
+    {
+      "annotation_line": 49,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_HTTP_and_default_regression",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredHttpSubsetUsesOneIngressForBootstrapIdentityCreateAndCurrentReceiptStatus",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "registeredHttpSubsetUsesOneIngressForBootstrapIdentityCreateAndCurrentReceiptStatus()"
+      ]
+    },
+    {
+      "annotation_line": 52,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_HTTP_and_default_regression",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredHttpSubsetDeniesUnimplementedAliasesBeforeBodyAndRejectsUnboundResources",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "registeredHttpSubsetDeniesUnimplementedAliasesBeforeBodyAndRejectsUnboundResources()"
+      ]
+    },
+    {
+      "annotation_line": 55,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_HTTP_and_default_regression",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredHttpSubsetCannotCreateBeforeCheckpointAndBootstrapOnlyNeverExpands",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+      "xml_names": [
+        "registeredHttpSubsetCannotCreateBeforeCheckpointAndBootstrapOnlyNeverExpands()"
+      ]
+    },
+    {
+      "annotation_line": 23,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestInitialCheckpointCurrentCodecV1Test",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "exactCanonicalDocumentUsesTheSameSeventeenScalarAndByteArgumentsAsTheWriter",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestInitialCheckpointCurrentCodecV1Test.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "7d62ab3a5588fec73d883897d9b38dc908aad1da434d243f60a051b6657f1ca7",
+      "xml_names": [
+        "exactCanonicalDocumentUsesTheSameSeventeenScalarAndByteArgumentsAsTheWriter()"
+      ]
+    },
+    {
+      "annotation_line": 43,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestInitialCheckpointCurrentCodecV1Test",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "duplicatesTrailingNoncanonicalUnknownConstantsAndPassDriftCannotBeParsedAsCurrentSyntax",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestInitialCheckpointCurrentCodecV1Test.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "7d62ab3a5588fec73d883897d9b38dc908aad1da434d243f60a051b6657f1ca7",
+      "xml_names": [
+        "duplicatesTrailingNoncanonicalUnknownConstantsAndPassDriftCannotBeParsedAsCurrentSyntax()"
+      ]
+    },
+    {
+      "annotation_line": 31,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryIT",
+      "cohort": "actual42_natural_age_setup_correction",
+      "expected_invocations_from_annotation": 1,
+      "method": "bornWithCurrentPutFloorPublishesStaleMissingFrozenBytesWithoutRepair",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOrdinarySealRecoveryIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "d1b5f91b2fae47d69d1da13fbda4e0e7f92d9accaa52f9d8c211d8f084129aa6",
+      "xml_names": [
+        "bornWithCurrentPutFloorPublishesStaleMissingFrozenBytesWithoutRepair()"
+      ]
+    },
+    {
+      "annotation_line": 34,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryIT",
+      "cohort": "actual42_natural_age_setup_correction",
+      "expected_invocations_from_annotation": 1,
+      "method": "bornWithCurrentPutFloorRejectsKnownAckGetBelowCapturedLockDespiteCoveringFrozenMinimum",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOrdinarySealRecoveryIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "d1b5f91b2fae47d69d1da13fbda4e0e7f92d9accaa52f9d8c211d8f084129aa6",
+      "xml_names": [
+        "bornWithCurrentPutFloorRejectsKnownAckGetBelowCapturedLockDespiteCoveringFrozenMinimum()"
+      ]
+    },
+    {
+      "annotation_line": 31,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "explicitCurrentCreateRecipeChangesOnlyItsOptionalFullDMemberAndPinsTheActualPoolBeforeOpening",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointCreateColdInputsV1Test.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "384aa7c604200ad63723f0f5bb7ab82784f45a454922d4819a8c18cdc622cd27",
+      "xml_names": [
+        "explicitCurrentCreateRecipeChangesOnlyItsOptionalFullDMemberAndPinsTheActualPoolBeforeOpening()"
+      ]
+    },
+    {
+      "annotation_line": 57,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test",
+      "cohort": "new_registered_current_CREATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "missingInitialReaderAndUnknownCreatePolicyRefuseBeforeAnySecretOrResourceAcquisition",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointCreateColdInputsV1Test.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "384aa7c604200ad63723f0f5bb7ab82784f45a454922d4819a8c18cdc622cd27",
+      "xml_names": [
+        "missingInitialReaderAndUnknownCreatePolicyRefuseBeforeAnySecretOrResourceAcquisition()"
+      ]
+    },
+    {
+      "annotation_line": 22,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunPurgePublicationIT",
+      "cohort": "actual42_unused_manifest_diagnostic",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineUnusedRunCarriesEmptyRootAndZeroChunksThenPaysFreezesAuthenticatesAndReplaysExactPurge",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunPurgePublicationIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "ac76fd8821aabe42ed6e910d8ee0d99a3b760633bd035cfb8c09a70037d7b19c",
+      "xml_names": [
+        "genuineUnusedRunCarriesEmptyRootAndZeroChunksThenPaysFreezesAuthenticatesAndReplaysExactPurge()"
+      ]
+    },
+    {
+      "annotation_line": 49,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "new_A_history_foundation_and_premanifest_contracts",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineActiveSealHistoryReachesDrainManifestPurgeTerminalAndFullQuiescentSealSet",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "b6bfdc9cbc64cf1e36d16c2e57a66e1da7f47f7048818a47cc002b006d5ca138",
+      "xml_names": [
+        "genuineActiveSealHistoryReachesDrainManifestPurgeTerminalAndFullQuiescentSealSet()"
+      ]
+    },
+    {
+      "annotation_line": 54,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "new_A_history_foundation_and_premanifest_contracts",
+      "expected_invocations_from_annotation": 1,
+      "method": "activeHistoryChangedGlobalGenerationCannotCloseOpenGatesOrPaySealedAudit",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "b6bfdc9cbc64cf1e36d16c2e57a66e1da7f47f7048818a47cc002b006d5ca138",
+      "xml_names": [
+        "activeHistoryChangedGlobalGenerationCannotCloseOpenGatesOrPaySealedAudit()"
+      ]
+    },
+    {
+      "annotation_line": 59,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "new_A_history_foundation_and_premanifest_contracts",
+      "expected_invocations_from_annotation": 1,
+      "method": "activeHistoryChangedGlobalHashCannotReadmitClosedSealerOrBeginDrain",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "b6bfdc9cbc64cf1e36d16c2e57a66e1da7f47f7048818a47cc002b006d5ca138",
+      "xml_names": [
+        "activeHistoryChangedGlobalHashCannotReadmitClosedSealerOrBeginDrain()"
+      ]
+    },
+    {
+      "annotation_line": 64,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "new_A_history_foundation_and_premanifest_contracts",
+      "expected_invocations_from_annotation": 1,
+      "method": "activeHistoryMissingRetainedNativeVersionCannotRecreateAOrPublishSuccessor",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "b6bfdc9cbc64cf1e36d16c2e57a66e1da7f47f7048818a47cc002b006d5ca138",
+      "xml_names": [
+        "activeHistoryMissingRetainedNativeVersionCannotRecreateAOrPublishSuccessor()"
+      ]
+    },
+    {
+      "annotation_line": 69,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "new_A_history_foundation_and_premanifest_contracts",
+      "expected_invocations_from_annotation": 1,
+      "method": "activeHistoryChangedRetainedNativeVersionCannotRecreateAOrPublishSuccessor",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "b6bfdc9cbc64cf1e36d16c2e57a66e1da7f47f7048818a47cc002b006d5ca138",
+      "xml_names": [
+        "activeHistoryChangedRetainedNativeVersionCannotRecreateAOrPublishSuccessor()"
+      ]
+    },
+    {
+      "annotation_line": 1493,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "cohort": "actual42_original_callback_diagnostic",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActiveFirstCutFailedNativeRetirementPastWorkAllowanceStaysStickyAfterReclamation",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "989e92febd66d4eff1ac9f414dbfe5e846a6e5d76a3c6d05fabc1906afb02712",
+      "xml_names": [
+        "testActiveFirstCutFailedNativeRetirementPastWorkAllowanceStaysStickyAfterReclamation()"
+      ]
+    },
+    {
+      "annotation_line": 23,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalEpochSealIT",
+      "cohort": "affected_no_A_regression_after_D31",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineUnusedPurgePaysOneAtomicRotationIntentAndAddsActualTerminalRefWithoutChangingPurgePrefix",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestTerminalEpochSealIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "115b05c753abcdfe1eb1e2c39d041b25999c08fa61432e633d389dc2cf5bf19d",
+      "xml_names": [
+        "genuineUnusedPurgePaysOneAtomicRotationIntentAndAddsActualTerminalRefWithoutChangingPurgePrefix()"
+      ]
+    },
+    {
+      "annotation_line": 28,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalEpochSealIT",
+      "cohort": "actual42_enrolled_manifest_diagnostic",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualProtectedIdentityEnrollmentRecordsRetiredDispositionAndPublishesItsChunkBeforeTerminalSeal",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestTerminalEpochSealIT.kt",
+      "source_head": "bcf831f2314cda1d1ae03b0547972ba33f50859d",
+      "source_sha256": "115b05c753abcdfe1eb1e2c39d041b25999c08fa61432e633d389dc2cf5bf19d",
+      "xml_names": [
+        "actualProtectedIdentityEnrollmentRecordsRetiredDispositionAndPublishesItsChunkBeforeTerminalSeal()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 28,
+  "expected_total": 28,
+  "selection_basis": {
+    "cohorts": {
+      "actual42_enrolled_manifest_diagnostic": 1,
+      "actual42_natural_age_setup_correction": 2,
+      "actual42_original_callback_diagnostic": 1,
+      "actual42_unused_manifest_diagnostic": 1,
+      "affected_no_A_regression_after_D31": 1,
+      "new_A_history_foundation_and_premanifest_contracts": 5,
+      "new_registered_HTTP_and_default_regression": 4,
+      "new_registered_current_CREATE": 12,
+      "registered_CREATE_review_corrections": 1
+    },
+    "previous_run": "35560054751",
+    "scope": "New registered CREATE/HTTP and coherent reviewed additions; actual42 recovery correction and three representative diagnostics. No unchanged34PASS or repeated setup-blocked descendants; remaining matrices stay pending."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt": "b6bfdc9cbc64cf1e36d16c2e57a66e1da7f47f7048818a47cc002b006d5ca138",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunPurgePublicationIT.kt": "ac76fd8821aabe42ed6e910d8ee0d99a3b760633bd035cfb8c09a70037d7b19c",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestTerminalEpochSealIT.kt": "115b05c753abcdfe1eb1e2c39d041b25999c08fa61432e633d389dc2cf5bf19d",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt": "989e92febd66d4eff1ac9f414dbfe5e846a6e5d76a3c6d05fabc1906afb02712",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointCreateColdInputsV1Test.kt": "384aa7c604200ad63723f0f5bb7ab82784f45a454922d4819a8c18cdc622cd27",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOrdinarySealRecoveryIT.kt": "d1b5f91b2fae47d69d1da13fbda4e0e7f92d9accaa52f9d8c211d8f084129aa6",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestInitialCheckpointCurrentCodecV1Test.kt": "7d62ab3a5588fec73d883897d9b38dc908aad1da434d243f60a051b6657f1ca7",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt": "e3bf8e82f9661dfbecafbb25021c7a3aef5ab9e908bc62685a8284df20ce2ae6",
+    "src/test/kotlin/me/manga/kira/backend/security/ComplaintBootstrapSecurityBoundaryTest.kt": "d685b833ccd7c309ee6b10fc6e95ed81fcdd7e2c54994bb5a6f27674d6f2e115"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT": 5,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunPurgePublicationIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalEpochSealIT": 2,
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test": 2,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryIT": 2,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestInitialCheckpointCurrentCodecV1Test": 2,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT": 12,
+    "me.manga.kira.backend.security.ComplaintBootstrapSecurityBoundaryTest": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test.explicitCurrentCreateRecipeChangesOnlyItsOptionalFullDMemberAndPinsTheActualPoolBeforeOpening",
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test.missingInitialReaderAndUnknownCreatePolicyRefuseBeforeAnySecretOrResourceAcquisition",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestInitialCheckpointCurrentCodecV1Test.exactCanonicalDocumentUsesTheSameSeventeenScalarAndByteArgumentsAsTheWriter",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestInitialCheckpointCurrentCodecV1Test.duplicatesTrailingNoncanonicalUnknownConstantsAndPassDriftCannotBeParsedAsCurrentSyntax",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.genuineRegisteredCheckpointAllowsRepeatedCountedCreateAndReceiptReplayBeforeClosedControlAndQuotas",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.factoryRejectsDesiredOnlyForeignTemplateOwnerIngressReplyAndClosedRegistration",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.nativeVerifiedSealAndRegistrationAloneCannotReplaceTheCurrentCheckpoint",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.allSeventeenCheckpointColumnsAndFullCurrentBindingsAreCheckedWithoutMintingEligibilityFromBytes",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.actualClaimLoserObservesWinnerBeforeChangedControlFreshnessOrAnotherCapacityCharge",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.bornWithShortFreshnessExpiresOnDatabaseTimeAfterActorAcquisitionButExactReceiptsRemainReplayable",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.actualCredentialRowWaitCannotOutrunCurrentActorRevalidation",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.rollbackUnknownCommitAndCommittedTailFailureNeverReleaseAnUnprovedOriginalResult",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.actualClaimLoserRefusesCurrentDesiredIdentityDriftWithoutAnotherCapacityCharge",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.registeredHttpSubsetUsesOneIngressForBootstrapIdentityCreateAndCurrentReceiptStatus",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.registeredHttpSubsetDeniesUnimplementedAliasesBeforeBodyAndRejectsUnboundResources",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.registeredHttpSubsetCannotCreateBeforeCheckpointAndBootstrapOnlyNeverExpands",
+    "me.manga.kira.backend.security.ComplaintBootstrapSecurityBoundaryTest.absent registered composition leaves real configuration closed before buffering or account security",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunPurgePublicationIT.genuineUnusedRunCarriesEmptyRootAndZeroChunksThenPaysFreezesAuthenticatesAndReplaysExactPurge",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalEpochSealIT.actualProtectedIdentityEnrollmentRecordsRetiredDispositionAndPublishesItsChunkBeforeTerminalSeal",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActiveFirstCutFailedNativeRetirementPastWorkAllowanceStaysStickyAfterReclamation",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryIT.bornWithCurrentPutFloorPublishesStaleMissingFrozenBytesWithoutRepair",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryIT.bornWithCurrentPutFloorRejectsKnownAckGetBelowCapturedLockDespiteCoveringFrozenMinimum",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.genuineActiveSealHistoryReachesDrainManifestPurgeTerminalAndFullQuiescentSealSet",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.activeHistoryChangedGlobalGenerationCannotCloseOpenGatesOrPaySealedAudit",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.activeHistoryChangedGlobalHashCannotReadmitClosedSealerOrBeginDrain",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.activeHistoryMissingRetainedNativeVersionCannotRecreateAOrPublishSuccessor",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.activeHistoryChangedRetainedNativeVersionCannotRecreateAOrPublishSuccessor",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalEpochSealIT.genuineUnusedPurgePaysOneAtomicRotationIntentAndAddsActualTerminalRefWithoutChangingPurgePrefix"
+  ]
+}
