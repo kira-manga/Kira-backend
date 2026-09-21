@@ -1,7 +1,9 @@
 package me.manga.kira.backend.complaint.catalog
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -76,10 +78,11 @@ internal object ColdSqlObservationV1 {
         val current = image(jdbc)
         val changed = setOf("complaint_journal_control", "complaint_test_runs", "complaint_capacity_counters",
             "complaint_recovery_capacity_reservations", "complaint_deletion_journal_applied", "complaint_journal_scan_runs",
-            "complaint_journal_scan_entries", "complaint_test_terminal_intents")
-        (tables - changed).forEach { table -> assertEquals(saved.image.getValue(table), current.getValue(table), "No PROJECT/enrollment/primary/audit replay: $table") }
+            "complaint_journal_scan_entries", "complaint_test_terminal_intents", "audit_log")
+        (tables - changed).forEach { table -> assertEquals(saved.image.getValue(table), current.getValue(table), "No PROJECT/enrollment/primary replay: $table") }
         assertTrue(current.getValue("complaint_journal_scan_runs").isEmpty() && current.getValue("complaint_journal_scan_entries").isEmpty())
         assertEquals(4, current.getValue("complaint_deletion_journal_applied").size)
+        recoveryAudits(saved, current, journal.scope.id)
         assertEquals(1, current.getValue("complaint_test_terminal_intents").size)
         val oldRecovery = row(saved.image.getValue("complaint_recovery_capacity_reservations").single())
         val recovery = row(current.getValue("complaint_recovery_capacity_reservations").single())
@@ -146,6 +149,45 @@ internal object ColdSqlObservationV1 {
         assertEquals(1, seal.requests.count { it.kind == "PUT" })
     }
 
+    /** New aliases require paid recovery summaries, never another primary/enrollment/PROJECT audit. */
+    private fun recoveryAudits(saved: ColdRawHandoffV1, current: Map<String, List<String>>, scope: UUID) {
+        val originalApplied = saved.image.getValue("complaint_deletion_journal_applied").single()
+        val applied = current.getValue("complaint_deletion_journal_applied")
+        assertTrue(originalApplied in applied, "The author JVM's primary APPLIED row remains byte/xmin-identical.")
+        assertEquals(saved.ordinary.map { it.key to it.version }.toSet(),
+            applied.map { row(it).let { value -> text(value, "object_key") to text(value, "object_version") } }.toSet())
+        val aliases = (applied - originalApplied).associateBy(::xmin)
+        assertEquals(3, aliases.size, "Each of the three new aliases is applied in its own transaction.")
+
+        val originalAudits = saved.image.getValue("audit_log")
+        val audits = current.getValue("audit_log")
+        assertTrue(audits.containsAll(originalAudits), "Every author JVM audit remains byte/xmin-identical, including unrelated history.")
+        assertEquals(originalAudits.size + 3, audits.size, "Only three newly applied aliases may append audits.")
+        val summaries = audits - originalAudits.toSet()
+        assertEquals(3, summaries.size)
+        assertEquals(aliases.keys, summaries.map(::xmin).toSet(), "Exactly one recovery summary shares each new alias's actual transaction.")
+
+        val primary = row(originalApplied)
+        val receipt = saved.image.getValue("complaint_idempotency_receipts").map(::row).single {
+            it["publication_ref"] == primary["event_id"]
+        }
+        assertEquals("OWNER_DELETE", text(receipt, "operation")); assertEquals("COMPLETED", text(receipt, "state"))
+        val target = receipt.getValue("target_ids").jsonArray.single()
+        val expected = mapOf("actor_user_id" to JsonNull, "action" to JsonPrimitive("COMPLAINT_RECOVERY_APPLIED"),
+            "entity_type" to JsonPrimitive("complaint"), "entity_id" to target, "detail" to JsonObject(emptyMap()),
+            "complaint_data_scope_id" to JsonPrimitive(scope.toString()), "complaint_actor_kind" to JsonPrimitive("SYSTEM"))
+        summaries.forEach { bytes ->
+            val summary = row(bytes)
+            assertEquals(expected, summary.filterKeys { it != "id" && it != "created_at" })
+            assertTrue(number(summary, "id") > 0)
+            val alias = row(aliases.getValue(xmin(bytes)))
+            for (column in listOf("data_scope_id", "test_only", "writer_generation", "journal_epoch", "event_kind", "target_count"))
+                assertEquals(primary.getValue(column), alias.getValue(column))
+            // The audit uses the APPLY timestamp captured before INSERT_APPLIED's own clock_timestamp().
+            assertTrue(!Instant.parse(text(summary, "created_at")).isAfter(Instant.parse(text(alias, "applied_at"))))
+        }
+    }
+
     private fun manifest(journal: TestOwnerDeleteJournalConfigurationV1, objects: List<ColdJournalObjectV1>): Pair<String, Long> {
         val bytes = ByteArrayOutputStream().use { output ->
             DataOutputStream(output).use { stream ->
@@ -158,6 +200,7 @@ internal object ColdSqlObservationV1 {
         return ColdFixtureFilesV1.sha256(bytes) to bytes.size.toLong()
     }
     private fun row(bytes: String): JsonObject = Json.parseToJsonElement(bytes).jsonArray[0].jsonObject
+    private fun xmin(bytes: String): String = Json.parseToJsonElement(bytes).jsonArray[1].jsonPrimitive.content
     private fun text(row: JsonObject, column: String): String = row.getValue(column).jsonPrimitive.content
     private fun number(row: JsonObject, column: String): Long = row.getValue(column).jsonPrimitive.long
     private fun vector(row: JsonObject, column: String): ComplaintCapacityVector = row.getValue(column).jsonArray.let { array ->
