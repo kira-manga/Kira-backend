@@ -35,6 +35,7 @@ import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.JournalKmsHttpReply
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import software.amazon.awssdk.http.SdkHttpClient
 import java.nio.file.Files
@@ -195,30 +196,43 @@ internal class CatalogTestRunTerminalFixtureV1(
     fun begin(): CatalogTestRunTerminalV1 = d.beginTerminalCatalog().withHttpFixtures(signing::httpClient,
         http::putClient, http::readClient, ::ordinaryClient, ordinaryKeys::httpClient, Clock.systemUTC()).also(originals::add)
 
-    /** New retained runtime process/pools with the same pre-D pins. The token is not a recovery capability. */
+    /** Fresh same-JVM runtime/pools with the same pre-D pins, not separate-process restart evidence.
+     * The token is not a recovery capability. */
     fun freshRecovery(selectedToken: UUID = token, action: (CatalogTestRunTerminalPreparedRecoveryV1, CatalogTestRunTerminalSqlProbeV1) -> Unit) {
-        val runtime = VersionBoundPersistenceConnectedFixture(f.runtime.database, endpointPort = f.runtime.endpointPort,
-            testIntake = evidence.intakeAssembly, testRegistrationPredecessor = f.runtime)
-        var bodyFailure: Throwable? = null
-        try {
-            runtime.bind(); runtime.start()
-            assertEquals(PersistenceLifecycleObservation.READY, runtime.pools.catalogCoordinator.prepare())
-            val target = evidence.processOn(runtime.pools)
-            CatalogTestRunTerminalSqlProbeV1(f, runtime).use { probe ->
-                extraReleased = { probe.assertReleased(requireCommitted = false) }
-                val recovery = CatalogTestRunTerminalPreparedRecoveryV1.begin(target, selectedToken, limit)
-                    .withHttpFixtures(signing::httpClient, http::putClient, http::readClient, ::ordinaryClient, ordinaryKeys::httpClient, Clock.systemUTC())
-                try { action(recovery, probe) }
-                finally { runCatching(recovery::close); extraReleased = {} }
-                probe.assertReleased(requireCommitted = false)
-            }
-        } catch (problem: Throwable) { bodyFailure = problem; throw problem }
-        finally {
-            extraReleased = {}
-            try { runtime.closeWith(f.runtime) } catch (cleanup: Throwable) {
-                val problem = bodyFailure
-                if (problem == null) throw cleanup
-                if (cleanup !== problem) problem.addSuppressed(cleanup)
+        released()
+        val coldIntake = evidence.intakeAssembly?.let {
+            // A second wrapper is not a fresh owner. Retire the actual original and its projector first;
+            // the existing cold helper keeps the same protected parent/inputs, never repairs its files.
+            f.registration.close()
+            f.runtime.closeRegisteredRuntimeForRecovery()
+            evidence.reassembleRecoveryIntake(f.sealHttp)
+        }
+        coldIntake.use { assembly ->
+            val runtime = VersionBoundPersistenceConnectedFixture(f.runtime.database, endpointPort = f.runtime.endpointPort, testIntake = assembly)
+            var bodyFailure: Throwable? = null
+            try {
+                assertNotSame(f.runtime.owner, runtime.owner)
+                runtime.bind(); runtime.start()
+                assertNotSame(f.runtime.pools, runtime.pools)
+                assertEquals(PersistenceLifecycleObservation.READY, runtime.pools.catalogCoordinator.prepare())
+                val target = assembly?.target ?: evidence.processOn(runtime.pools)
+                assertNotSame(process, target)
+                CatalogTestRunTerminalSqlProbeV1(f, runtime).use { probe ->
+                    extraReleased = { probe.assertReleased(requireCommitted = false) }
+                    val recovery = CatalogTestRunTerminalPreparedRecoveryV1.begin(target, selectedToken, limit)
+                        .withHttpFixtures(signing::httpClient, http::putClient, http::readClient, ::ordinaryClient, ordinaryKeys::httpClient, Clock.systemUTC())
+                    try { action(recovery, probe) }
+                    finally { runCatching(recovery::close); extraReleased = {} }
+                    probe.assertReleased(requireCommitted = false)
+                }
+            } catch (problem: Throwable) { bodyFailure = problem; throw problem }
+            finally {
+                extraReleased = {}
+                try { runtime.closeWith(f.runtime) } catch (cleanup: Throwable) {
+                    val problem = bodyFailure
+                    if (problem == null) throw cleanup
+                    if (cleanup !== problem) problem.addSuppressed(cleanup)
+                }
             }
         }
     }
