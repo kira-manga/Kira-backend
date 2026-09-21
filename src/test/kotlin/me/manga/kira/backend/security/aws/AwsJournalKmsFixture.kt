@@ -210,7 +210,7 @@ internal class JournalKmsHttpRequest(val http: SdkHttpRequest, val json: String)
 }
 
 /** Deliberately separate executable abort and body-close counters, as with URLConnection. */
-internal class JournalKmsHttpReply(val bytes: ByteArray) {
+internal class JournalKmsHttpReply(var bytes: ByteArray) {
     constructor(json: String) : this(json.toByteArray(Charsets.UTF_8))
 
     var status = 200

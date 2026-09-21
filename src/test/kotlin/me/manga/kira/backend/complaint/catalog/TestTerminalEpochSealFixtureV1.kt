@@ -154,11 +154,11 @@ internal fun withTerminalEpochSealRun(tls: VersionBoundPersistenceConnectedFixtu
                         }
                         assertEquals(inventories, f.inventoryRequests.size, "The terminal epoch seal does not run either final native inventory.")
                         if (enrolled) {
-                            assertEquals(1L, f.observer.queryForObject(
+                            assertEquals(actors.size.toLong(), f.observer.queryForObject(
                                 "SELECT count(*) FROM complaint_installation_ids i JOIN app_installations a ON a.id = i.id AND a.data_scope_id = i.data_scope_id " +
-                                    "WHERE i.data_scope_id = ? AND i.id = ? AND i.state = 'ACTIVE' AND i.terminal_at IS NULL " +
+                                    "WHERE i.data_scope_id = ? AND i.id = ANY (CAST(? AS uuid[])) AND i.state = 'ACTIVE' AND i.terminal_at IS NULL " +
                                     "AND a.state = 'ACTIVE' AND a.secret_verifier IS NOT NULL AND a.deleted_at IS NULL",
-                                Long::class.java, f.scope, actor),
+                                Long::class.java, f.scope, actors.joinToString(prefix = "{", postfix = "}")),
                                 "The manifest records a RETIRED disposition; this slice keeps the actual reservation and credential ACTIVE.")
                         }
                         f.assertFinishedPurge()

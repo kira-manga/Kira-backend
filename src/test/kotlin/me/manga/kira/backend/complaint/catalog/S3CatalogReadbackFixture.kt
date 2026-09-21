@@ -154,7 +154,7 @@ internal class S3CatalogReadbackFixture {
 }
 
 /** Deliberately no-op response-stream abort, matching the URLConnection limitation; executable abort is observed independently. */
-internal class S3CatalogReply(val bytes: ByteArray) {
+internal class S3CatalogReply(var bytes: ByteArray) {
     var status = 200
     var headers: Map<String, List<String>> = mapOf("Content-Length" to listOf(bytes.size.toString()))
     var bodyPresent = true
