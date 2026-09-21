@@ -367,6 +367,7 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.common.infrastructure.persistence.TestInstallationManifestPublicationIT",
                     "me.manga.kira.backend.complaint.journal.TestOrdinaryInventoryReaderV1ConnectedIT",
                     "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointIT",
+                    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
                     PgLifecycleDatabaseTls.CLASS_NAME,
                 ),
             )

@@ -16,6 +16,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalDenia
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveInitialCheckpointV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -44,6 +45,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     val initialCheckpoint: VersionBoundTestActiveInitialCheckpointV1?,
     val activeOrdinarySealRecovery: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1?,
     val terminalDenial: TestTerminalDenialAuthorityPolicyV1?,
+    val initialCheckpointCreate: VersionBoundTestInitialCheckpointCreateV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val canonical: ByteArray
@@ -52,6 +54,8 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
 
     init {
         requireOwners()
+        // Freeze absence too: the same ordinary graph cannot acquire new CREATE semantics after D.
+        pools.retainTestInitialCheckpointCreate(initialCheckpointCreate)
         // Same existing registry only; local N/R accounting registration is not TEST activation.
         publicationLanes.retainTestJournal(consumers.journalConfiguration)
         retainedPools = pools.descriptors()
@@ -86,6 +90,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
      */
     fun requireUnchangedConfiguration() {
         requireOwners()
+        pools.requireTestInitialCheckpointCreate(initialCheckpointCreate)
         publicationLanes.requireTestJournal(consumers.journalConfiguration)
         val current = pools.descriptors()
         require(current.size == retainedPools.size && current.indices.all { current[it] === retainedPools[it] }) {
@@ -164,6 +169,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         activeCutoffPublication?.requireRetained(consumers.journalRouting, publicationLanes)
         require(initialCheckpoint == null || activeFirstCut != null && activeCutoffPublication != null) { INVALID_TEST_PROCESS_CONFIGURATION }
         initialCheckpoint?.requireRetained(consumers.journalRouting, pools, ordinarySeal)
+        initialCheckpointCreate?.requireRetained(pools, consumers.journalRouting, initialCheckpoint)
         catalogActivation.requireRetained(pools, catalogReadback, journal)
         ordinarySeal?.requireRetained(consumers.journalRouting, publicationLanes)
         ordinarySeal?.requireCatalogReferences(catalogActivation.putAuthority, catalogActivation.signAuthority)
@@ -200,11 +206,13 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             initialCheckpoint: VersionBoundTestActiveInitialCheckpointV1? = null,
             activeOrdinarySealRecovery: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1? = null,
             terminalDenial: TestTerminalDenialAuthorityPolicyV1? = null,
+            initialCheckpointCreate: VersionBoundTestInitialCheckpointCreateV1? = null,
         ): VersionBoundTestNamespaceProcessV1 {
             requireConnectionFree()
             return VersionBoundTestNamespaceProcessV1(
                 consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
-                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication, activeFirstCutSuccessor, initialCheckpoint, activeOrdinarySealRecovery, terminalDenial,
+                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication, activeFirstCutSuccessor, initialCheckpoint, activeOrdinarySealRecovery, terminalDenial = terminalDenial,
+                initialCheckpointCreate = initialCheckpointCreate,
             )
         }
 

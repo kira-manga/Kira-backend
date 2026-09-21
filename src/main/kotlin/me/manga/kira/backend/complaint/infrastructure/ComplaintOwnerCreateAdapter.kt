@@ -44,7 +44,7 @@ internal class ComplaintOwnerCreateAdapter(
         admission.startOwnerReply(ingress)
         val identity = identity(bearer)
         try {
-            val platform = checked(phases.authenticate(identity)).platform ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
+            val platform = checked(phases.authenticate(identity, ingress)).platform ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
             val normalizedIdentity = ComplaintReportIdentity.checked(input.id.toString(), input.key.toString(), testScope.id.toString())
                 ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
             val request = try {
@@ -53,7 +53,7 @@ internal class ComplaintOwnerCreateAdapter(
                 rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
             }
             val candidate = ComplaintOwnerReplyCandidate.prepare(identity.installation, request)
-            val preflight = checked(phases.replyPreflight(identity, candidate.tuple))
+            val preflight = checked(phases.replyPreflight(identity, candidate.tuple, ingress))
             preflight.receipt?.let { return it } // Parent content may already be erased; replay never queries it.
             val admitted = admission.admitOwnerReply(ingress, candidate.tuple)
             return checked(phases.reply(identity, candidate, platform, admitted)).receipt
@@ -70,14 +70,14 @@ internal class ComplaintOwnerCreateAdapter(
         admission.startOwnerCreate(ingress)
         val identity = identity(bearer)
         try {
-            val platform = checked(phases.authenticate(identity)).platform ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
+            val platform = checked(phases.authenticate(identity, ingress)).platform ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
             val normalizedIdentity = ComplaintReportIdentity.checked(input.id.toString(), input.key.toString(), testScope.id.toString())
                 ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
             val normalized = ComplaintReportRequest.normalize(normalizedIdentity, input.type, input.subject, input.body, input.metadata)
             val request = (normalized as? ComplaintReportRequestResult.Accepted)?.request
                 ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
             val candidate = ComplaintOwnerCreateCandidate.prepare(identity.installation, request)
-            val preflight = checked(phases.preflight(identity, candidate.tuple))
+            val preflight = checked(phases.preflight(identity, candidate.tuple, ingress))
             preflight.receipt?.let { return it } // Before consulting semantic availability, quotas or present resources.
             val admitted = admission.admitOwnerCreate(ingress, candidate.tuple)
             return checked(phases.create(identity, candidate, platform, admitted)).receipt
@@ -94,12 +94,12 @@ internal class ComplaintOwnerCreateAdapter(
         admission.startOwnerStatus(ingress)
         val identity = identity(bearer)
         try {
-            checked(phases.authenticate(identity))
+            checked(phases.authenticate(identity, ingress))
             val tuple = ComplaintOwnerOperationTuple(identity.installation, query.key, query.operation, query.targetIds(), query.fingerprintBytes())
             val readAdmission = Any()
             admission.chargeOwnerStatus(ingress, identity.installation, readAdmission)
             admission.consumeOwnerStatus(ingress, readAdmission)
-            return checked(phases.status(identity, tuple)).receipt ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND)
+            return checked(phases.status(identity, tuple, ingress)).receipt ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND)
         } catch (failure: PersistencePhaseException) {
             rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE)
         }

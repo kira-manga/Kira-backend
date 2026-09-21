@@ -2,6 +2,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1
 import java.io.PrintWriter
 import java.sql.Connection
 import java.sql.SQLException
@@ -208,6 +209,14 @@ internal class GuardedDataSource private constructor(
     internal fun ownsLifecycle(candidate: PoolLifecycle): Boolean = lifecycle === candidate
 
     internal val complaintContainment: PersistenceComplaintContainment get() = owner.complaintContainment
+
+    /** Legacy absence is unchanged. A born-with protected graph cannot use a desired-only producer. */
+    internal fun requireTestInitialCheckpointCreate(policy: VersionBoundTestInitialCheckpointCreateV1?) {
+        requireOrdinaryPhaseResource()
+        val pools = owner.versionBoundPools
+        if (pools != null) pools.requireTestInitialCheckpointCreate(policy)
+        else if (policy != null) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
 
     internal fun requireOrdinaryPhaseResource() {
         if (namedCatalogOnly || route !== Route.ORDINARY) {

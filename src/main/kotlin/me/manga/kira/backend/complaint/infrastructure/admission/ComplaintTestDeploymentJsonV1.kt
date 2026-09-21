@@ -90,6 +90,7 @@ internal data class ComplaintTestDeploymentDocumentV1(
     val initialCheckpoint: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveInitialCheckpointInputV1? = null,
     val activeOrdinarySealRecovery: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOrdinarySealRecoveryInputV1? = null,
     val terminalDenial: TestTerminalDenialAuthorityInputV1? = null,
+    val initialCheckpointCreate: me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointCreateInputV1? = null,
 )
 
 /** One ordinary runtime principal only, never the LIVE install operator or catalog author. */

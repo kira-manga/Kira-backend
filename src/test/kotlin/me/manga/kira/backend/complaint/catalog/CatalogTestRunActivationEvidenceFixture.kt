@@ -52,6 +52,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublication
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveInitialCheckpointV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1
 import me.manga.kira.backend.security.BoundTestComplaintConsumerFixture
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.AwsSecretVersionFixture
@@ -63,6 +64,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.util.Base64
 import java.util.HexFormat
+import java.util.IdentityHashMap
 import java.util.UUID
 
 internal enum class ActivationEvidencePrefix { GENESIS, ROTATED, INVENTORY_ROTATED, PENDING_OVERLAP }
@@ -116,8 +118,13 @@ internal fun withActivationEvidence(
     val original = fullTestJournal().declaration()
     val declaration = original.copy(
         writer = JournalWriterV1(registry.databaseIdentity, registry.restoreIdentity, registry.eventWriter.generationId),
-        limits = ordinaryDrain?.limits(original.limits)
-            ?: original.limits.copy(capacity = original.limits.capacity.copy(maximumRetainedVersions = 10_000)),
+        limits = (ordinaryDrain?.limits(original.limits)
+            ?: original.limits.copy(capacity = original.limits.capacity.copy(maximumRetainedVersions = 10_000))).let { limits ->
+            if (ordinaryRawHttp?.shortInitialCheckpointFreshness == true) {
+                require(ordinaryRawHttp.initialCheckpointCreate != null)
+                limits.copy(deadlines = limits.deadlines.copy(scanMillis = 30_000, scanCadenceMillis = 30_000, checkpointMaxAgeMillis = 30_000))
+            } else limits
+        },
     )
     val journal = if (activeFirstCut) {
         require(ordinarySealHttp?.protectedIntake == true && ordinaryDrain != null)
@@ -162,6 +169,8 @@ internal class CatalogTestRunActivationEvidenceFixture(
         require(ordinaryRawHttp == null || activeFirstCut)
         require(!activeFirstCutSuccessor || activeFirstCut)
         require(ordinaryRawHttp?.initialCheckpoint == null || (activeFirstCut && ordinarySealHttp?.protectedIntake == true))
+        require(ordinaryRawHttp?.initialCheckpointCreate == null || ordinaryRawHttp.initialCheckpoint != null)
+        require(ordinaryRawHttp?.shortInitialCheckpointFreshness != true || ordinaryRawHttp.initialCheckpointCreate != null)
         require(!activeSealRecovery || activeFirstCut)
         require(ordinaryRawHttp?.activeSealRecovery == null || activeSealRecovery)
         require(!activeFirstCut || (ordinarySealHttp?.protectedIntake == true && intakeTls != null &&
@@ -215,6 +224,10 @@ internal class CatalogTestRunActivationEvidenceFixture(
     private var originalIntakeBytes: ByteArray? = null
     private var originalSecretReplies: List<ColdSecretObjectV1> = emptyList()
     private val projectedInitialCheckpoints = mutableListOf<VersionBoundTestActiveInitialCheckpointV1>()
+    // process()/processOn() may revisit one cold signer graph with a different desired generation.
+    // The pool pins the exact policy instance; keep its independently constructed reader with it.
+    private val projectedCheckpointGraphs = IdentityHashMap<VersionBoundPersistencePools,
+        Pair<VersionBoundTestActiveInitialCheckpointV1, VersionBoundTestInitialCheckpointCreateV1?>>()
     /** Exact raw fixture inputs only; no acquired secret, target, registration or projection is exported. */
     internal fun coldInputBytes(): ByteArray = checkNotNull(originalIntakeBytes).copyOf()
     internal fun coldSecretObjects(): List<ColdSecretObjectV1> = originalSecretReplies.toList()
@@ -274,23 +287,33 @@ internal class CatalogTestRunActivationEvidenceFixture(
                     it, pools, native.consumers.journalRouting, checkNotNull(firstCut), checkNotNull(native.ordinarySeal),
                 )
             }
-            val checkpoint = native.initialCheckpoint?.let { original ->
-                if (pools === native.pools) original else {
-                    // The signing/PROJECT graph has different pools. Build its own cold recipe from
-                    // the original raw inputs, never rebind the assembly's actual runtime reader.
-                    val raw = checkNotNull(ordinaryRawHttp?.initialCheckpoint)
-                    val inputs = ComplaintTestDeploymentInputsV1.fromDecoded(checkNotNull(intakeDocument))
-                    check(inputs.initialCheckpoint == raw.input)
-                    VersionBoundTestActiveInitialCheckpointV1.fromIndependentInputs(
-                        raw.input, native.consumers.journalRouting, pools, checkNotNull(native.ordinarySeal),
-                        inputs.sealerMapping, raw.credentials, inputs.sealerLimits, original.clock, original.nanoTime,
-                        raw.sts, raw.kms, raw.s3,
-                    ).also { projectedInitialCheckpoints.add(it) }
+            val checkpointGraph = native.initialCheckpoint?.let { original ->
+                if (pools === native.pools) original to native.initialCheckpointCreate else {
+                    projectedCheckpointGraphs.getOrPut(pools) {
+                        // Different pools get their own cold recipe from original raw inputs;
+                        // repeated calls reuse this exact pair, never the native runtime reader.
+                        val raw = checkNotNull(ordinaryRawHttp?.initialCheckpoint)
+                        val inputs = ComplaintTestDeploymentInputsV1.fromDecoded(checkNotNull(intakeDocument))
+                        check(inputs.initialCheckpoint == raw.input)
+                        val checkpoint = VersionBoundTestActiveInitialCheckpointV1.fromIndependentInputs(
+                            raw.input, native.consumers.journalRouting, pools, checkNotNull(native.ordinarySeal),
+                            inputs.sealerMapping, raw.credentials, inputs.sealerLimits, original.clock, original.nanoTime,
+                            raw.sts, raw.kms, raw.s3,
+                        ).also { projectedInitialCheckpoints.add(it) }
+                        val create = ordinaryRawHttp?.initialCheckpointCreate?.let {
+                            VersionBoundTestInitialCheckpointCreateV1.fromIndependentInputs(
+                                it, pools, native.consumers.journalRouting, checkpoint)
+                        }
+                        checkpoint to create
+                    }
                 }
             }
+            val checkpoint = checkpointGraph?.first
+            val initialCheckpointCreate = checkpointGraph?.second
             return VersionBoundTestNamespaceProcessV1.fromRetained(native.consumers, pools, 1, desiredGeneration,
                 native.databaseIdentity, native.restoreIdentity, native.publicationLanes, native.catalogReadback, selected,
-                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, activeFirstCutSuccessor = successor, initialCheckpoint = checkpoint, activeOrdinarySealRecovery = sealRecovery, terminalDenial = native.terminalDenial)
+                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, activeFirstCutSuccessor = successor, initialCheckpoint = checkpoint, activeOrdinarySealRecovery = sealRecovery, terminalDenial = native.terminalDenial,
+                initialCheckpointCreate = initialCheckpointCreate)
         }
         val writer = journal.declaration().writer
         val activation = FullTestCatalogInputs.activation(
@@ -364,6 +387,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             ordinaryPublication = activeFirstCutInput?.let { TestActiveFirstCutInputFixtureV1.ordinaryInput() },
             initialCheckpoint = ordinaryRawHttp?.initialCheckpoint?.input,
             activeOrdinarySealRecovery = activeSealRecoveryInput,
+            initialCheckpointCreate = ordinaryRawHttp?.initialCheckpointCreate,
         )
         intakeDocument = document
         val inputBytes = TestDeploymentInputFixture.bytes(document)

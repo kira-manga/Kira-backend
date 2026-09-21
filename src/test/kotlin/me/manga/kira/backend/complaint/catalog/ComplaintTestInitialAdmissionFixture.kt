@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.catalog
 
+import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.audit.domain.ComplaintInstallationEnrollmentAudit
 import me.manga.kira.backend.common.infrastructure.persistence.OrdinarySourceGrantCleanupFixture
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
@@ -31,6 +32,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.core.ResultSetExtractor
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.jdbc.datasource.ConnectionHolder
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
@@ -38,6 +40,8 @@ import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.Connection
 import java.util.UUID
+import java.util.Collections
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 
 internal val INITIAL_CAPTURE = PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_CAPTURE
@@ -162,7 +166,7 @@ internal class InitialAdmissionFixture(
             val jdbc = InitialIdentityProbe(ordinary)
             val audit = ComplaintInstallationEnrollmentAudit { scope, allocation, at -> service.recordInstallationEnrollment(scope, allocation, at) }
             val adapter = ComplaintInstallationExchangeAdapter(registration, ordinary.ownership, jdbc, audit)
-            try { action(InitialIdentityExchangeFixture(this, ordinary, jdbc, adapter)) }
+            try { action(InitialIdentityExchangeFixture(this, ordinary, jdbc, adapter, service)) }
             finally { jdbc.assertNoLostAssertions(); requireConnectionFree() }
         }
 
@@ -202,6 +206,7 @@ internal class InitialIdentityExchangeFixture(
     val ordinary: OrdinarySourceGrantCleanupFixture,
     val jdbc: InitialIdentityProbe,
     val adapter: ComplaintInstallationExchangeAdapter,
+    val service: AuditService,
 ) {
     fun enroll(candidate: InstallationEnrollmentCandidate) = f.registration.process.consumers.ingressAdmission.withIngress(request()) { adapter.enroll(it, candidate) }
     fun session(candidate: InstallationEnrollmentCandidate) = f.registration.process.consumers.ingressAdmission.withIngress(request()) {
@@ -231,33 +236,41 @@ internal class InitialIdentityExchangeFixture(
 
 /** Passive same-pool template selected BEFORE registration binds its ordinary pair. All SQL/results are real. */
 internal class InitialIdentityProbe(private val ordinary: OrdinarySourceGrantCleanupFixture) : JdbcTemplate(ordinary.pool) {
-    val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
-    val calls = mutableListOf<Pair<PersistencePhasePath, String>>()
+    val observations: MutableMap<PersistencePhaseContext, StepUpPhaseObservation> = Collections.synchronizedMap(linkedMapOf())
+    val calls = CopyOnWriteArrayList<Pair<PersistencePhasePath, String>>()
+    var before: (PersistencePhasePath, String) -> Unit = { _, _ -> }
     var after: (PersistencePhasePath, String) -> Unit = { _, _ -> }
     private val assertion = AtomicReference<AssertionError?>()
+    private val observing = ThreadLocal.withInitial { false }
 
     init { exceptionTranslator = SQLExceptionSubclassTranslator() }
     override fun <T : Any?> query(sql: String, mapper: RowMapper<T>): List<T> = observed(sql) { super.query(sql, mapper) }
     override fun <T : Any?> query(sql: String, mapper: RowMapper<T>, vararg args: Any?): List<T> = observed(sql) { super.query(sql, mapper, *args) }
+    override fun <T : Any?> query(sql: String, extractor: ResultSetExtractor<T>, vararg args: Any?): T? = observed(sql) { super.query(sql, extractor, *args) }
     override fun update(sql: String, vararg args: Any?): Int = observed(sql) { super.update(sql, *args) }
 
-    private fun <T> observed(sql: String, action: () -> T): T = try {
-        val phase = checkNotNull(PersistencePhaseOwnership.current())
-        val path = poolTestField<PersistencePhasePath>(phase, "path")
-        val holder = TransactionSynchronizationManager.getResource(ordinary.pool) as ConnectionHolder
-        assertSame(ordinary.pool, dataSource)
-        assertEquals(Connection.TRANSACTION_READ_COMMITTED, holder.connection.transactionIsolation)
-        if (phase !in observations) {
-            val identity = holder.connection.createStatement().use { statement ->
-                statement.executeQuery("SELECT pg_backend_pid(), txid_current()").use { row ->
-                    assertTrue(row.next()); (row.getInt(1) to row.getLong(2)).also { assertFalse(row.next()) }
+    private fun <T> observed(sql: String, action: () -> T): T {
+        if (observing.get()) return action()
+        observing.set(true)
+        try {
+            val phase = checkNotNull(PersistencePhaseOwnership.current())
+            val path = poolTestField<PersistencePhasePath>(phase, "path")
+            val holder = TransactionSynchronizationManager.getResource(ordinary.pool) as ConnectionHolder
+            assertSame(ordinary.pool, dataSource)
+            assertEquals(Connection.TRANSACTION_READ_COMMITTED, holder.connection.transactionIsolation)
+            if (phase !in observations) {
+                val identity = holder.connection.createStatement().use { statement ->
+                    statement.executeQuery("SELECT pg_backend_pid(), txid_current()").use { row ->
+                        assertTrue(row.next()); (row.getInt(1) to row.getLong(2)).also { assertFalse(row.next()) }
+                    }
                 }
+                observations[phase] = StepUpPhaseObservation(phase, ownedPoolLease(holder.connection), identity)
             }
-            observations[phase] = StepUpPhaseObservation(phase, ownedPoolLease(holder.connection), identity)
-        }
-        calls.add(path to sql)
-        action().also { after(path, sql) }
-    } catch (failure: AssertionError) { assertion.compareAndSet(null, failure); throw failure }
+            calls.add(path to sql); before(path, sql)
+            return action().also { after(path, sql) }
+        } catch (failure: AssertionError) { assertion.compareAndSet(null, failure); throw failure }
+        finally { observing.remove() }
+    }
 
     fun assertNoLostAssertions() { assertion.get()?.let { throw it } }
 }

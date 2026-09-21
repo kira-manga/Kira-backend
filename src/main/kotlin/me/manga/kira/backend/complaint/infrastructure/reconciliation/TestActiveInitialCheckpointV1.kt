@@ -269,10 +269,7 @@ internal class TestActiveInitialCheckpointV1 private constructor(
         sealControl().requireNative(this, checkNotNull(sealProof)); completedPass(1); completedPass(2)
         val value = checkNotNull(document)
         requireInitialCheckpoint(value.fencingToken == leaseToken && value.manifestSha256 == manifestSha256)
-        return arrayOf(value.desiredGeneration, value.fencingToken, value.catalogGeneration, TestActiveInitialCheckpointRowsV1.hex(value.catalogSha256),
-            value.writerGeneration, 1L, TestActiveInitialCheckpointRowsV1.hex(value.configurationSha256), value.databaseIdentity, value.restoreIdentity,
-            1, Timestamp.from(value.startedAt), Timestamp.from(value.completedAt), 0L, 0L, "SUCCESS", checkNotNull(documentBytes).copyOf(),
-            TestActiveInitialCheckpointRowsV1.hex(checkNotNull(documentSha256)))
+        return TestActiveInitialCheckpointRowsV1.documentArguments(value, checkNotNull(documentBytes), checkNotNull(documentSha256))
     }
 
     internal fun requirePersistence(ownership: PersistencePhaseOwnership, selected: JdbcTemplate) {

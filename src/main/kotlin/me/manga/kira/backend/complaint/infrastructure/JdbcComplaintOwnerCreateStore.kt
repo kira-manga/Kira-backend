@@ -12,6 +12,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseE
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
+import me.manga.kira.backend.common.infrastructure.persistence.GuardedDataSource
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
@@ -29,6 +30,10 @@ import me.manga.kira.backend.complaint.domain.ComplaintReportRequest
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.rejectOwnerOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateV1
+import me.manga.kira.backend.security.ComplaintIngressContext
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
@@ -38,13 +43,34 @@ import java.time.Instant
 import java.util.UUID
 
 /** Fixed TEST-only producer. Independent desired D and capacity P are comparison inputs, not activation. */
-internal class JdbcComplaintOwnerCreateStore(
+internal class JdbcComplaintOwnerCreateStore private constructor(
     private val jdbc: JdbcTemplate,
     private val capacity: JdbcComplaintCapacityStore,
     private val audit: AuditService,
     private val desired: ComplaintInstallationDesiredSettings.Configured,
+    private val registeredCurrent: TestRegisteredInitialCheckpointCreateV1?,
 ) {
+    /** Historical desired-only TEST route; a protected born-with ordinary pool refuses this constructor. */
+    constructor(jdbc: JdbcTemplate, capacity: JdbcComplaintCapacityStore, audit: AuditService,
+        desired: ComplaintInstallationDesiredSettings.Configured) : this(jdbc, capacity, audit, desired, null)
+
     private val binding = ComplaintInstallationTestBinding(desired)
+
+    init { requirePoolPolicy() }
+
+    private fun requirePoolPolicy() {
+        val source = jdbc.dataSource
+        if (source is GuardedDataSource) source.requireTestInitialCheckpointCreate(registeredCurrent?.policy)
+        else check(registeredCurrent == null)
+    }
+
+    internal fun requireResources(ownership: PersistencePhaseOwnership) {
+        requireConnectionFree(); requirePoolPolicy(); registeredCurrent?.requireEntry(ownership)
+    }
+
+    internal fun bind(phase: PersistencePhaseContext, context: ComplaintIngressContext? = null) {
+        registeredCurrent?.let { phase.ownerOperation.bindRegisteredInitialCheckpointCreate(it, context) }
+    }
 
     fun authenticate(identity: ComplaintOwnerOperationIdentity): ComplaintOwnerCreateOperation =
         capture(PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION, identity)
@@ -81,13 +107,25 @@ internal class JdbcComplaintOwnerCreateStore(
         platform: ComplaintPlatform? = null,
         reply: ComplaintOwnerReplyCandidate? = null,
     ): ComplaintOwnerCreateOperation {
+        requirePoolPolicy()
         require(identity.installation.scope == binding.scope)
         return ComplaintOwnerCreateOperation.capture(
-            jdbc, capacity, audit, binding, desired.configurationHashBytes(), path, identity, tuple, candidate, platform, reply,
+            jdbc, capacity, audit, binding, desired.configurationHashBytes(), path, identity, tuple, candidate, platform, reply, registeredCurrent,
         )
     }
 
     override fun toString(): String = "JdbcComplaintOwnerCreateStore(TEST-only,no-mode-authority)"
+
+    companion object {
+        /** No desired-D input or historical checkpoint object: only this exact registered ordinary graph. */
+        fun registeredInitialCheckpoint(jdbc: JdbcTemplate, audit: AuditService,
+            ownership: PersistencePhaseOwnership, registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1): JdbcComplaintOwnerCreateStore {
+            val current = TestRegisteredInitialCheckpointCreateV1.fromRegistered(registration, assembly, ownership, jdbc)
+            val capacity = JdbcComplaintCapacityStore(jdbc, registration.process.consumers.capacityPolicy.digestBytes())
+            return JdbcComplaintOwnerCreateStore(jdbc, capacity, audit, registration.process.desiredSettings(), current)
+        }
+    }
 }
 
 /** Bounded verified-token facts. The concrete database observation, not this constructor, authenticates them. */
@@ -127,6 +165,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
     private val path: PersistencePhasePath,
     private val identity: ComplaintOwnerOperationIdentity,
     private val tuple: ComplaintOwnerOperationTuple?,
+    private val registeredCurrent: TestRegisteredInitialCheckpointCreateV1?,
 ) {
     private var stage = Stage.NEW
     private var captured: ComplaintOwnerOperationObservation? = null
@@ -135,8 +174,25 @@ internal class ComplaintOwnerCreateOperation private constructor(
     private var mutation: ComplaintAuditMutation.Created? = null
     private var newClaim = false
     private var provisionalReplyResource = false
+    private var currentBeforeCounters = false
+    private var checkpointTime: Instant? = null
 
     fun belongsTo(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = phase === selected && path === expected
+
+    internal fun registeredWith(selected: TestRegisteredInitialCheckpointCreateV1?): Boolean = registeredCurrent === selected
+
+    /** Only the retained original's new claim, never PREFLIGHT/STATUS or a losing claim, may run freshness checks. */
+    internal fun requireCurrentCheckpointRead(selected: TestRegisteredInitialCheckpointCreateV1, original: PersistencePhaseContext) {
+        requireRetained()
+        check(phase === original && registeredCurrent === selected && path === PersistencePhasePath.COMPLAINT_OWNER_CREATE && newClaim &&
+            stage in setOf(Stage.CLAIMED, Stage.COUNTERS, Stage.LOCKING_DOMAIN, Stage.DOMAIN, Stage.RESOURCE, Stage.AUDITING, Stage.REJECTING))
+    }
+
+    internal fun requireCheckpointTime(selected: TestRegisteredInitialCheckpointCreateV1, original: PersistencePhaseContext, sampledAt: Instant) {
+        requireCurrentCheckpointRead(selected, original)
+        check(checkpointTime?.let { !sampledAt.isBefore(it) } != false)
+        checkpointTime = sampledAt
+    }
 
     fun completedFor(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = belongsTo(selected, expected) &&
         stage === Stage.COMPLETE && captured != null && (!newClaim || allocation?.completedFor(this, captured?.receipt) == true)
@@ -161,6 +217,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
         reply: ComplaintReplyRequest?,
     ) {
         requireRetained()
+        registeredCurrent?.requireOperation(this, phase, path, tuple)
         captured = if (path === PersistencePhasePath.COMPLAINT_OWNER_CREATE || path === PersistencePhasePath.COMPLAINT_OWNER_REPLY) {
             create(capacity, audit, request, checkNotNull(platform), reply)
         } else {
@@ -171,7 +228,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
     }
 
     private fun observe(): ComplaintOwnerOperationObservation {
-        val actor = arrayOf<Any?>(
+        val actorFacts = arrayOf<Any?>(
             identity.installation.id,
             identity.installation.scope.id,
             identity.credentialVersion,
@@ -179,6 +236,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
             Timestamp.from(identity.expiresAt),
             desiredHash,
         )
+        val actor = registeredCurrent?.observationIdentityArguments()?.plus(elements = actorFacts) ?: actorFacts
         val selected = tuple
         val arguments = if (selected ==
             null
@@ -195,7 +253,15 @@ internal class ComplaintOwnerCreateOperation private constructor(
                 ),
             )
         }
-        return jdbc.query(if (selected == null) AUTH_SQL else OBSERVE_SQL, { row, _ ->
+        val sql = if (registeredCurrent == null) {
+            if (selected == null) AUTH_SQL else OBSERVE_SQL
+        } else {
+            if (selected == null) REGISTERED_AUTH_SQL else REGISTERED_OBSERVE_SQL
+        }
+        return jdbc.query(sql, { row, _ ->
+            // Not a freshness/creation-mode check. A stale desired identity must not authorize even
+            // exact receipts; the comparison shares the actor/receipt snapshot, including claim loss.
+            if (registeredCurrent != null) check(row.getBoolean("registered_current_identity") && !row.wasNull())
             val platform = row.getString("platform")?.let(ComplaintPlatform::valueOf)
             if (platform == null || selected == null) {
                 ComplaintOwnerOperationObservation(platform)
@@ -261,6 +327,8 @@ internal class ComplaintOwnerCreateOperation private constructor(
         }
         newClaim = true
         stage = Stage.CLAIMED
+        registeredCurrent?.lockAndCheck(this, phase)
+        currentBeforeCounters = true
         val paid = capacity.lockForOwnerCreate(this)
         check(paid.chargedFor(this))
         stage = Stage.LOCKING_DOMAIN
@@ -290,6 +358,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
         if (jdbc.update(INSERT_RESOURCE, selected.targetId, selected.installation.scope.id) != 1) {
             return rejectBusiness(ComplaintOwnerReceipt.Rejected(ComplaintOwnerCreateRejection.COMPLAINT_RESOURCE_ID_REUSED), paid, platform)
         }
+        registeredCurrent?.checkCurrent(this, phase) // Unique resource insertion can itself have waited.
         stage = Stage.RESOURCE
         phase.ownerOperation.checkCreateWrite(this, jdbc)
         val createdAt = checkNotNull(
@@ -415,6 +484,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
         // A volatile projection of a locking SELECT can have run before its lock wait. Sample AFTER both waits.
         requireTokenTime()
         if (!reserved || !credential) rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
+        registeredCurrent?.checkCurrent(this, phase) // DB time is sampled AFTER the actual run/reservation/credential waits.
         phase.ownerOperation.checkCreateWrite(this, jdbc)
     }
 
@@ -447,6 +517,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
 
     private fun complete(receipt: ComplaintOwnerReceipt) {
         requireRetained()
+        registeredCurrent?.checkCurrent(this, phase)
         val selected = checkNotNull(tuple)
         check(checkNotNull(allocation).completedFor(this, receipt))
         phase.ownerOperation.checkCreateWrite(this, jdbc)
@@ -470,8 +541,14 @@ internal class ComplaintOwnerCreateOperation private constructor(
 
     internal fun beginCounterLock(selected: JdbcTemplate) {
         requireRetained(selected)
-        check(stage === Stage.CLAIMED && allocation == null)
+        check(stage === Stage.CLAIMED && allocation == null && (registeredCurrent == null || currentBeforeCounters))
         stage = Stage.COUNTERS
+    }
+
+    internal fun afterCounterLock(selected: JdbcTemplate) {
+        requireRetained(selected)
+        check(stage === Stage.COUNTERS && allocation == null)
+        registeredCurrent?.checkCurrent(this, phase) // Before the pure quota calculation or any persisted charge.
     }
 
     internal fun retainCapacity(paid: JdbcComplaintCapacityStore.LockedOwnerCreate, selected: JdbcTemplate, ledger: ComplaintCapacityLedger) {
@@ -528,6 +605,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
             candidate: ComplaintOwnerCreateCandidate?,
             platform: ComplaintPlatform?,
             reply: ComplaintOwnerReplyCandidate? = null,
+            registeredCurrent: TestRegisteredInitialCheckpointCreateV1? = null,
         ): ComplaintOwnerCreateOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
@@ -547,7 +625,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
 
                     else -> Unit
                 }
-                val operation = ComplaintOwnerCreateOperation(phase, jdbc, binding, desiredHash.copyOf(), path, identity, tuple)
+                val operation = ComplaintOwnerCreateOperation(phase, jdbc, binding, desiredHash.copyOf(), path, identity, tuple, registeredCurrent)
                 phase.ownerOperation.retain(operation, jdbc)
                 operation.execute(capacity, audit, candidate?.request, platform, reply?.request)
                 return operation
@@ -576,9 +654,39 @@ internal class ComplaintOwnerCreateOperation private constructor(
             )
         """.trimIndent()
         private val AUTH_SQL = "$ACTOR_SQL SELECT actor.platform FROM (SELECT 1) seed LEFT JOIN actor ON true"
-        private val OBSERVE_SQL = """
-            $ACTOR_SQL, receipt_time AS MATERIALIZED (SELECT clock_timestamp() AS at)
-            SELECT actor.platform,
+        /** Fixed registered-only desired identity, NOT checkpoint/lease/scan/closed-state eligibility. */
+        private val REGISTERED_IDENTITY_SQL = """
+            WITH d AS MATERIALIZED (SELECT ?::uuid AS scope, ?::bigint AS desired_generation, ?::integer AS implementation_schema,
+                ?::bytea AS configuration_hash, ?::uuid AS database_identity, ?::uuid AS restore_identity,
+                ?::uuid AS event_writer, ?::uuid AS catalog_writer, ?::bytea AS trust_hash, ?::bigint AS generation, ?::bytea AS activation_hash),
+            b AS MATERIALIZED (SELECT ?::bigint AS desired_generation, ?::bytea AS configuration_hash),
+            current_identity AS MATERIALIZED (
+                SELECT (c.test_only AND c.implementation_schema = d.implementation_schema AND c.desired_generation = d.desired_generation
+                    AND c.desired_configuration_hash = d.configuration_hash AND c.database_identity = d.database_identity
+                    AND c.restore_identity = d.restore_identity AND c.event_writer_generation = d.event_writer
+                    AND c.catalog_writer_generation = d.catalog_writer AND c.trust_bundle_hash = d.trust_hash
+                    AND c.accepted_catalog_generation = d.generation AND c.accepted_catalog_hash = d.activation_hash
+                    AND NOT g.test_only AND g.implementation_schema = 1 AND g.desired_generation = b.desired_generation
+                    AND g.desired_configuration_hash IS NOT DISTINCT FROM b.configuration_hash
+                    AND g.database_identity = d.database_identity AND g.restore_identity = d.restore_identity
+                    AND g.event_writer_generation = d.event_writer AND g.catalog_writer_generation = d.catalog_writer
+                    AND g.trust_bundle_hash = d.trust_hash AND g.accepted_catalog_generation = d.generation AND g.accepted_catalog_hash = d.activation_hash
+                ) IS TRUE AS matches
+                FROM d CROSS JOIN b
+                LEFT JOIN complaint_journal_control c ON c.data_scope_id = d.scope
+                LEFT JOIN complaint_journal_control g ON g.data_scope_id = '00000000-0000-0000-0000-000000000000'::uuid
+            )
+        """.trimIndent()
+        private val REGISTERED_ACTOR_SQL = "$REGISTERED_IDENTITY_SQL, ${ACTOR_SQL.removePrefix("WITH ")}"
+        private val REGISTERED_AUTH_SQL = "$REGISTERED_ACTOR_SQL SELECT (SELECT matches FROM current_identity) AS registered_current_identity, " +
+            "actor.platform FROM (SELECT 1) seed LEFT JOIN actor ON true"
+        private val OBSERVE_SQL = observationSql(false)
+        private val REGISTERED_OBSERVE_SQL = observationSql(true)
+
+        // Two fixed statements share the existing exact receipt projection; no caller-selected SQL predicate.
+        private fun observationSql(registered: Boolean) = """
+            ${if (registered) REGISTERED_ACTOR_SQL else ACTOR_SQL}, receipt_time AS MATERIALIZED (SELECT clock_timestamp() AS at)
+            SELECT actor.platform,${if (registered) " (SELECT matches FROM current_identity) AS registered_current_identity," else ""}
                 r.actor_id IS NOT NULL AND (r.state <> 'COMPLETED' OR r.expires_at > receipt_time.at) AS comparable,
                 r.state = 'COMPLETED' AND r.expires_at > receipt_time.at AS visible,
                 r.data_scope_id = ?::uuid AND r.test_only AND r.operation = ?
