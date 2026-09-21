@@ -29,58 +29,91 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** Actual PG/native producer cases when selected by the parent; SOURCE_ONLY / NOT_RUN here. */
 internal object TestActiveRecurrentCasesV1 {
-    fun genuineNonempty(tls: VersionBoundPersistenceConnectedFixture, family: ComplaintJournalDeletionKindV1, maximumVersions: Long = 10_000) =
-        withRecurrentFixture(tls, family, maximumVersions = maximumVersions) { f ->
-            val initial = f.control()
-            val initialBytes = (initial.getValue("checkpoint_bytes") as ByteArray).copyOf()
-            val initialHash = (initial.getValue("checkpoint_hash") as ByteArray).copyOf()
-            val before = f.counters()
-            val domain = f.domainImage()
-            val oldSeal = f.immutableImage().getValue("complaint_test_active_seal_intents")
-            var archivedBeforeClear = false
-            val staged = mutableSetOf<Int>()
-            f.probe.before = { call -> if (call.sql == TestActiveRecurrentSqlV1.request) {
-                val holder = JdbcTemplate(f.runtime.pools.catalogCoordinator.dataSource)
-                val archive = holder.queryForMap("SELECT checkpoint_bytes,checkpoint_hash FROM complaint_test_active_checkpoint_history WHERE data_scope_id=? AND ordinal=1", f.scope)
-                assertArrayEquals(initialBytes, archive["checkpoint_bytes"] as ByteArray)
-                assertArrayEquals(initialHash, archive["checkpoint_hash"] as ByteArray)
-                assertArrayEquals(initialBytes, holder.queryForMap("SELECT checkpoint_bytes FROM complaint_journal_control WHERE data_scope_id=?", f.scope)["checkpoint_bytes"] as ByteArray)
-                archivedBeforeClear = true // Exact physical archive already exists in this actual REQUEST transaction.
-            } }
-            f.probe.after = { call -> if (call.sql == TestActiveRecurrentScanSqlV1.completeRun) {
-                val holder = JdbcTemplate(f.runtime.pools.catalogCoordinator.dataSource)
-                val pass = f.passNumber(); staged.add(pass)
-                val run = holder.queryForMap("SELECT * FROM complaint_journal_scan_runs WHERE data_scope_id=? AND pass=?", f.scope, pass)
-                assertEquals(1L, run["entry_count"]); assertEquals("COMPLETE", run["state"])
-                assertEquals(4_416L, run["active_recurrent_storage_bytes"])
-                assertNull(run["active_initial_seal_token"])
-                assertEquals(1L, holder.queryForObject("SELECT count(*) FROM complaint_journal_scan_entries WHERE data_scope_id=? AND pass=? AND replay_state='APPLIED'",
-                    Long::class.java, f.scope, pass))
-            } }
-            val completed = assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, f.checkpoint())
-            f.assertSuccessful()
-            assertTrue(archivedBeforeClear); assertEquals(setOf(1, 2), staged)
-            assertEquals(2L, completed.cutoffEpoch); assertEquals(f.scope, completed.scope)
-            assertEquals(3L, f.control()["publication_epoch"])
-            val history = f.history()
-            assertEquals(2, history.size)
-            assertArrayEquals(initialBytes, history[0]["checkpoint_bytes"] as ByteArray)
-            assertArrayEquals(initialHash, history[0]["checkpoint_hash"] as ByteArray)
-            assertArrayEquals(f.control()["checkpoint_bytes"] as ByteArray, history[1]["checkpoint_bytes"] as ByteArray)
-            assertEquals(oldSeal, f.immutableImage().getValue("complaint_test_active_seal_intents"))
-            assertEquals(domain, f.domainImage())
-            f.assertCharge(before, TestActiveRecurrentStorageV1.INTENT + TestActiveRecurrentStorageV1.HISTORY.scaled(2))
-            val doc = f.document()
-            assertEquals(1L, doc.objectCount); assertEquals(f.record.stored.bytes.size.toLong(), doc.byteCount)
-            assertEquals(completed.checkpointSha256, Sha256.hex(doc.canonicalBytes()))
-            assertEquals(listOf("STS", "PASS1", "GET1", "DECRYPT", "PASS2", "GET2", "DECRYPT"), f.raw.order)
-            assertEquals(listOf(0L, 1L), doc.ranges.map { it.eventCount })
-            assertEquals(manifest(f, 2, 2, listOf(f.record.stored.key to f.record.stored.version)).first, doc.ranges[1].manifestSha256)
-            assertEquals(manifest(f, 1, 2, listOf(f.record.stored.key to f.record.stored.version)).first, doc.first.manifestSha256)
-            val beforeRepeat = f.image(); val calls = f.probe.calls.size
-            assertThrows<TestActiveRecurrentExceptionV1> { f.checkpoint(checkNotNull(f.original)) }
-            assertEquals(beforeRepeat, f.image()); assertEquals(calls, f.probe.calls.size)
+    fun genuineNonempty(tls: VersionBoundPersistenceConnectedFixture, family: ComplaintJournalDeletionKindV1, maximumVersions: Long = 10_000) {
+        var stage = "SETUP"
+        var observedFixture: TestActiveRecurrentFixtureV1? = null
+        var reportedFailure: TestActiveRecurrentExceptionV1? = null
+        fun report(failure: TestActiveRecurrentExceptionV1) {
+            reportedFailure = failure
+            try {
+                // Retained observations only: these are NOT an attribution to a failing SQL call.
+                // Product checkpoint cleanup may already have run before the same exception escapes.
+                val calls = observedFixture?.probe?.calls
+                val last = calls?.lastOrNull()
+                val ordinal = if (last == null) 0 else calls?.count { it.phase === last.phase } ?: 0
+                println("TEST_ACTIVE_RECURRENT_CASE_FAILURE stage=$stage code=RECURRENT_REFUSED " +
+                    "fixtureReady=${observedFixture != null} observedStep=${observedFixture?.original?.step?.name ?: "NONE"} " +
+                    "lastAttemptedSqlStep=${last?.step?.name ?: "NONE"} lastPhaseCallOrdinal=$ordinal")
+            } catch (_: Throwable) { /* Diagnostics must not replace the original failure. */ }
         }
+        try {
+            withRecurrentFixture(tls, family, maximumVersions = maximumVersions) { f ->
+                observedFixture = f
+                try {
+                    val initial = f.control()
+                    val initialBytes = (initial.getValue("checkpoint_bytes") as ByteArray).copyOf()
+                    val initialHash = (initial.getValue("checkpoint_hash") as ByteArray).copyOf()
+                    val before = f.counters()
+                    val domain = f.domainImage()
+                    val oldSeal = f.immutableImage().getValue("complaint_test_active_seal_intents")
+                    var archivedBeforeClear = false
+                    val staged = mutableSetOf<Int>()
+                    f.probe.before = { call -> if (call.sql == TestActiveRecurrentSqlV1.request) {
+                        val holder = JdbcTemplate(f.runtime.pools.catalogCoordinator.dataSource)
+                        val archive = holder.queryForMap("SELECT checkpoint_bytes,checkpoint_hash FROM complaint_test_active_checkpoint_history WHERE data_scope_id=? AND ordinal=1", f.scope)
+                        assertArrayEquals(initialBytes, archive["checkpoint_bytes"] as ByteArray)
+                        assertArrayEquals(initialHash, archive["checkpoint_hash"] as ByteArray)
+                        assertArrayEquals(initialBytes, holder.queryForMap("SELECT checkpoint_bytes FROM complaint_journal_control WHERE data_scope_id=?", f.scope)["checkpoint_bytes"] as ByteArray)
+                        archivedBeforeClear = true // Exact physical archive already exists in this actual REQUEST transaction.
+                    } }
+                    f.probe.after = { call -> if (call.sql == TestActiveRecurrentScanSqlV1.completeRun) {
+                        val holder = JdbcTemplate(f.runtime.pools.catalogCoordinator.dataSource)
+                        val pass = f.passNumber(); staged.add(pass)
+                        val run = holder.queryForMap("SELECT * FROM complaint_journal_scan_runs WHERE data_scope_id=? AND pass=?", f.scope, pass)
+                        assertEquals(1L, run["entry_count"]); assertEquals("COMPLETE", run["state"])
+                        assertEquals(4_416L, run["active_recurrent_storage_bytes"])
+                        assertNull(run["active_initial_seal_token"])
+                        assertEquals(1L, holder.queryForObject("SELECT count(*) FROM complaint_journal_scan_entries WHERE data_scope_id=? AND pass=? AND replay_state='APPLIED'",
+                            Long::class.java, f.scope, pass))
+                    } }
+                    stage = "BEGIN"
+                    val original = f.begin() // Same single begin formerly evaluated as checkpoint's default argument.
+                    stage = "CHECKPOINT"
+                    val result = f.checkpoint(original)
+                    stage = "ASSERTIONS"
+                    val completed = assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, result)
+                    f.assertSuccessful()
+                    assertTrue(archivedBeforeClear); assertEquals(setOf(1, 2), staged)
+                    assertEquals(2L, completed.cutoffEpoch); assertEquals(f.scope, completed.scope)
+                    assertEquals(3L, f.control()["publication_epoch"])
+                    val history = f.history()
+                    assertEquals(2, history.size)
+                    assertArrayEquals(initialBytes, history[0]["checkpoint_bytes"] as ByteArray)
+                    assertArrayEquals(initialHash, history[0]["checkpoint_hash"] as ByteArray)
+                    assertArrayEquals(f.control()["checkpoint_bytes"] as ByteArray, history[1]["checkpoint_bytes"] as ByteArray)
+                    assertEquals(oldSeal, f.immutableImage().getValue("complaint_test_active_seal_intents"))
+                    assertEquals(domain, f.domainImage())
+                    f.assertCharge(before, TestActiveRecurrentStorageV1.INTENT + TestActiveRecurrentStorageV1.HISTORY.scaled(2))
+                    val doc = f.document()
+                    assertEquals(1L, doc.objectCount); assertEquals(f.record.stored.bytes.size.toLong(), doc.byteCount)
+                    assertEquals(completed.checkpointSha256, Sha256.hex(doc.canonicalBytes()))
+                    assertEquals(listOf("STS", "PASS1", "GET1", "DECRYPT", "PASS2", "GET2", "DECRYPT"), f.raw.order)
+                    assertEquals(listOf(0L, 1L), doc.ranges.map { it.eventCount })
+                    assertEquals(manifest(f, 2, 2, listOf(f.record.stored.key to f.record.stored.version)).first, doc.ranges[1].manifestSha256)
+                    assertEquals(manifest(f, 1, 2, listOf(f.record.stored.key to f.record.stored.version)).first, doc.first.manifestSha256)
+                    val beforeRepeat = f.image(); val calls = f.probe.calls.size
+                    assertThrows<TestActiveRecurrentExceptionV1> { f.checkpoint(checkNotNull(f.original)) }
+                    assertEquals(beforeRepeat, f.image()); assertEquals(calls, f.probe.calls.size)
+                } catch (failure: TestActiveRecurrentExceptionV1) {
+                    report(failure) // Before fixture unwinding; expected refusals stay inside assertThrows.
+                    throw failure
+                } finally { stage = "TEARDOWN" }
+            }
+        } catch (failure: TestActiveRecurrentExceptionV1) {
+            if (reportedFailure !== failure) report(failure)
+            throw failure
+        }
+    }
 
     fun nextRangeStillReadsEveryPriorNonemptyRange(tls: VersionBoundPersistenceConnectedFixture) = withRecurrentFixture(tls) { f ->
         assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, f.checkpoint()); f.assertSuccessful()
