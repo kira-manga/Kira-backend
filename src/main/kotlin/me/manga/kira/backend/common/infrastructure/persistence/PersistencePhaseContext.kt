@@ -1900,6 +1900,7 @@ constructor(
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
             PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
             PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
+            PersistencePhasePath.COMPLAINT_TEST_TERMINAL_QUIESCENCE,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
             PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT, // The run-only seal must commit/release BEFORE E or any control/counter lock.
             PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
