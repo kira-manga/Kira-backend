@@ -24,6 +24,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalKmsRete
 import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalTimeBoundV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealRetentionDeclarationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenialAuthorityPolicyV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalDenialAuthorityPolicyV1
 import me.manga.kira.backend.config.KiraSecurityProperties
 import me.manga.kira.backend.security.ImmutableSecretVersion
 import me.manga.kira.backend.security.JwtService
@@ -95,6 +96,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1::requireInput,
     )
     val ordinaryDenial = document.ordinaryDenial?.let(TestOrdinaryDenialAuthorityPolicyV1::fromIndependentInput)
+    val terminalDenial = document.terminalDenial?.let(TestTerminalDenialAuthorityPolicyV1::fromIndependentInput)
     val sealerMapping = document.sealer.let { sealer ->
         val authorities = journal.declaration().authorities
         EpochSealDeploymentMappingV1(
@@ -142,6 +144,8 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         valid((document.profile == INITIAL_CHECKPOINT_PROFILE || combinedInitialRecovery) == (initialCheckpoint != null))
         valid((document.profile == ACTIVE_SEAL_RECOVERY_PROFILE || combinedInitialRecovery) == (activeOrdinarySealRecovery != null))
         valid((activeFirstCut != null) == (ordinaryPublication != null))
+        // Explicit independent opt-in before full D; never a replacement for the ordinary grant.
+        valid(terminalDenial == null || ordinaryDenial != null)
         valid(when (document.profile) {
             PROFILE -> !journal.adminDelete && !journal.ownerDeleteAll && ordinaryDenial == null
             OWNER_ERASURE_PROFILE -> !journal.adminDelete && journal.ownerDeleteAll && ordinaryDenial == null
@@ -175,6 +179,8 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         valid(retention.environment == catalog.chainPolicy.trustBundlePolicy.expectedEnvironment)
         ordinaryDenial?.requireEnvironment(retention.environment)
         ordinaryDenial?.requireJournal(journal)
+        terminalDenial?.requireEnvironment(retention.environment)
+        terminalDenial?.requireJournal(journal)
         valid(sealerMapping.sealTerminal.principal.accountId == declaration.journalLocation.accountId)
         // Validate the private source-session spelling before any secret acquisition; it is excluded from D.
         sealerMapping.bootstrap.principal.callerArn(sealerSessionName)

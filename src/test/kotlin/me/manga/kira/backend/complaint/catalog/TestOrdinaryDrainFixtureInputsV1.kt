@@ -23,6 +23,7 @@ internal class TestOrdinaryDrainFixtureInputsV1(
     val maximumRetainedVersions: Long = 10_000,
     val maximumFramedBytes: Long? = null,
     val scanMillis: Int? = null,
+    val terminalQuiescence: TestTerminalQuiescenceFixtureInputsV1? = null,
 ) {
     private val signer by lazy { OfflineTrustBundleFixture.newKey() }
 

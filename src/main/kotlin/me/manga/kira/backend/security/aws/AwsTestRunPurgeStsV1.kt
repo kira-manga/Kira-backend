@@ -125,17 +125,13 @@ internal class AwsTestRunPurgeStsV1 private constructor(
     private fun call(action: String, parameters: Map<String, String>, acquisition: EpochSealStsAcquisition): EpochSealStsCall =
         EpochSealStsCall(action, parameters, acquisition, acquisition.remainingMillis(limits.requestTimeoutMillis), nanoTime)
 
-    private fun identity(owner: EpochSealStsClientOwner, acquisition: EpochSealStsAcquisition, account: String, arn: String, userId: String): Identity {
+    private fun identity(owner: EpochSealStsClientOwner, acquisition: EpochSealStsAcquisition, account: String, arn: String, userId: String): Unit {
         val call = call("GetCallerIdentity", emptyMap(), acquisition)
         return owner.execute(
             call,
             { sdk, overrides -> sdk.getCallerIdentity(GetCallerIdentityRequest.builder().overrideConfiguration(overrides).build()) },
         ) { response: GetCallerIdentityResponse, report: EpochSealStsWireReport ->
-            report.requireValue("Account", response.account())
-            report.requireValue("Arn", response.arn())
-            report.requireValue("UserId", response.userId())
-            requireEpochSealSts(response.account() == account && response.arn() == arn && response.userId() == userId, EpochSealStsFailure.IDENTITY_MISMATCH)
-            Identity(response.account(), response.arn(), response.userId())
+            TestTerminalStsResponseChecksV1.identity(response, report, account, arn, userId)
         }
     }
 
@@ -145,7 +141,7 @@ internal class AwsTestRunPurgeStsV1 private constructor(
         policy: String,
         name: String,
         timing: EpochSealStsSessionTiming,
-    ): Assumed {
+    ): TestTerminalStsResponseChecksV1.Assumed {
         val call = call(
             "AssumeRole",
             mapOf("RoleArn" to binding.targetRoleArn, "RoleSessionName" to name, "Policy" to policy, "DurationSeconds" to "900"),
@@ -160,33 +156,7 @@ internal class AwsTestRunPurgeStsV1 private constructor(
                 )
             },
         ) { response, report ->
-            val user = response.assumedRoleUser()
-            requireEpochSealSts(user != null)
-            report.requireValue("Arn", checkNotNull(user).arn())
-            report.requireValue("AssumedRoleId", user.assumedRoleId())
-            requireEpochSealSts(
-                user.arn() == binding.targetArn(name) && user.assumedRoleId() == "${binding.targetRoleId}:$name",
-                EpochSealStsFailure.IDENTITY_MISMATCH,
-            )
-            val credentials = response.credentials()
-            requireEpochSealSts(credentials != null)
-            val actual = checkNotNull(credentials)
-            report.requireCredential("AccessKeyId", actual.accessKeyId())
-            report.requireCredential("SecretAccessKey", actual.secretAccessKey())
-            report.requireCredential("SessionToken", actual.sessionToken())
-            @Suppress("DEPRECATION")
-            val packed = response.packedPolicySize()
-            report.requireOptionalSize("PackedPolicySize", packed, 100)
-            report.requireOptionalSize("SessionTokenUtilization", response.sessionTokenUtilization(), 100)
-            report.requireOptionalSize("SessionTokenSize", response.sessionTokenSize(), 16_384, actual.sessionToken().length)
-            requireEpochSealSts(actual.accessKeyId().length in 16..128 && actual.accessKeyId().all { it in 'A'..'Z' || it in '0'..'9' })
-            val expiration = report.expiration()
-            requireEpochSealSts(actual.expiration() == expiration)
-            timing.requireUsable(expiration)
-            val acquired = AwsSessionCredentials.create(actual.accessKeyId(), actual.secretAccessKey(), actual.sessionToken())
-            validateCredentials(acquired)
-            requireEpochSealSts(acquired.accessKeyId() != sourceCredentials.accessKeyId(), EpochSealStsFailure.IDENTITY_MISMATCH)
-            Assumed(acquired, expiration)
+            TestTerminalStsResponseChecksV1.assumed(response, report, binding, name, sourceCredentials, timing)
         }
     }
 
@@ -203,9 +173,6 @@ internal class AwsTestRunPurgeStsV1 private constructor(
         if (failure != null) closeFailure.updateAndGet { prior -> if (replaceEpochSealStsFailure(prior, failure)) failure else prior }
         closeFailure.get()?.let { throw it }
     }
-
-    private class Assumed(val credentials: AwsSessionCredentials, val expiration: Instant)
-    private class Identity(val accountId: String, val arn: String, val userId: String)
 
     private fun region(): Region {
         requireEpochSealSts(
@@ -246,15 +213,7 @@ internal class AwsTestRunPurgeStsV1 private constructor(
             validateCredentials(source)
             return AwsTestRunPurgeStsV1(routing, source, binding, limits, sts, kms, s3, nanoTime, wallClock)
         }
-        private fun validateCredentials(credentials: AwsSessionCredentials) {
-            requireEpochSealSts(credentials.accessKeyId().length in 1..128 && credentials.secretAccessKey().length in 1..256, EpochSealStsFailure.INVALID_INPUT)
-            requireEpochSealSts(credentials.sessionToken().length in 1..16_384, EpochSealStsFailure.INVALID_INPUT)
-            requireEpochSealSts(
-                credentials.accessKeyId().all { it in '!'..'~' } && credentials.secretAccessKey().all { it in '!'..'~' } &&
-                    credentials.sessionToken().all { it in '!'..'~' },
-                EpochSealStsFailure.INVALID_INPUT,
-            )
-        }
+        private fun validateCredentials(credentials: AwsSessionCredentials) = TestTerminalStsResponseChecksV1.credentials(credentials)
 
     }
 }

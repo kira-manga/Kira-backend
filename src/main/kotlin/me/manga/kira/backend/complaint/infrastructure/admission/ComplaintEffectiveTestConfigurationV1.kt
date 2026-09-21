@@ -63,6 +63,8 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             // Independently retained purpose/implementation/timing policy, before D and activation.
             // Legacy absence deliberately leaves its existing preimage byte-for-byte unchanged.
             owner.ordinaryDenial?.let { put("ordinaryDenial", it.inventory()) }
+            // A distinct grant must exist before activation. Null deliberately preserves old full-D bytes.
+            owner.terminalDenial?.let { put("terminalDenial", it.inventory()) }
             // Explicit retained physical resource + paid row policy; old absent profiles are byte-identical.
             owner.activeFirstCut?.let {
                 it.requireRetained(owner.pools, journal, owner.ordinarySeal)

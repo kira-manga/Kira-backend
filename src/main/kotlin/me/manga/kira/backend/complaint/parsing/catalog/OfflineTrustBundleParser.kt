@@ -65,6 +65,10 @@ internal object OfflineTrustBundleParser {
     fun parseOrdinaryDenial(bytes: ByteArray): TestOrdinaryDenialEnvelopeV1 =
         parseCanonical(bytes, TestOrdinaryDenialEnvelopeV1.serializer(), maximumBytes = 65_536)
 
+    /** Terminal purpose has its own closed body/signature domain; an ordinary envelope cannot parse as it. */
+    fun parseTerminalDenial(bytes: ByteArray): me.manga.kira.backend.complaint.domain.terminal.TestTerminalDenialEnvelopeV1 =
+        parseCanonical(bytes, me.manga.kira.backend.complaint.domain.terminal.TestTerminalDenialEnvelopeV1.serializer(), maximumBytes = 65_536)
+
     fun parseGenesis(bytes: ByteArray): OfflineCatalogGenesisEnvelopeV1 = parseCanonical(bytes, OfflineCatalogGenesisEnvelopeV1.serializer())
 
     fun parseGenesisManifest(bytes: ByteArray): OfflineCatalogGenesisManifestV1 = parseCanonical(bytes, OfflineCatalogGenesisManifestV1.serializer())

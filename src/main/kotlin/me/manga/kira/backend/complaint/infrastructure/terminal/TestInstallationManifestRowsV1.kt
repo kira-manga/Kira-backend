@@ -82,6 +82,12 @@ internal object TestInstallationManifestRowsV1 {
         } finally { bytes.fill(0) }
     }
 
+    /** Fresh comparison bytes for the post-terminal native reader, never reused completed-producer buffers. */
+    fun ordinarySidecarForInventory(row: ResultSet, original: TestRunInstallationManifestV1, now: Instant): TestTerminalDurableRowV1 {
+        requireOrdinarySidecar(row, original, now)
+        return TestTerminalSqlRowV1.restore(row, binding(row, original), now)
+    }
+
     private fun binding(row: ResultSet, original: TestRunInstallationManifestV1): TestTerminalDurableBindingV1 {
         val run = TestTerminalRunContextV1(row.getObject("data_scope_id", UUID::class.java).toString(), row.getLong("activation_catalog_generation"),
             TestOrdinaryDrainRowsV1.hash(row, "activation_catalog_hash"), TestOrdinaryDrainRowsV1.hash(row, "configuration_hash"), TestOrdinaryDrainRowsV1.hash(row, "terminal_encoding_hash"))

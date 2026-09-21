@@ -54,6 +54,7 @@ internal class TestOrdinarySealHttpFixtureV1(
     // Raw TEST input selected before protected parsing/full D, never a live counter reset or quota exemption.
     val protectedEnrollmentGlobalPerHour: Int? = null,
     val terminalEpochSeal: Boolean = false,
+    val terminalInventory: Boolean = false,
 ) : AutoCloseable {
     init { require(protectedEnrollmentGlobalPerHour == null || (protectedIntake && protectedEnrollmentGlobalPerHour in 1..120)) }
 
@@ -84,6 +85,11 @@ internal class TestOrdinarySealHttpFixtureV1(
     // The first ordinary seal stays in `stored`; only this explicit successor fixture may own
     // a different epoch-seal key. No ordinary object is overwritten to simulate terminal proof.
     val terminalSealObjects = linkedMapOf<String, JournalPublisherObject>()
+    // Separate opt-in actual recovery identity and whole-prefix pages; no publisher proof or exact-key filter.
+    val terminalInventoryRequests = mutableListOf<JournalPublisherHttpRequest>()
+    val terminalRecoverySessions = mutableListOf<String>()
+    var terminalInventoryListing: (Int, List<JournalPublisherObject>) -> List<JournalPublisherObject> = { _, values -> values }
+    var terminalInventoryObject: (Int, JournalPublisherObject) -> JournalPublisherObject = { _, value -> value }
     var manifestListing: (String, List<JournalPublisherObject>) -> List<JournalPublisherObject> = { _, values -> values }
     var terminalSealListing: (String, List<JournalPublisherObject>) -> List<JournalPublisherObject> = { _, values -> values }
     var s3Created = 0
@@ -97,6 +103,10 @@ internal class TestOrdinarySealHttpFixtureV1(
     private var journal: TestOwnerDeleteJournalConfigurationV1? = null
     private var acquisition: VersionBoundTestOrdinarySealV1? = null
     private var expectedKey: String? = null
+    private var recoverySession = false
+
+    fun terminalObjects(): List<JournalPublisherObject> =
+        (listOfNotNull(stored) + manifestObjects.values + purgeObjects.values + terminalSealObjects.values).sortedBy { it.key }
 
     fun now(): Instant = Instant.now().plusNanos(offsetNanos)
     fun nanos(): Long {
@@ -151,9 +161,10 @@ internal class TestOrdinarySealHttpFixtureV1(
         sts.onClientClose = { checked { requireConnectionFree(); nativeBoundary(); onNativeClose() } }
         kms.onClientClose = { checked { requireConnectionFree(); nativeBoundary(); onNativeClose() } }
         kms.respond = { request -> checked {
-            signed(request, TARGET, "kms")
+            signed(request, if (recoverySession) RECOVERY_TARGET else TARGET, "kms")
             assertEquals(d.encryption.keyArn, request.fields()["KeyId"].textValue())
             val generated = request.target() == AwsJournalKmsFixture.GENERATE_TARGET
+            if (recoverySession) assertFalse(generated, "A terminal recovery session is read-only, never a publisher.")
             assertTrue(generated || request.target() == AwsJournalKmsFixture.DECRYPT_TARGET)
             order.add(if (generated) "GENERATE" else "DECRYPT")
             JournalKmsHttpReply(if (generated) AwsJournalKmsFixture.generateDocument(d.encryption.keyArn, AwsJournalKmsFixture.keyBytes(), AwsJournalKmsFixture.wrappedBytes())
@@ -200,6 +211,7 @@ internal class TestOrdinarySealHttpFixtureV1(
         order.add(request.kind)
         val j = checkNotNull(journal)
         val location = j.declaration().journalLocation
+        if (recoverySession) return@checked terminalInventoryReply(request, j).also { changeS3(request, it) }
         val key = checkNotNull(expectedKey)
         val manifest = "/installation-manifest/" in key
         val purge = "/test-run-purge/" in key
@@ -246,39 +258,96 @@ internal class TestOrdinarySealHttpFixtureV1(
         reply.also { changeS3(request, it) }
     }
 
+    private fun terminalInventoryReply(request: JournalPublisherHttpRequest, journal: TestOwnerDeleteJournalConfigurationV1): S3CatalogReply {
+        check(terminalInventory && recoverySession)
+        terminalInventoryRequests.add(request)
+        val location = journal.declaration().journalLocation
+        val pass = terminalRecoverySessions.size
+        journalPublisherRawAssertSigned(request, location.region, location.accountId, RECOVERY_TARGET)
+        assertTrue(request.body.isEmpty())
+        return when (request.kind) {
+            "LIST" -> {
+                val query = request.http.rawQueryParameters()
+                assertEquals(listOf(journal.sealTerminalPrefix), query["prefix"])
+                assertEquals(listOf("2"), query["max-keys"])
+                val visible = terminalInventoryListing(pass, terminalObjects().map { terminalInventoryObject(pass, it) })
+                    .sortedWith(compareBy({ it.key }, { it.version }))
+                val keyMarker = query["key-marker"]?.single()
+                val versionMarker = query["version-id-marker"]?.single()
+                assertEquals(keyMarker == null, versionMarker == null)
+                val start = if (keyMarker == null) 0 else {
+                    val index = visible.indexOfLast { it.key == keyMarker && it.version == versionMarker }
+                    assertTrue(index >= 0); index + 1
+                }
+                val page = visible.drop(start).take(2)
+                val more = start + page.size < visible.size
+                var xml = journalPublisherRawListDocument(location.bucket, journal.sealTerminalPrefix, page)
+                    .replace("<KeyMarker></KeyMarker>", "<KeyMarker>${OwnerDeleteAllJournalPublisherFixture.encoded(keyMarker.orEmpty())}</KeyMarker>")
+                    .replace("<VersionIdMarker></VersionIdMarker>", "<VersionIdMarker>${OwnerDeleteAllJournalPublisherFixture.xml(versionMarker.orEmpty())}</VersionIdMarker>")
+                if (more) {
+                    val last = page.last()
+                    xml = xml.replace("<IsTruncated>false</IsTruncated>", "<IsTruncated>true</IsTruncated>")
+                        .replace("</ListVersionsResult>", "<NextKeyMarker>${OwnerDeleteAllJournalPublisherFixture.encoded(last.key)}</NextKeyMarker>" +
+                            "<NextVersionIdMarker>${OwnerDeleteAllJournalPublisherFixture.xml(last.version)}</NextVersionIdMarker></ListVersionsResult>")
+                }
+                OwnerDeleteAllJournalPublisherFixture.xmlReply(xml)
+            }
+            "GET" -> {
+                val key = request.http.encodedPath().removePrefix("/${location.bucket}/")
+                val value = terminalInventoryObject(pass, terminalObjects().single { it.key == key })
+                assertEquals(value.version, request.http.rawQueryParameters().getValue("versionId").single())
+                journalPublisherRawGetReply(location.region, value.copy(bytes = value.bytes.copyOf()))
+            }
+            else -> error("Synthetic terminal recovery request must be LIST or version GET, never a write.")
+        }
+    }
+
     private fun stsReply(request: JournalKmsHttpRequest): JournalKmsHttpReply = checked {
         released()
         val fields = query(request)
         val source = request.http.firstMatchingHeader("X-Amz-Security-Token").orElseThrow() == AwsJournalKmsFixture.CREDENTIALS.sessionToken()
         val stage = if (fields.getValue("Action") == "AssumeRole") 2 else if (source) 1 else 3
         order.add(listOf("STS_SOURCE", "STS_ASSUME", "STS_TARGET")[stage - 1])
-        signed(request, if (stage == 3) TARGET else AwsJournalKmsFixture.CREDENTIALS, "sts")
+        signed(request, if (stage == 3) { if (recoverySession) RECOVERY_TARGET else TARGET } else AwsJournalKmsFixture.CREDENTIALS, "sts")
         assertEquals("2011-06-15", fields.getValue("Version"))
         val xml = if (stage == 2) {
             assertEquals(setOf("Action", "Version", "RoleArn", "RoleSessionName", "DurationSeconds", "Policy"), fields.keys)
-            assertEquals("arn:aws:iam::$ACCOUNT:role/test-epoch-sealer", fields.getValue("RoleArn"))
+            recoverySession = fields.getValue("RoleArn") == "arn:aws:iam::$ACCOUNT:role/test-recovery"
+            assertTrue(!recoverySession || terminalInventory)
+            val roleName = if (recoverySession) "test-recovery" else "test-epoch-sealer"
+            assertEquals("arn:aws:iam::$ACCOUNT:role/$roleName", fields.getValue("RoleArn"))
             assertEquals("900", fields.getValue("DurationSeconds"))
             session = fields.getValue("RoleSessionName")
             val manifest = session.startsWith("kira-manifest-")
             val purge = session.startsWith("kira-purge-")
             val sessions = listOfNotNull("seal", "manifest".takeIf { manifestPublication }, "purge".takeIf { purgePublication }).joinToString("|")
-            assertTrue(Regex("kira-($sessions)-[0-9a-f-]{36}").matches(session))
+            assertTrue(Regex(if (recoverySession) "kira-terminal-read-[0-9a-f-]{36}" else "kira-($sessions)-[0-9a-f-]{36}").matches(session))
+            if (recoverySession) { assertFalse(session in terminalRecoverySessions); terminalRecoverySessions.add(session) }
             val policy = ObjectMapper().readTree(fields.getValue("Policy"))
             expectedKey = policy["Statement"][4]["Condition"]["StringEquals"]["s3:prefix"].textValue()
-            assertEquals(manifest, "/installation-manifest/" in checkNotNull(expectedKey))
-            assertEquals(purge, "/test-run-purge/" in checkNotNull(expectedKey))
+            if (recoverySession) {
+                assertEquals(checkNotNull(journal).sealTerminalPrefix, expectedKey)
+                assertEquals(listOf("s3:GetObjectVersion", "s3:GetObjectRetention", "kms:Decrypt"), policy["Statement"][3]["Action"].map { it.textValue() })
+                assertEquals(listOf("s3:GetObjectVersion", "s3:GetObjectRetention", "kms:Decrypt", "s3:ListBucketVersions", "sts:GetCallerIdentity"),
+                    policy["Statement"][0]["NotAction"].map { it.textValue() })
+            } else {
+                assertEquals(manifest, "/installation-manifest/" in checkNotNull(expectedKey))
+                assertEquals(purge, "/test-run-purge/" in checkNotNull(expectedKey))
+            }
             val location = checkNotNull(journal).declaration().journalLocation
             val resources = policy["Statement"][3]["Resource"].map { it.textValue() }
-            assertEquals(listOf("arn:aws:s3:::${location.bucket}/$expectedKey", checkNotNull(journal).declaration().encryption.keyArn), resources)
+            assertEquals(listOf("arn:aws:s3:::${location.bucket}/$expectedKey" + (if (recoverySession) "*" else ""), checkNotNull(journal).declaration().encryption.keyArn), resources)
+            val acquired = if (recoverySession) RECOVERY_TARGET else TARGET
+            val roleId = if (recoverySession) RECOVERY_ID else TARGET_ID
             """<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult>""" +
-                "<Credentials><AccessKeyId>${TARGET.accessKeyId()}</AccessKeyId><SecretAccessKey>${TARGET.secretAccessKey()}</SecretAccessKey>" +
-                "<SessionToken>${TARGET.sessionToken()}</SessionToken><Expiration>${now().plusSeconds(900)}</Expiration></Credentials>" +
-                "<AssumedRoleUser><AssumedRoleId>$TARGET_ID:$session</AssumedRoleId><Arn>arn:aws:sts::$ACCOUNT:assumed-role/test-epoch-sealer/$session</Arn>" +
+                "<Credentials><AccessKeyId>${acquired.accessKeyId()}</AccessKeyId><SecretAccessKey>${acquired.secretAccessKey()}</SecretAccessKey>" +
+                "<SessionToken>${acquired.sessionToken()}</SessionToken><Expiration>${now().plusSeconds(900)}</Expiration></Credentials>" +
+                "<AssumedRoleUser><AssumedRoleId>$roleId:$session</AssumedRoleId><Arn>arn:aws:sts::$ACCOUNT:assumed-role/$roleName/$session</Arn>" +
                 "</AssumedRoleUser><PackedPolicySize>1</PackedPolicySize></AssumeRoleResult><ResponseMetadata><RequestId>test-seal-assume</RequestId></ResponseMetadata></AssumeRoleResponse>"
         } else {
             assertEquals(setOf("Action", "Version"), fields.keys)
-            val name = if (stage == 1) "test-bootstrap/$SOURCE_SESSION" else "test-epoch-sealer/$session"
-            val user = if (stage == 1) "$SOURCE_ID:$SOURCE_SESSION" else "$TARGET_ID:$session"
+            val name = if (stage == 1) "test-bootstrap/$SOURCE_SESSION" else if (recoverySession) "test-recovery/$session" else "test-epoch-sealer/$session"
+            val user = if (stage == 1) "$SOURCE_ID:$SOURCE_SESSION" else if (recoverySession) "$RECOVERY_ID:$session" else "$TARGET_ID:$session"
             """<GetCallerIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><GetCallerIdentityResult>""" +
                 "<Arn>arn:aws:sts::$ACCOUNT:assumed-role/$name</Arn><UserId>$user</UserId><Account>$ACCOUNT</Account></GetCallerIdentityResult>" +
                 "<ResponseMetadata><RequestId>test-seal-identity</RequestId></ResponseMetadata></GetCallerIdentityResponse>"
@@ -322,7 +391,9 @@ internal class TestOrdinarySealHttpFixtureV1(
         const val VERSION = "test-seal-version-1"
         private val SOURCE_ID = "AROA" + "F".repeat(17)
         private val TARGET_ID = "AROA" + "B".repeat(17)
+        private val RECOVERY_ID = "AROA" + "C".repeat(17)
         val TARGET: AwsSessionCredentials = AwsSessionCredentials.create("ASIATESTSEAL00000001", "synthetic-test-seal-secret", "synthetic-test-seal-session")
+        val RECOVERY_TARGET: AwsSessionCredentials = AwsSessionCredentials.create("ASIATESTREAD00000001", "synthetic-test-read-secret", "synthetic-test-read-session")
         fun policy(id: String): InitialPolicyReferenceV1 = InitialPolicyReferenceV1(id, 1, "a".repeat(64))
         fun query(request: JournalKmsHttpRequest): Map<String, String> = request.json.split('&').associate { field ->
             val split = field.indexOf('=')

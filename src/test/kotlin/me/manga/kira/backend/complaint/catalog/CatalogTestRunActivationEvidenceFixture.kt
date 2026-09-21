@@ -221,6 +221,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
     private val ordinarySeal = if (intakeProcess != null) null else ordinarySealHttp?.owner(consumers.journalRouting, lanes,
         reader.chainPolicy.trustBundlePolicy.expectedEnvironment, rotations.genesis.manifest.initialWriterRegistry.catalogWriter)
     private val ordinaryDenial = ordinaryDrain?.authority(journal, reader.chainPolicy.trustBundlePolicy.expectedEnvironment)
+    private val terminalDenial = ordinaryDrain?.terminalQuiescence?.authority(journal, reader.chainPolicy.trustBundlePolicy.expectedEnvironment)
     val process = process()
     val expected = CatalogTestRunActivationCanonicalV3.fromRetained(process, INSTALLATION_LIMIT)
     val generation = prefix.size + 1L
@@ -246,7 +247,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         val writer = journal.declaration().writer
         return VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, 1, desiredGeneration, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
-            lanes, reader, activation, ordinarySeal, ordinaryDenial,
+            lanes, reader, activation, ordinarySeal, ordinaryDenial, terminalDenial = terminalDenial,
         )
     }
 
@@ -272,7 +273,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             }
             return VersionBoundTestNamespaceProcessV1.fromRetained(native.consumers, pools, 1, desiredGeneration,
                 native.databaseIdentity, native.restoreIdentity, native.publicationLanes, native.catalogReadback, selected,
-                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, activeFirstCutSuccessor = successor, initialCheckpoint = native.initialCheckpoint, activeOrdinarySealRecovery = sealRecovery)
+                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, activeFirstCutSuccessor = successor, initialCheckpoint = native.initialCheckpoint, activeOrdinarySealRecovery = sealRecovery, terminalDenial = native.terminalDenial)
         }
         val writer = journal.declaration().writer
         val activation = FullTestCatalogInputs.activation(
@@ -281,7 +282,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         )
         return VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, 1, desiredGeneration, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
-            lanes, reader, activation, ordinarySeal, ordinaryDenial,
+            lanes, reader, activation, ordinarySeal, ordinaryDenial, terminalDenial = terminalDenial,
         )
     }
 
@@ -340,6 +341,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
                 environment = trust.expectedEnvironment, lastPreRunRestoreHorizon = http.horizon.toString(), horizonPolicy = http.horizonPolicy,
             ),
             ordinaryDenial = ordinaryDrain?.authorityInput(journal, trust.expectedEnvironment),
+            terminalDenial = ordinaryDrain?.terminalQuiescence?.authorityInput(journal, trust.expectedEnvironment),
             activeFirstCut = activeFirstCutInput,
             activeFirstCutSuccessor = activeFirstCutSuccessorInput,
             ordinaryPublication = activeFirstCutInput?.let { TestActiveFirstCutInputFixtureV1.ordinaryInput() },

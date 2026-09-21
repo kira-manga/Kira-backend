@@ -74,6 +74,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingOpe
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestPublicationOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPurgeOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalEpochSealOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainOperationV1
@@ -113,6 +114,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForTestRunSealedAudit(operation: TestRunSealingOperationV1): LockedTestRunSealedAudit = LockedTestRunSealedAudit.lock(this, operation)
     internal fun lockForTestInstallationManifest(operation: TestInstallationManifestOperationV1): LockedTestInstallationManifest = LockedTestInstallationManifest.lock(this, operation)
     internal fun lockForTestInstallationManifestPublication(operation: TestInstallationManifestPublicationOperationV1): LockedTestInstallationManifestPublication = LockedTestInstallationManifestPublication.lock(this, operation)
+    internal fun lockForTestTerminalQuiescence(operation: TestTerminalQuiescenceOperationV1): LockedTestTerminalQuiescence = LockedTestTerminalQuiescence.lock(this, operation)
     internal fun lockForTestRunPurge(operation: TestRunPurgeOperationV1): LockedTestRunPurge = LockedTestRunPurge.lock(this, operation)
     internal fun lockForTestActiveFirstCut(operation: TestActiveFirstCutOperationV1): LockedTestActiveFirstCut = LockedTestActiveFirstCut.lock(this, operation)
     internal fun lockForTestActiveInitialCheckpoint(operation: TestActiveInitialCheckpointOperationV1): LockedTestActiveInitialCheckpoint = LockedTestActiveInitialCheckpoint.lock(this, operation)
@@ -1983,6 +1985,52 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 try {
                     operation.beginCounterLock(store.jdbc)
                     return LockedTestInstallationManifest(store, operation, store.readLockedCounters())
+                } catch (problem: Throwable) {
+                    operation.failed(problem)
+                }
+            }
+        }
+    }
+
+    internal class LockedTestTerminalQuiescence private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: TestTerminalQuiescenceOperationV1,
+        private val counters: LockedCounters,
+    ) {
+        private var issued = false
+        private var completed = false
+
+        internal fun completedFor(candidate: TestTerminalQuiescenceOperationV1): Boolean = operation === candidate && completed
+
+        internal fun settle(candidate: TestTerminalQuiescenceOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                operation.requireCounterTransfer(this, store.jdbc)
+                issued = true
+                val before = counters.ledger.balance
+                val after = operation.settleLockedLedger(store.jdbc, counters.ledger, counters.daily, checkNotNull(store.expectedPolicyDigest)).balance
+                for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                    operation.requireCounterTransfer(this, store.jdbc)
+                    if (before.actual[counter] == after.actual[counter] && before.recoveryReserved[counter] == after.recoveryReserved[counter] &&
+                        before.testReserved[counter] == after.testReserved[counter]) continue
+                    check(store.jdbc.update(TEST_RESERVE_COUNTER,
+                        after.actual[counter], after.recoveryReserved[counter], after.testReserved[counter], counter.storedName,
+                        before.free[counter], before.actual[counter], before.recoveryReserved[counter], before.testReserved[counter]) == 1)
+                }
+                operation.requireCounterTransfer(this, store.jdbc)
+                completed = true
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        override fun toString(): String = "LockedTestTerminalQuiescence(original-terminal-paid-scan-pool-only,redacted)"
+
+        companion object {
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: TestTerminalQuiescenceOperationV1): LockedTestTerminalQuiescence {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    return LockedTestTerminalQuiescence(store, operation, store.readLockedCounters())
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }

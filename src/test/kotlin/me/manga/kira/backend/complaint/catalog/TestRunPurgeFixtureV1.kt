@@ -129,6 +129,7 @@ internal class TestRunPurgeFixtureV1(
     private val coordinator = TestOrdinaryDrainSqlProbeV1(p, runtime)
     private val raw = listOf("synthetic-unused-ordinary-denial:$scope".toByteArray(), "synthetic-unused-one-second-bound:$scope".toByteArray())
     private var expectUnreturnedNativeClose = false
+    private var expectedUnreturnedPublicationOwners = 1L
     val rawEvidence get() = raw.map(ByteArray::copyOf)
     private val beforeBoundary = sealHttp.boundary
     private val beforeNative = sealHttp.nativeBoundary
@@ -218,8 +219,10 @@ internal class TestRunPurgeFixtureV1(
     }
 
     /** Negative-only teardown: retain the failed native close and its J owner, never call it released. */
-    fun expectUnreturnedNativeCloseForTeardown() {
+    fun expectUnreturnedNativeCloseForTeardown(publicationOwner: Boolean = true) {
         assertTrue(!expectUnreturnedNativeClose)
+        // A terminal recovery reader is not a publisher and never takes a shared-J publication owner.
+        expectedUnreturnedPublicationOwners = if (publicationOwner) 1L else 0L
         assertDisposed(expectUnreturnedClose = true)
         expectUnreturnedNativeClose = true
     }
@@ -234,7 +237,7 @@ internal class TestRunPurgeFixtureV1(
         inventoryRequests.forEach { request -> assertEquals(1, request.calls); assertEquals(1, request.aborts); assertEquals(1, checkNotNull(request.reply).closes) }
         if (expectUnreturnedClose) assertEquals(1, sealHttp.s3Closed - sealHttp.s3CloseReturned +
             sealHttp.sts.closedClients - sealHttp.sts.returnedClientCloses + sealHttp.kms.closedClients - sealHttp.kms.returnedClientCloses)
-        assertEquals(if (expectUnreturnedClose) 1L else 0L, registration.process.publicationLanes.activeOwners().totalOwners)
+        assertEquals(if (expectUnreturnedClose) expectedUnreturnedPublicationOwners else 0L, registration.process.publicationLanes.activeOwners().totalOwners)
     }
     fun <T> raw(action: (Connection) -> T): T = checkNotNull(observer.dataSource).connection.use(action)
 

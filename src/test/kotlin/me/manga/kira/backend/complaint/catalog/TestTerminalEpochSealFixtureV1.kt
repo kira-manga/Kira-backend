@@ -37,11 +37,12 @@ import java.util.UUID
  */
 internal fun withTerminalEpochSealRun(tls: VersionBoundPersistenceConnectedFixture, enrolled: Boolean = false,
     shortHorizon: Boolean = false, checkUnstartedPurge: Boolean = false,
+    terminalQuiescence: TestTerminalQuiescenceFixtureInputsV1? = null,
     action: (TestRunPurgeFixtureV1, TestRunPurgePublicationV1, TestTerminalEpochSealSqlProbeV1) -> Unit) {
-    val inputs = TestOrdinaryDrainFixtureInputsV1(scanMillis = if (shortHorizon) 30_000 else null)
+    val inputs = TestOrdinaryDrainFixtureInputsV1(scanMillis = if (shortHorizon) 30_000 else null, terminalQuiescence = terminalQuiescence)
     val horizon = if (shortHorizon) Instant.now().plusSeconds(86_400).truncatedTo(ChronoUnit.SECONDS) else Instant.parse("2038-01-01T00:00:00Z")
-    TestOrdinarySealHttpFixtureV1(horizon = horizon, protectedIntake = enrolled, manifestPublication = true,
-        purgePublication = true, terminalEpochSeal = true).use { http ->
+    TestOrdinarySealHttpFixtureV1(horizon = horizon, protectedIntake = enrolled || terminalQuiescence != null, manifestPublication = true,
+        purgePublication = true, terminalEpochSeal = true, terminalInventory = terminalQuiescence != null).use { http ->
         ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, ordinarySealHttp = http, ordinaryDrain = inputs,
             expireClosedSetupPredecessors = true) { p, runtime, registration, _ ->
             assertEquals(PersistenceLifecycleObservation.READY, runtime.pools.deletion.prepareDeletion())

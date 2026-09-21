@@ -80,6 +80,7 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
             PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
             PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
+            PersistencePhasePath.COMPLAINT_TEST_TERMINAL_QUIESCENCE,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
         )
         val registration = setOf(
@@ -109,19 +110,19 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         )
         val initialCheckpoint = setOf(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT)
         val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + initialAdmission + sealing + activeFirstCut + activeSeal + activeFirstCutSuccessor + initialCheckpoint + activeSealRecovery
-        assertEquals(125, PersistencePhasePath.entries.size)
+        assertEquals(126, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
         assertEquals(3, adminWriters.size)
         assertEquals(3, adminDeletionWriters.size)
-        assertEquals(6, terminalWriters.size)
+        assertEquals(7, terminalWriters.size)
         assertEquals(3, registration.size)
         assertEquals(2, initialAdmission.size)
         assertEquals(3, activeFirstCut.size)
         assertEquals(2, activeSeal.size)
         assertEquals(1, activeSealRecovery.size)
         assertEquals(3, activeFirstCutSuccessor.size)
-        assertEquals(80, writers.size)
+        assertEquals(81, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,

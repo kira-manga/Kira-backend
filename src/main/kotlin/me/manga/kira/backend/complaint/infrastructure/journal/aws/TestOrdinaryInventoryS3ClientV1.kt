@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationFailureV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOrdinaryInventoryReaderV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestTerminalInventoryReaderV1
 import me.manga.kira.backend.complaint.infrastructure.journal.journalPublicationCall
 import me.manga.kira.backend.complaint.infrastructure.journal.journalPublicationClose
 import me.manga.kira.backend.complaint.infrastructure.journal.journalPublicationSdkCall
@@ -11,6 +12,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.replaceJournalPubl
 import me.manga.kira.backend.complaint.infrastructure.journal.requireJournalPublication
 import me.manga.kira.backend.complaint.infrastructure.journal.withJournalPublicationCleanup
 import me.manga.kira.backend.security.TestOwnerDeleteCodecAttemptV1
+import me.manga.kira.backend.security.TestTerminalAttemptV1
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
 import software.amazon.awssdk.awscore.AwsRequestOverrideConfiguration
@@ -41,12 +43,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Real pinned SDK, all-version two-entry pages and exact versioned GET only. The whole ordinary
- * prefix is scanned, never a filtered writer/key subset. Raw bodies/XML are bounded before SDK
+ * Real pinned SDK, all-version two-entry pages and exact versioned GET only. The closed reader's
+ * whole ordinary OR seal/terminal prefix is scanned, never a filtered writer/key subset. Raw bodies/XML are bounded before SDK
  * decoding; every exchange finishes before a page/body reaches the reader. There is no PUT API.
  */
 internal class TestOrdinaryInventoryS3ClientV1 private constructor(
-    private val reader: TestOrdinaryInventoryReaderV1,
+    private val reader: TestInventoryS3OriginV1,
     private val sdk: S3Client,
     private val transport: BoundedJournalSdkHttpClientV1,
     private val nanoTime: () -> Long,
@@ -124,7 +126,13 @@ internal class TestOrdinaryInventoryS3ClientV1 private constructor(
     }
 
     fun getVersion(key: String, version: String, attempt: TestOwnerDeleteCodecAttemptV1): JournalFetchedVersionV1 {
-        val call = TestOrdinaryInventoryS3CallV1.get(reader, key, version, attempt, nanoTime)
+        return getVersion(TestOrdinaryInventoryS3CallV1.get(reader, key, version, attempt, nanoTime))
+    }
+
+    fun getVersion(key: String, version: String, attempt: TestTerminalAttemptV1): JournalFetchedVersionV1 =
+        getVersion(TestOrdinaryInventoryS3CallV1.get(reader, key, version, attempt, nanoTime))
+
+    private fun getVersion(call: TestOrdinaryInventoryS3CallV1): JournalFetchedVersionV1 {
         val location = call.declaration.journalLocation
         var owned: ByteArray? = null
         val result = runCatching {
@@ -203,6 +211,18 @@ internal class TestOrdinaryInventoryS3ClientV1 private constructor(
 
         fun open(
             reader: TestOrdinaryInventoryReaderV1,
+            credentials: AwsSessionCredentials,
+            httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
+            nanoTime: () -> Long,
+        ): TestOrdinaryInventoryS3ClientV1 = openOrigin(TestInventoryS3OriginV1.ordinary(reader), credentials, httpFactory, nanoTime)
+
+        fun open(reader: TestTerminalInventoryReaderV1, credentials: AwsSessionCredentials,
+            httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
+            nanoTime: () -> Long,
+        ): TestOrdinaryInventoryS3ClientV1 = openOrigin(TestInventoryS3OriginV1.terminal(reader), credentials, httpFactory, nanoTime)
+
+        private fun openOrigin(
+            reader: TestInventoryS3OriginV1,
             credentials: AwsSessionCredentials,
             httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
             nanoTime: () -> Long,

@@ -12,6 +12,7 @@ import me.manga.kira.backend.security.ComplaintOwnerDeleteAllAdmissionPolicy
 import me.manga.kira.backend.security.VersionBoundTestComplaintConsumerConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenialAuthorityPolicyV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalDenialAuthorityPolicyV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveInitialCheckpointV1
@@ -42,6 +43,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     val activeFirstCutSuccessor: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1?,
     val initialCheckpoint: VersionBoundTestActiveInitialCheckpointV1?,
     val activeOrdinarySealRecovery: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1?,
+    val terminalDenial: TestTerminalDenialAuthorityPolicyV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val canonical: ByteArray
@@ -171,6 +173,9 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         require(ordinaryDenial == null || ordinarySeal != null) { INVALID_TEST_PROCESS_CONFIGURATION }
         ordinaryDenial?.requireEnvironment(catalogReadback.chainPolicy.trustBundlePolicy.expectedEnvironment)
         ordinaryDenial?.requireJournal(journal)
+        require(terminalDenial == null || ordinaryDenial != null && ordinarySeal != null) { INVALID_TEST_PROCESS_CONFIGURATION }
+        terminalDenial?.requireEnvironment(catalogReadback.chainPolicy.trustBundlePolicy.expectedEnvironment)
+        terminalDenial?.requireJournal(journal)
     }
 
     override fun toString(): String = "VersionBoundTestNamespaceProcessV1(PRE_CUTOVER_TEST,memory,redacted,no-authority)"
@@ -194,11 +199,12 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             activeFirstCutSuccessor: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1? = null,
             initialCheckpoint: VersionBoundTestActiveInitialCheckpointV1? = null,
             activeOrdinarySealRecovery: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1? = null,
+            terminalDenial: TestTerminalDenialAuthorityPolicyV1? = null,
         ): VersionBoundTestNamespaceProcessV1 {
             requireConnectionFree()
             return VersionBoundTestNamespaceProcessV1(
                 consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
-                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication, activeFirstCutSuccessor, initialCheckpoint, activeOrdinarySealRecovery,
+                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication, activeFirstCutSuccessor, initialCheckpoint, activeOrdinarySealRecovery, terminalDenial,
             )
         }
 

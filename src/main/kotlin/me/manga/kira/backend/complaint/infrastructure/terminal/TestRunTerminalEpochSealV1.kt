@@ -63,6 +63,7 @@ internal class TestRunTerminalEpochSealV1 private constructor(internal val purge
     private var started = false
     private var finished = false
     private var sealed = false
+    private var quiescence: TestRunTerminalQuiescenceV1? = null
     private var cleanupUncertain = false
     private var phaseEntered = false
     private var phase: PersistencePhaseContext? = null
@@ -214,10 +215,25 @@ internal class TestRunTerminalEpochSealV1 private constructor(internal val purge
         return checkNotNull(completed)
     }
     internal fun authenticatedSeal(): TestTerminalSealRefV1 {
-        requireConnectionFree(); purge.requireTerminalEpochSeal(this); throwIfSignalled()
-        requireTerminalSeal(caller === Thread.currentThread() && started && finished && sealed && !cleanupUncertain && phase == null && !phaseEntered && custody == null)
+        requireConnectionFree(); requireSuccessfulTerminalSeal()
         return checkNotNull(completed)
     }
+    private fun requireSuccessfulTerminalSeal() {
+        purge.requireTerminalEpochSeal(this); throwIfSignalled()
+        requireTerminalSeal(caller === Thread.currentThread() && started && finished && sealed && !cleanupUncertain && phase == null && !phaseEntered && custody == null)
+    }
+    /** Historical successful original only; the child acquires its own current fence and budget. */
+    internal fun beginTerminalQuiescence(): TestRunTerminalQuiescenceV1 = TestRunTerminalQuiescenceV1.begin(this)
+    internal fun retainQuiescence(child: TestRunTerminalQuiescenceV1) {
+        authenticatedSeal()
+        requireTerminalSeal(child.terminalSeal === this && quiescence == null)
+        quiescence = child
+    }
+    internal fun requireQuiescence(child: TestRunTerminalQuiescenceV1) {
+        requireSuccessfulTerminalSeal()
+        requireTerminalSeal(child.terminalSeal === this && quiescence === child)
+    }
+
     internal fun retainLease(operation: TestTerminalEpochSealOperationV1, token: Long) {
         requireRunning(); requireTerminalSeal(operation.original === this && step === TestTerminalEpochSealStepV1.CAPTURE && leaseToken == 0L && token > purge.leaseToken)
         leaseToken = token

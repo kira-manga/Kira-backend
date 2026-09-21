@@ -134,6 +134,25 @@ internal object EpochSealStsPolicy {
         return exactPolicy(declaration.journalLocation.bucket, key, declaration.encryption.keyArn)
     }
 
+    /** Whole registered terminal prefix, read only. Not an exact-key publisher with a wider key. */
+    fun forTestTerminalInventory(journal: TestOwnerDeleteJournalConfigurationV1): String {
+        val declaration = journal.declaration()
+        val bucket = "arn:aws:s3:::${declaration.journalLocation.bucket}"
+        val prefix = journal.sealTerminalPrefix
+        // The single controlled suffix is the only wildcard. No supplied key/prefix/action enters.
+        val objects = quote("$bucket/$prefix").dropLast(1) + "*\""
+        val kms = quote(declaration.encryption.keyArn)
+        val policy = buildString {
+            append("""{"Version":"2012-10-17","Statement":[{"Effect":"Deny","NotAction":[$READ_ONLY_ACTIONS,"s3:ListBucketVersions","sts:GetCallerIdentity"],"Resource":"*"},""")
+            append("""{"Effect":"Deny","Action":["s3:*","kms:*"],"NotResource":[${quote(bucket)},$objects,$kms]},""")
+            append("""{"Effect":"Deny","Action":"s3:ListBucketVersions","Resource":${quote(bucket)},"Condition":{"StringNotEqualsIfExists":{"s3:prefix":${quote(prefix)}}}},""")
+            append("""{"Effect":"Allow","Action":[$READ_ONLY_ACTIONS],"Resource":[$objects,$kms]},""")
+            append("""{"Effect":"Allow","Action":"s3:ListBucketVersions","Resource":${quote(bucket)},"Condition":{"StringEquals":{"s3:prefix":${quote(prefix)}}}}]}""")
+        }
+        requireEpochSealSts(policy.length <= MAX_POLICY_CHARS, EpochSealStsFailure.INVALID_INPUT)
+        return policy
+    }
+
     private fun exactPolicy(bucketName: String, key: String, kms: String): String {
         val bucket = "arn:aws:s3:::$bucketName"
         val objectArn = "$bucket/$key"
@@ -160,6 +179,7 @@ internal object EpochSealStsPolicy {
 
     private const val OBJECT_AND_KMS_ACTIONS = "\"s3:PutObject\",\"s3:PutObjectRetention\",\"s3:GetObjectVersion\",\"s3:GetObjectRetention\"," +
         "\"kms:GenerateDataKey\",\"kms:Decrypt\""
+    private const val READ_ONLY_ACTIONS = "\"s3:GetObjectVersion\",\"s3:GetObjectRetention\",\"kms:Decrypt\""
     private const val URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
 }
 

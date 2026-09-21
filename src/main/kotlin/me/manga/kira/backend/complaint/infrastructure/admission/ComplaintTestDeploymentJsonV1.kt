@@ -10,6 +10,7 @@ import kotlinx.serialization.json.Json
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalDocumentV1
 import me.manga.kira.backend.complaint.domain.catalog.InitialPolicyReferenceV1
 import me.manga.kira.backend.complaint.domain.terminal.TestOrdinaryDenialAuthorityInputV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDenialAuthorityInputV1
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.util.concurrent.CancellationException
@@ -88,6 +89,7 @@ internal data class ComplaintTestDeploymentDocumentV1(
     val activeFirstCutSuccessor: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveFirstCutSuccessorInputV1? = null,
     val initialCheckpoint: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveInitialCheckpointInputV1? = null,
     val activeOrdinarySealRecovery: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOrdinarySealRecoveryInputV1? = null,
+    val terminalDenial: TestTerminalDenialAuthorityInputV1? = null,
 )
 
 /** One ordinary runtime principal only, never the LIVE install operator or catalog author. */

@@ -16,6 +16,7 @@ import me.manga.kira.backend.complaint.catalog.TestActiveFirstCutInputFixtureV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainFixtureInputsV1
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointHttpInputV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalDenialInputFixtureV1
 import me.manga.kira.backend.security.aws.AwsSecretVersionFixture
 import me.manga.kira.backend.security.fullTestJournal
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -67,6 +68,13 @@ internal class TestActiveInitialCheckpointColdInputsV1Test {
                 if (document.activeFirstCutSuccessor == null) assertNull(process.activeFirstCutSuccessor)
                 else checkNotNull(process.activeFirstCutSuccessor).requireRetained(process.pools, process.consumers.journalConfiguration,
                     process.activeFirstCut, process.ordinarySeal)
+                if (document.terminalDenial == null) {
+                    assertNull(process.terminalDenial)
+                    assertFalse("terminalDenial" in d)
+                } else {
+                    assertNotNull(process.ordinaryDenial)
+                    assertEquals(checkNotNull(process.terminalDenial).inventory(), d.getValue("terminalDenial"))
+                }
                 val inventory = d.getValue("initialCheckpoint").jsonObject
                 assertEquals("TEST_INITIAL_EMPTY_EPOCH1", inventory.getValue("profile").jsonPrimitive.content)
                 assertEquals("4416", inventory.getValue("scanRowStorageBytes").jsonPrimitive.content)
@@ -104,6 +112,16 @@ internal class TestActiveInitialCheckpointColdInputsV1Test {
         val oldProfile = Json.parseToJsonElement(oldBytes.decodeToString()).jsonObject.getValue("profile")
         assertArrayEquals(oldBytes, CanonicalJson.canonicalize(JsonObject((parsed - "activeOrdinarySealRecovery") + ("profile" to oldProfile))).toByteArray(),
             "All old checkpoint resources, prices, capacities and omitted-option bytes remain unchanged.")
+        val terminal = TestTerminalDenialInputFixtureV1.input(ComplaintTestDeploymentInputsV1.fromDecoded(combined).journal)
+            .copy(environment = combined.retention.environment)
+        for ((recipe, baseline) in listOf(combined to bytes,
+            combined.copy(activeFirstCutSuccessor = TestActiveFirstCutSuccessorInputFixtureV1.input()) to withSuccessor)) {
+            val withTerminal = assembled(scanner, recipe.copy(terminalDenial = terminal), expected)
+            val terminalRoot = Json.parseToJsonElement(withTerminal.decodeToString()).jsonObject
+            assertFalse(baseline.contentEquals(withTerminal), "The independent terminal denial pin must change full D.")
+            assertArrayEquals(baseline, CanonicalJson.canonicalize(JsonObject(terminalRoot - "terminalDenial")).toByteArray(),
+                "Adding terminal denial must not replace the checkpoint, recovery or optional successor recipe.")
+        }
     }
 
     @Test fun combinedPartialRecipesAndSilentMixingIntoOldProfilesRefuseBeforeSecrets() {

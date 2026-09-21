@@ -16,6 +16,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalHmacRet
 import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalKmsRetentionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalTimeBoundV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OrdinaryJournalRetentionV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestTerminalInventoryReaderV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.journalS3UrlConnectionClient
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
 import me.manga.kira.backend.security.TestTerminalAttemptV1
@@ -25,6 +26,7 @@ import me.manga.kira.backend.security.aws.AwsEpochSealStsLimits
 import me.manga.kira.backend.security.aws.AwsTestOrdinarySealStsV1
 import me.manga.kira.backend.security.aws.AwsTestInstallationManifestStsV1
 import me.manga.kira.backend.security.aws.AwsTestRunPurgeStsV1
+import me.manga.kira.backend.security.aws.AwsTestTerminalInventoryRecoveryV1
 import me.manga.kira.backend.security.aws.journalKmsUrlConnectionClient
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
@@ -203,6 +205,16 @@ internal class VersionBoundTestOrdinarySealV1 private constructor(
         custody.requireAcquisition(this)
         requireRetained(routing, lanes)
         return AwsTestRunPurgeStsV1.coldBudgeted(routing, checkNotNull(material.get()), binding, limits, sts, kms, s3, nanoTime, ::sampleUtc)
+    }
+
+    /** Same pre-D native recipe, different retained role; never a producer credential accessor. */
+    internal fun construct(reader: TestTerminalInventoryReaderV1): AwsTestTerminalInventoryRecoveryV1 {
+        requireConnectionFree(); reader.requireAcquisition(this); requireRetained(routing, lanes)
+        val recovery = deployment.recovery.principal
+        val expected = AwsEpochSealStsBinding(binding.sourceAccountId, binding.sourceArn, binding.sourceUserId,
+            recovery.arn, recovery.stableId)
+        return AwsTestTerminalInventoryRecoveryV1.coldBudgeted(routing, checkNotNull(material.get()), expected,
+            limits, sts, kms, s3, nanoTime, ::sampleUtc)
     }
 
     @Synchronized internal fun sampleUtc(): Instant {

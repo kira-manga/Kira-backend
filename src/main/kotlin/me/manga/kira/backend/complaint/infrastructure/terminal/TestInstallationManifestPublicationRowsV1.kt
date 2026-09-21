@@ -89,11 +89,13 @@ internal object TestInstallationManifestPublicationRowsV1 {
             row.getTimestamp("created_at").toInstant() == publication.createdAt)
     }
 
-    fun manifest(row: ResultSet, original: TestRunInstallationManifestPublicationV1, sealedAt: Instant, now: Instant): TestTerminalDurableRowV1 {
+    fun manifest(row: ResultSet, original: TestRunInstallationManifestPublicationV1, sealedAt: Instant, now: Instant,
+        expectedOrdinal: Int = original.chunkIndex): TestTerminalDurableRowV1 {
         requireManifest(TestOrdinaryDrainRowsV1.boolean(row, "valid"))
         val run = TestTerminalRunContextV1(row.getObject("data_scope_id", UUID::class.java).toString(), row.getLong("activation_catalog_generation"),
             TestOrdinaryDrainRowsV1.hash(row, "activation_catalog_hash"), TestOrdinaryDrainRowsV1.hash(row, "configuration_hash"), TestOrdinaryDrainRowsV1.hash(row, "terminal_encoding_hash"))
-        requireManifest(run == original.runContext && row.getString("object_kind") == "INSTALLATION_MANIFEST" && row.getInt("object_ordinal") == original.chunkIndex)
+        requireManifest(run == original.runContext && row.getString("object_kind") == "INSTALLATION_MANIFEST" && row.getInt("object_ordinal") == expectedOrdinal &&
+            expectedOrdinal in 0 until original.capturedSource().count)
         val b = TestTerminalDurableBindingV1(row.getObject("operation_token", UUID::class.java).toString(), run,
             TestOrdinaryDrainRowsV1.hash(row, "journal_configuration_hash"), TestTerminalDurableKindV1.INSTALLATION_MANIFEST, row.getInt("object_ordinal"),
             checkNotNull(row.getString("object_id")), checkNotNull(row.getString("object_key")), checkNotNull(row.getString("routing_key_id")),
@@ -103,24 +105,6 @@ internal object TestInstallationManifestPublicationRowsV1 {
             b.epochStartInclusive == original.epoch && b.epochEndInclusive == original.epoch &&
             b.preparingFencingToken in (original.drain.leaseToken + 1)..original.preparation.leaseToken && b.createdAt >= sealedAt && b.createdAt <= now)
         original.requireRetentionFloor(b)
-        val bytes = checkNotNull(row.getBytes("canonical_bytes"))
-        val canonical = try { TestTerminalDurableRowV1.canonical(b, bytes) } finally { bytes.fill(0) }
-        try {
-            requireManifest(canonical.canonicalSha256 == TestOrdinaryDrainRowsV1.hash(row, "canonical_hash"))
-            if (row.getString("state") == "CANONICAL") return canonical
-            requireManifest(row.getString("state") == "WIRE_FROZEN")
-            val wire = checkNotNull(row.getBytes("wire_bytes"))
-            val frozen = try { TestTerminalDurableRowV1.frozen(canonical, wire, checkNotNull(row.getTimestamp("retain_until")).toInstant(),
-                checkNotNull(row.getTimestamp("frozen_at")).toInstant()) } finally { wire.fill(0) }
-            try {
-                requireManifest(frozen.frozenAt!! <= now && frozen.retainUntil!! > now && frozen.wireSha256 == TestOrdinaryDrainRowsV1.hash(row, "wire_hash") &&
-                    frozen.metadataSha256 == TestOrdinaryDrainRowsV1.hash(row, "metadata_hash") && frozen.checksumSha256 == row.getString("checksum_sha256") &&
-                    frozen.contentType == row.getString("content_type") && frozen.objectLockMode == row.getString("object_lock_mode"))
-                val expected = frozen.metadataBytes(); val actual = row.getBytes("metadata_bytes")
-                try { requireManifest(expected.contentEquals(actual)) } finally { expected?.fill(0); actual?.fill(0) }
-                canonical.close()
-                return frozen
-            } catch (problem: Throwable) { frozen.close(); throw problem }
-        } catch (problem: Throwable) { canonical.close(); throw problem }
+        return TestTerminalSqlRowV1.restore(row, b, now)
     }
 }

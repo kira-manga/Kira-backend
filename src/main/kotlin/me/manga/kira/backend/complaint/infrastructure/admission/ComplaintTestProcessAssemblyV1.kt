@@ -264,7 +264,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         }
         assembled = VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, inputs.implementationSchema, inputs.desiredGeneration, inputs.databaseIdentity, inputs.restoreIdentity,
-            publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial, activeFirstCut, ordinaryPublication, activeFirstCutSuccessor = activeFirstCutSuccessor, initialCheckpoint = scanner, activeOrdinarySealRecovery = activeOrdinarySealRecovery,
+            publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial, activeFirstCut, ordinaryPublication, activeFirstCutSuccessor = activeFirstCutSuccessor, initialCheckpoint = scanner, activeOrdinarySealRecovery = activeOrdinarySealRecovery, terminalDenial = inputs.terminalDenial,
         )
         // No public-trust preparation, JDBC connection, STS/KMS/S3 construction, activation or registration was performed.
     }
