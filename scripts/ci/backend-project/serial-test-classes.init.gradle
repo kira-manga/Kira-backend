@@ -1,0 +1,11 @@
+import org.gradle.api.GradleException
+import org.gradle.api.tasks.testing.Test
+
+// Consumer-only class isolation. Never supplied to runtime dependency reconstruction.
+gradle.projectsEvaluated {
+    def test = gradle.rootProject.tasks.named('test', Test).get()
+    if (test.maxParallelForks != 1 || test.forkEvery != 0) {
+        throw new GradleException('Unexpected pre-isolation test worker configuration')
+    }
+    test.forkEvery = 1
+}
