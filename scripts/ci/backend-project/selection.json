@@ -1,0 +1,183 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 130,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "Actual8 opaque cause unknown; only run once bounded setup/body/teardown diagnostic is reviewed",
+      "expected_invocations_from_annotation": 1,
+      "method": "creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "30bbafab39000b3ff0e8b45a7df10d30355441d4",
+      "source_sha256": "594de6352045c2f2b7ec92193c8e34f088d131076c138a4b9b4981f19fd4c005",
+      "xml_names": [
+        "creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom()"
+      ]
+    },
+    {
+      "annotation_line": 194,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "Actual8 proven TEST SQL-prefix correction; no product SQL change",
+      "expected_invocations_from_annotation": 1,
+      "method": "allPreparedNativePutIsVerifiedOnlyFromTheCurrentReleasedQueueReadback",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "30bbafab39000b3ff0e8b45a7df10d30355441d4",
+      "source_sha256": "594de6352045c2f2b7ec92193c8e34f088d131076c138a4b9b4981f19fd4c005",
+      "xml_names": [
+        "allPreparedNativePutIsVerifiedOnlyFromTheCurrentReleasedQueueReadback()"
+      ]
+    },
+    {
+      "annotation_line": 212,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "New B retained-family PREPARED alias-primary-replay; exact E set and actual crypto/apply",
+      "expected_invocations_from_annotation": 1,
+      "method": "allPreparedPrimaryStaysPendingWhileProtocolHistoryAppliesAndOnlyItsOwnPutCompletesIt",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "30bbafab39000b3ff0e8b45a7df10d30355441d4",
+      "source_sha256": "594de6352045c2f2b7ec92193c8e34f088d131076c138a4b9b4981f19fd4c005",
+      "xml_names": [
+        "allPreparedPrimaryStaysPendingWhileProtocolHistoryAppliesAndOnlyItsOwnPutCompletesIt()"
+      ]
+    },
+    {
+      "annotation_line": 218,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "New B authenticated semantic-conflict/opaque-version refusal (two internal fixtures)",
+      "expected_invocations_from_annotation": 1,
+      "method": "allAuthenticatedProtocolHistoryWithWrongTargetsOrAnotherVersionAtTheSameKeyRemainsUnacked",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "30bbafab39000b3ff0e8b45a7df10d30355441d4",
+      "source_sha256": "594de6352045c2f2b7ec92193c8e34f088d131076c138a4b9b4981f19fd4c005",
+      "xml_names": [
+        "allAuthenticatedProtocolHistoryWithWrongTargetsOrAnotherVersionAtTheSameKeyRemainsUnacked()"
+      ]
+    },
+    {
+      "annotation_line": 33,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "Actual8 ordinary seal future timestamp correction, existing legacy E regression",
+      "expected_invocations_from_annotation": 1,
+      "method": "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "30bbafab39000b3ff0e8b45a7df10d30355441d4",
+      "source_sha256": "f5e3876b2e0d726460b83908e69a3fca73545ccd54a3e7e06cdc0e7dcb40bbf7",
+      "xml_names": [
+        "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging()"
+      ]
+    },
+    {
+      "annotation_line": 66,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT",
+      "cohort": "New D UNKNOWN transactional rollback/fresh remaining-work recovery",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecoveryIT.kt",
+      "source_head": "30bbafab39000b3ff0e8b45a7df10d30355441d4",
+      "source_sha256": "54b531fb941eea8fa7f139f9c0f8fb3fa3c9896e2dd75288f067219077cd55b6",
+      "xml_names": [
+        "actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund()"
+      ]
+    },
+    {
+      "annotation_line": 107,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT",
+      "cohort": "New D critical raw denial authentication boundary; E does not replace authority",
+      "expected_invocations_from_annotation": 1,
+      "method": "changedOrdinaryRawDenialCannotUseSuccessfulEAsReplacementAuthority",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt",
+      "source_head": "30bbafab39000b3ff0e8b45a7df10d30355441d4",
+      "source_sha256": "2c03b76e0171c1d40d4bea7d878001fc5c8d0628494209470228b74f7785c96a",
+      "xml_names": [
+        "changedOrdinaryRawDenialCannotUseSuccessfulEAsReplacementAuthority()"
+      ]
+    },
+    {
+      "annotation_line": 55,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureIT",
+      "cohort": "New D actual A+terminal destructive ordering, physical refunds and isolation",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineNonemptyRegisteredADeletionThroughDAndEPurgesOnlyItsScopeAndRefundsExactRows",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureIT.kt",
+      "source_head": "30bbafab39000b3ff0e8b45a7df10d30355441d4",
+      "source_sha256": "ef250944538622ba7daa09929640dc19a30a302ec012ff1eccbd0105bba48795",
+      "xml_names": [
+        "genuineNonemptyRegisteredADeletionThroughDAndEPurgesOnlyItsScopeAndRefundsExactRows()"
+      ]
+    },
+    {
+      "annotation_line": 76,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureIT",
+      "cohort": "New D no-A two-seal terminal child/erasure/accounting path",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineUnusedTwoSealNoANoBHistoryPurgesWithoutInventedRowsOrDispositionAudit",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureIT.kt",
+      "source_head": "30bbafab39000b3ff0e8b45a7df10d30355441d4",
+      "source_sha256": "ef250944538622ba7daa09929640dc19a30a302ec012ff1eccbd0105bba48795",
+      "xml_names": [
+        "genuineUnusedTwoSealNoANoBHistoryPurgesWithoutInventedRowsOrDispositionAudit()"
+      ]
+    },
+    {
+      "annotation_line": 10,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test",
+      "cohort": "Changed three-path classifier union139/94",
+      "expected_invocations_from_annotation": 1,
+      "method": "every admitted phase has an explicit maintenance lock classification",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt",
+      "source_head": "30bbafab39000b3ff0e8b45a7df10d30355441d4",
+      "source_sha256": "e7b089e26457de89a3c49e789ca8bb2067c304f099589dcff06fc6c1071a90cd",
+      "xml_names": [
+        "every admitted phase has an explicit maintenance lock classification()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 10,
+  "expected_total": 10,
+  "selection_basis": {
+    "cohorts": {
+      "Actual8 opaque cause unknown; only run once bounded setup/body/teardown diagnostic is reviewed": 1,
+      "Actual8 ordinary seal future timestamp correction, existing legacy E regression": 1,
+      "Actual8 proven TEST SQL-prefix correction; no product SQL change": 1,
+      "Changed three-path classifier union139/94": 1,
+      "New B authenticated semantic-conflict/opaque-version refusal (two internal fixtures)": 1,
+      "New B retained-family PREPARED alias-primary-replay; exact E set and actual crypto/apply": 1,
+      "New D UNKNOWN transactional rollback/fresh remaining-work recovery": 1,
+      "New D actual A+terminal destructive ordering, physical refunds and isolation": 1,
+      "New D critical raw denial authentication boundary; E does not replace authority": 1,
+      "New D no-A two-seal terminal child/erasure/accounting path": 1
+    },
+    "previous_run": "35579075878",
+    "scope": "Actual8 compiled with5PASS/3FAIL; targeted concrete corrections, bounded unknown failure diagnostic and newly coherent D/B coverage only. Carryforward retains all failed/unfinished/deferred requirements."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "f5e3876b2e0d726460b83908e69a3fca73545ccd54a3e7e06cdc0e7dcb40bbf7",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt": "e7b089e26457de89a3c49e789ca8bb2067c304f099589dcff06fc6c1071a90cd",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt": "2c03b76e0171c1d40d4bea7d878001fc5c8d0628494209470228b74f7785c96a",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureIT.kt": "ef250944538622ba7daa09929640dc19a30a302ec012ff1eccbd0105bba48795",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecoveryIT.kt": "54b531fb941eea8fa7f139f9c0f8fb3fa3c9896e2dd75288f067219077cd55b6",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt": "594de6352045c2f2b7ec92193c8e34f088d131076c138a4b9b4981f19fd4c005"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureIT": 2,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT": 4
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.allPreparedNativePutIsVerifiedOnlyFromTheCurrentReleasedQueueReadback",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.allPreparedPrimaryStaysPendingWhileProtocolHistoryAppliesAndOnlyItsOwnPutCompletesIt",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.allAuthenticatedProtocolHistoryWithWrongTargetsOrAnotherVersionAtTheSameKeyRemainsUnacked",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureIT.genuineUnusedTwoSealNoANoBHistoryPurgesWithoutInventedRowsOrDispositionAudit",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureIT.genuineNonemptyRegisteredADeletionThroughDAndEPurgesOnlyItsScopeAndRefundsExactRows",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT.changedOrdinaryRawDenialCannotUseSuccessfulEAsReplacementAuthority",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT.actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund",
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test.every admitted phase has an explicit maintenance lock classification"
+  ]
+}
