@@ -483,6 +483,9 @@ internal class TestRegisteredInitialDeletionProbeJdbcV1(private val f: TestRegis
     override fun <T : Any?> query(sql: String, mapper: RowMapper<T>): List<T> = observed(sql, emptyArray()) { super.query(sql, mapper) }
     override fun <T : Any?> query(sql: String, mapper: RowMapper<T>, vararg args: Any?): List<T> = observed(sql, args) { super.query(sql, mapper, *args) }
     override fun <T : Any?> query(sql: String, extractor: ResultSetExtractor<T>, vararg args: Any?): T? = observed(sql, args) { super.query(sql, extractor, *args) }
+    // Spring's mapped queryForObject dispatches through its args-before-extractor overload.
+    override fun <T : Any?> queryForObject(sql: String, mapper: RowMapper<T>, vararg args: Any?): T? =
+        observed(sql, args) { super.queryForObject(sql, mapper, *args) }
     override fun update(sql: String, vararg args: Any?): Int = observed(sql, args) { super.update(sql, *args) }
     private fun <T> observed(sql: String, args: Array<out Any?>, execute: () -> T): T {
         if (observing.get()) return execute()

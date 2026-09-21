@@ -219,8 +219,13 @@ internal object TestActiveRecurrentCasesV1 {
                     assertEquals(1, statement.executeUpdate())
                 }
             } }
-            try { phaseRefused { ownerAttempt(d) } } finally { d.deletion.after = old }
-            assertTrue(reached.get()); d.assertReleased()
+            try {
+                phaseRefused {
+                    try { ownerAttempt(d) }
+                    finally { assertTrue(reached.get(), "The selected provisional-row fault must execute before judging refusal.") }
+                }
+            } finally { d.deletion.after = old }
+            d.assertReleased()
             assertEquals(actualBefore, d.image()); assertEquals(counters, d.counters()); assertEquals(providers, f.providerCounts())
             assertEquals(prior, deletionEvidence(f.precursor))
         }
@@ -493,6 +498,9 @@ internal object TestActiveRecurrentCasesV1 {
         val read = sql.indexOf(current); val counters = sql.indexOfFirst { "FROM complaint_capacity_counters" in it && "FOR UPDATE" in it }
         assertTrue(global >= 0 && scope > global && claim > scope && read > claim && counters > read)
         assertEquals(1, sql.count { it == TestActiveInitialCheckpointSqlV1.lockGlobal }); assertEquals(1, sql.count { it == TestActiveInitialCheckpointSqlV1.lockScope })
+        if (d.family == ComplaintJournalDeletionKindV1.OWNER_DELETE) {
+            assertEquals(1, sql.count { it == OwnerDeletePersistenceSql.INSERT_PUBLICATION }, "Observe the actual mapped primary INSERT exactly once.")
+        }
         val owned = calls.filter { it.sql == TestRegisteredRecurrentCheckpointDeletionSqlV1.owned }
         assertTrue(owned.size >= 4)
         assertEquals(owned.size, sql.count { it == current }); assertEquals(owned.size, sql.count { it == TestRegisteredRecurrentCheckpointDeletionSqlV1.branch })
