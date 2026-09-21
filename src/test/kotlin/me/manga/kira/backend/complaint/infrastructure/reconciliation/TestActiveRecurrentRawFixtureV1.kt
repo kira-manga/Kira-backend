@@ -39,6 +39,7 @@ internal class TestActiveRecurrentRawFixtureV1(
     initialCheckpointCreate: TestInitialCheckpointCreateInputV1 = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
     shortFreshness: Boolean = false,
     initialCheckpointDeletion: TestInitialCheckpointDeletionInputV1 = TestInitialCheckpointDeletionInputV1(1, VersionBoundTestInitialCheckpointDeletionV1.PROFILE),
+    ordinaryPoolSize: Int = 2,
 ) {
     val queue = TestActiveOwnerDeleteQueueRawFixtureV1()
     // Both HTTP contexts and this dispatcher exist before D. The first consumed context keeps
@@ -81,7 +82,8 @@ internal class TestActiveRecurrentRawFixtureV1(
             initialCheckpointCreate = initialCheckpointCreate, shortInitialCheckpointFreshness = shortFreshness,
             initialCheckpointDeletion = original.initialCheckpointDeletion,
             activeOwnerDeleteQueue = original.activeOwnerDeleteQueue,
-            activeRecurrent = TestActiveRecurrentInputV1(1, TestActiveRecurrentStorageV1.PROFILE, TestActiveInitialCheckpointHttpInputV1.SESSION))
+            activeRecurrent = TestActiveRecurrentInputV1(1, TestActiveRecurrentStorageV1.PROFILE, TestActiveInitialCheckpointHttpInputV1.SESSION),
+            ordinaryPoolSize = ordinaryPoolSize)
     }
 
     init {

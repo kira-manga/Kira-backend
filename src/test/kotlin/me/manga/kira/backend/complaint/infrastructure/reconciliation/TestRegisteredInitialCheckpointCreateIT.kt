@@ -33,10 +33,10 @@ class TestRegisteredInitialCheckpointCreateIT {
         withRegisteredInitialCheckpointCreate(it, action = TestRegisteredInitialCheckpointCreateCasesV1::persistedDrift)
     }
     @Test fun actualClaimLoserObservesWinnerBeforeChangedControlFreshnessOrAnotherCapacityCharge() = withFixture {
-        withRegisteredInitialCheckpointCreate(it, action = TestRegisteredInitialCheckpointCreateRaceCasesV1::claimLoser)
+        withRegisteredInitialCheckpointCreate(it, ordinaryPoolSize = 3, action = TestRegisteredInitialCheckpointCreateRaceCasesV1::claimLoser)
     }
     @Test fun actualClaimLoserRefusesCurrentDesiredIdentityDriftWithoutAnotherCapacityCharge() = withFixture {
-        withRegisteredInitialCheckpointCreate(it, action = TestRegisteredInitialCheckpointCreateRaceCasesV1::desiredIdentityClaimLoser)
+        withRegisteredInitialCheckpointCreate(it, ordinaryPoolSize = 3, action = TestRegisteredInitialCheckpointCreateRaceCasesV1::desiredIdentityClaimLoser)
     }
     @Test fun bornWithShortFreshnessExpiresOnDatabaseTimeAfterActorAcquisitionButExactReceiptsRemainReplayable() = withFixture {
         withRegisteredInitialCheckpointCreate(it, shortFreshness = true, action = TestRegisteredInitialCheckpointCreateRaceCasesV1::naturalFreshness)
@@ -73,7 +73,8 @@ class TestRegisteredInitialCheckpointCreateIT {
         TestRegisteredHttpStartupCasesV1.foreignParentReply(it)
     }
     @Test fun actualRegisteredReplyClaimLoserReplaysBeforeClosedControlsAndNeverDuplicatesCapacityOrAudit() = withFixture {
-        withRegisteredInitialCheckpointCreate(it, initialCheckpointCreate = replyInput(), action = TestRegisteredInitialCheckpointCreateRaceCasesV1::replyClaimLoser)
+        withRegisteredInitialCheckpointCreate(it, initialCheckpointCreate = replyInput(), ordinaryPoolSize = 3,
+            action = TestRegisteredInitialCheckpointCreateRaceCasesV1::replyClaimLoser)
     }
     @Test fun actualReplyParentResourceWaitCrossesCheckpointExpiryAndRollsBackProvisionalChildWhileReplaySurvives() = withFixture {
         withRegisteredInitialCheckpointCreate(it, shortFreshness = true, initialCheckpointCreate = replyInput()) { fixture ->
@@ -95,7 +96,8 @@ class TestRegisteredInitialCheckpointCreateIT {
         TestRegisteredHttpStartupCasesV1.foreignAndSystemEdit(it)
     }
     @Test fun actualRegisteredEditClaimLoserReplaysBeforeClosedControlAndHistoricalIfMatch() = withFixture {
-        withRegisteredInitialCheckpointCreate(it, initialCheckpointCreate = editInput(), action = TestRegisteredInitialCheckpointCreateRaceCasesV1::editClaimLoser)
+        withRegisteredInitialCheckpointCreate(it, initialCheckpointCreate = editInput(), ordinaryPoolSize = 3,
+            action = TestRegisteredInitialCheckpointCreateRaceCasesV1::editClaimLoser)
     }
     @Test fun actualEditResourceWaitCrossesCheckpointExpiryAndRollsBackAllMutationWhileExactReplaySurvives() = withFixture {
         withRegisteredInitialCheckpointCreate(it, shortFreshness = true, initialCheckpointCreate = editInput()) { fixture ->
