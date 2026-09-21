@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.GuardedJpaTransactionManager
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
@@ -66,9 +67,10 @@ internal object TestRegisteredInitialCheckpointCreateCasesV1 {
             Boolean::class.java, f.actor.id, first.input.key))
         val second = f.attempt(); f.assertApplied(f.create(second), second); f.assertReleased()
         f.assertCharge(before, ComplaintCapacityCharges.OWNER_CREATE.scaled(2))
-        assertEquals(2L, f.observer.queryForObject("SELECT count(*) FROM complaints WHERE data_scope_id = ?", Long::class.java, f.scope))
-        assertEquals(2L, f.observer.queryForObject("SELECT count(*) FROM complaint_resource_ids WHERE data_scope_id = ?", Long::class.java, f.scope))
-        assertEquals(2L, f.observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_CREATED'", Long::class.java, f.scope))
+        // The two real SYSTEM/NOTICE activation seeds, reservations and creation audits remain.
+        assertEquals(4L, f.observer.queryForObject("SELECT count(*) FROM complaints WHERE data_scope_id = ?", Long::class.java, f.scope))
+        assertEquals(4L, f.observer.queryForObject("SELECT count(*) FROM complaint_resource_ids WHERE data_scope_id = ?", Long::class.java, f.scope))
+        assertEquals(4L, f.observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_CREATED'", Long::class.java, f.scope))
         assertEquals(control, f.checkpoint.sealer.first.controlImage()); assertEquals(global, f.checkpoint.sealer.first.globalImage()); assertEquals(paid, f.checkpoint.sealer.first.paidImage())
 
         // Both born-with global CREATE quota members are spent. Existing exact receipt bypasses it
@@ -155,7 +157,9 @@ internal object TestRegisteredInitialCheckpointCreateCasesV1 {
         val lookalike = JdbcTemplate(f.process.pools.ordinary)
         assertThrows<Exception> { JdbcComplaintOwnerCreateStore.registeredInitialCheckpoint(lookalike, f.exchange.service,
             f.exchange.ordinary.ownership, f.registration, f.checkpoint.assembly) }
-        val foreignOwner = PersistencePhaseOwnership(f.exchange.ordinary.admission, f.exchange.ordinary.manager)
+        // One manager binds one owner: a foreign owner needs its own real manager, not a rebind.
+        val foreignOwner = PersistencePhaseOwnership(f.exchange.ordinary.admission,
+            GuardedJpaTransactionManager(f.exchange.ordinary.entityManagerFactory, f.exchange.ordinary.pool))
         assertThrows<Exception> { JdbcComplaintOwnerCreateStore.registeredInitialCheckpoint(f.jdbc, f.exchange.service,
             foreignOwner, f.registration, f.checkpoint.assembly) }
         assertEquals(calls, f.jdbc.calls.size)

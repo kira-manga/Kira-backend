@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.servlet.ServletInputStream
+import me.manga.kira.backend.common.infrastructure.persistence.GuardedJpaTransactionManager
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
@@ -78,7 +79,8 @@ internal object TestRegisteredInitialCheckpointCreateHttpCasesV1 {
                 assertEquals(1, f.createPhases().size)
                 assertEquals(PersistenceDatabaseOutcome.COMMITTED, f.createPhases().single().databaseOutcome())
                 assertEquals(installation.id, f.observer.queryForObject("SELECT owner_id FROM complaints WHERE id = ?", UUID::class.java, attempt.input.id))
-                assertEquals(1L, f.observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_CREATED'", Long::class.java, f.scope))
+                // One HTTP CREATE plus the two unchanged SYSTEM/NOTICE activation creation audits.
+                assertEquals(3L, f.observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_CREATED'", Long::class.java, f.scope))
                 assertTrue(f.jdbc.calls.any { it.first === PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION })
                 assertFalse(f.jdbc.calls.any { it.first === PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE })
 
@@ -117,7 +119,9 @@ internal object TestRegisteredInitialCheckpointCreateHttpCasesV1 {
     fun exactSubsetAndResources(f: TestRegisteredInitialCheckpointCreateFixtureV1) {
         val before = f.state(); val providers = f.providerCounts()
         assertThrows<Exception> { composition(f, jdbc = JdbcTemplate(f.process.pools.ordinary)) }
-        val otherOwner = PersistencePhaseOwnership(f.exchange.ordinary.admission, f.exchange.ordinary.manager)
+        // One manager binds one owner: a foreign owner needs its own real manager, not a rebind.
+        val otherOwner = PersistencePhaseOwnership(f.exchange.ordinary.admission,
+            GuardedJpaTransactionManager(f.exchange.ordinary.entityManagerFactory, f.exchange.ordinary.pool))
         assertThrows<Exception> { composition(f, ownership = otherOwner) }
         ComplaintTestProcessAssemblyV1.begin().use { unassembled -> assertThrows<Exception> { composition(f, assembly = unassembled) } }
         assertTrue(f.jdbc.calls.isEmpty()); assertEquals(before, f.state())

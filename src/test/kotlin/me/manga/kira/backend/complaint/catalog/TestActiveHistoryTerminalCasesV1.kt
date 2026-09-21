@@ -80,7 +80,7 @@ import java.util.concurrent.atomic.AtomicReference
  * The same protected-intake graph genuinely enrolls, captures, publishes A, checkpoints and CREATEs.
  * Its actual run sealer then closes both gates; no SQL gate closure, supplied successful history,
  * copied registration, seeded event or invented terminal object is used to obtain a predecessor.
- * One installation and one complaint are nonempty; ordinary deletion inventory is genuinely empty.
+ * One installation, its complaint and two activation notices remain; ordinary deletion inventory is genuinely empty.
  * Raw IAM/denial/retention specimens remain synthetic, not installed-policy or deployment evidence.
  */
 internal object TestActiveHistoryTerminalCasesV1 {
@@ -317,7 +317,8 @@ private class ActiveHistoryRunV1(
     init {
         assertEquals("ACTIVE", string("SELECT state FROM complaint_test_runs WHERE data_scope_id = ?")); assertGates(open = true)
         assertEquals(1L, long("SELECT enrolled_count FROM complaint_test_runs WHERE data_scope_id = ?"))
-        assertEquals(1L, count("complaints")); assertEquals(1L, count("complaint_installation_ids")); assertEquals(1L, count("app_installations"))
+        // One owner-created report and both real SYSTEM/NOTICE activation seeds, not an empty scope.
+        assertEquals(3L, count("complaints")); assertEquals(1L, count("complaint_installation_ids")); assertEquals(1L, count("app_installations"))
         assertEquals(1L, count("complaint_test_active_seal_intents")); assertEquals(0L, count("complaint_test_terminal_intents"))
         assertEquals(0L, count("complaint_journal_publications")); assertEquals(0L, count("complaint_deletion_journal_applied"))
         assertEquals(2L, long("SELECT publication_epoch FROM complaint_journal_control WHERE data_scope_id = ?"))
