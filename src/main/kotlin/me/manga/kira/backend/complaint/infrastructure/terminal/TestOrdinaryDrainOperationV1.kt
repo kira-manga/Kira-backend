@@ -128,7 +128,7 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
                 adminPrimaries = jdbc.query(TestOrdinaryDrainSqlV1.adminPrimaryPage, { row, _ ->
                     requireDrain(TestOrdinaryDrainRowsV1.boolean(row, "valid"))
                     checkNotNull(row.getObject("actor_id", UUID::class.java)) to checkNotNull(row.getObject("idempotency_key", UUID::class.java))
-                }, original.scope, original.writer, Timestamp.from(run.sealedAt))
+                }, original.scope, original.writer, Timestamp.from(run.sealedAt), original.routing.journalConfiguration.registeredAdminBatchDelete)
             }
             TestOrdinaryDrainStepV1.ABANDON -> recycle(abandon = true)
             TestOrdinaryDrainStepV1.BEGIN_PASS -> beginPass()

@@ -118,7 +118,8 @@ internal class TestRunAdminDeleteContinuationV1 internal constructor(
             val result = completed.result
             requireConnectionFree()
             requireRunning()
-            requireContinuation(phase == null && !cleanupUncertain && result is ComplaintAdminDeleteReceipt.Applied && result.consumedGrantId == work.consumedGrantId)
+            requireContinuation(phase == null && !cleanupUncertain && result.consumedGrantId == work.consumedGrantId)
+            me.manga.kira.backend.complaint.infrastructure.AdminDeleteRows.requireApplied(result, store.ownedEvent(work))
             successful = true
             return result
         } catch (problem: Throwable) {

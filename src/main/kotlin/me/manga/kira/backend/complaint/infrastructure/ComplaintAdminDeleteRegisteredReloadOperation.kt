@@ -7,8 +7,6 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseO
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
-import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteReceipt
-import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteTuple
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunAdminDeleteContinuationV1
@@ -54,21 +52,20 @@ internal class ComplaintAdminDeleteRegisteredReloadOperation private constructor
             original.actorId, original.operationKey).single()
         check(receipt.valid && receipt.state in setOf("AUTHORIZED_DELETE", "COMPLETED"))
         stage = Stage.PUBLICATION
-        val row = jdbc.query(AdminDeletePersistenceSql.LOCK_PUBLICATION, { result, _ -> OwnerDeleteRows.Publication.adminDelete(result) },
+        val row = jdbc.query(AdminDeletePersistenceSql.LOCK_PUBLICATION, { result, _ -> OwnerDeleteRows.Publication.adminErasure(result) },
             checkNotNull(receipt.publication)).single()
         val prepared = row.state == "PREPARED"
         if (prepared) original.requirePreparedReload() else check(row.state in setOf("VERIFIED", "APPLIED"))
-        val canonical = TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(graph.routing, row.bytes, row.routingKey)
-        row.requireAdminEvent(canonical)
-        val tuple = ComplaintAdminDeleteTuple(canonical.adminTuple.actorId, canonical.adminTuple.scope,
-            canonical.adminTuple.operationKey, canonical.complaintIds().single(), canonical.adminTuple.fingerprintBytes())
-        check(receipt.matches(tuple) && receipt.consumedGrantId == canonical.adminTuple.consumedGrantId && row.writer == graph.writer && row.createdAt == receipt.authorizedAt)
+        val canonical = TestOwnerDeleteJournalCodecV1.restoreAdminErasureCanonical(graph.routing, row.bytes, row.routingKey, row.kind)
+        row.requireAdminErasureEvent(canonical)
+        val tuple = AdminDeleteRows.tuple(canonical)
+        check(receipt.matches(tuple) && receipt.consumedGrantId == canonical.adminComparison.consumedGrantId && row.writer == graph.writer && row.createdAt == receipt.authorizedAt)
         control.requireContinuation(row.epoch, prepared)
-        val proof = if (prepared) null else TestOwnerDeleteVerificationCodecV1.forAdmin(graph.routing).parse(checkNotNull(row.verificationBytes), canonical).also {
+        val proof = if (prepared) null else TestOwnerDeleteVerificationCodecV1.forAdminErasure(graph.routing).parse(checkNotNull(row.verificationBytes), canonical).also {
             ComplaintAdminDeleteVerificationOperation.requireColumns(it, row)
         }
         if (row.state != "APPLIED") check(receipt.state == "AUTHORIZED_DELETE") else {
-            check(receipt.state == "COMPLETED" && receipt.completed() is ComplaintAdminDeleteReceipt.Applied)
+            check(receipt.state == "COMPLETED"); AdminDeleteRows.requireApplied(receipt.completed(), canonical)
             check(receipt.externalEvent == row.eventId && receipt.externalEpoch == row.epoch &&
                 receipt.externalVersion == row.objectVersion && receipt.externalHash.contentEquals(row.ciphertextHash))
         }
@@ -76,7 +73,7 @@ internal class ComplaintAdminDeleteRegisteredReloadOperation private constructor
         publication = row
         stage = Stage.RESERVATION
         reservation = jdbc.query(AdminDeletePersistenceSql.LOCK_RECOVERY, { result, _ ->
-            OwnerDeleteRows.Recovery(result, canonical.adminTuple.scope, row.eventId)
+            OwnerDeleteRows.Recovery(result, canonical.adminComparison.scope, row.eventId, AdminDeleteRows.recovery(canonical))
         }, row.eventId).single()
         stage = Stage.COUNTERS_READY
         capacity.lockForRegisteredAdminDeleteReload(this)

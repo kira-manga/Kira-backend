@@ -22,12 +22,12 @@ import org.junit.jupiter.api.Assertions.assertTrue
  * codec/AEAD bytes but obtain their actual applied rows/U only through the native registered drain.
  * No ACTIVE registered request issuer, production authority or fabricated successful cut is used.
  */
-internal fun withManifestFamilyJoinRun(tls: VersionBoundPersistenceConnectedFixture, aliases: Boolean = false,
+internal fun withManifestFamilyJoinRun(tls: VersionBoundPersistenceConnectedFixture, aliases: Boolean = false, adminBatch: Boolean = false,
     action: (TestRunOrdinaryDrainFixtureV1, TestRunVerifiedOwnerDeleteFixture.AdminHistory, TestRunOrdinaryDrainV1) -> Unit) {
     val inputs = TestOrdinaryDrainFixtureInputsV1()
     TestOrdinarySealHttpFixtureV1(manifestPublication = true).use { http ->
-        ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, ordinarySealHttp = http, ordinaryDrain = inputs,
-            registeredAdminDelete = true, expireClosedSetupPredecessors = true) { p, runtime, registration, _ ->
+        ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, createGlobal = if (adminBatch) 3 else 2, ordinarySealHttp = http, ordinaryDrain = inputs,
+            registeredAdminDelete = !adminBatch, registeredAdminBatchDelete = adminBatch, expireClosedSetupPredecessors = true) { p, runtime, registration, _ ->
             assertTrue(registration.process.consumers.journalConfiguration.ownerDeleteAll)
             assertTrue(registration.process.consumers.journalConfiguration.registeredAdminDelete)
             assertEquals(PersistenceLifecycleObservation.READY, runtime.pools.deletion.prepareDeletion())
@@ -35,7 +35,7 @@ internal fun withManifestFamilyJoinRun(tls: VersionBoundPersistenceConnectedFixt
                 TestRunVerifiedOwnerDeleteFixture(p, runtime, registration, ordinary, audit, expectSubsequentProviderReads = true).use { history ->
                     history.authorEarlierHistory(verified = true, applied = true)
                     val ownerProvider = history.provider
-                    val admin = history.authorEarlierAdminHistory(verified = true, applied = true)
+                    val admin = history.authorEarlierAdminHistory(verified = true, applied = true, batchTargets = if (adminBatch) 2 else null)
                     val adminProvider = history.provider
                     history.authorEarlierAllHistory(0, verified = true, applied = true)
                     mergeManifestFamilyProvider(history.provider, ownerProvider)
@@ -82,7 +82,9 @@ private fun retainManifestAdminAliases(f: TestRunOrdinaryDrainFixtureV1, admin: 
     val noKeys = NeverOwnerDeleteAllDataKeys()
     val codec = TestOwnerDeleteJournalCodecV1(f.provider.routing, noKeys)
     f.provider.journal.declaration().routing.keys.filter { it.keyId != admin.event.route.routingKeyId }.take(2).forEach { key ->
-        val event = codec.canonicalizeAdmin(admin.event.adminTuple, admin.target, key.keyId)
+        val event = if (admin.event.comparison.eventKind == me.manga.kira.backend.security.ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE)
+            codec.canonicalizeAdminBatch(admin.event.adminBatchTuple, admin.targets, key.keyId)
+        else codec.canonicalizeAdmin(admin.event.adminTuple, admin.target, key.keyId)
         val wire = f.provider.envelope(event)
         try { f.provider.objects.add(f.provider.objectFor(wire, event, "retained-${key.keyId}-manifest")) }
         finally { wire.fill(0) }

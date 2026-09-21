@@ -38,11 +38,12 @@ internal object TestInstallationManifestAppliedPageV1 {
         drain.requireManifestPredecessor()
         val kind = checkNotNull(row.getString("event_kind"))
         requireManifest(kind == "OWNER_DELETE" || kind == "OWNER_DELETE_ALL" && drain.routing.journalConfiguration.ownerDeleteAll ||
-            kind == "ADMIN_DELETE" && drain.routing.journalConfiguration.registeredAdminDelete)
+            kind == "ADMIN_DELETE" && drain.routing.journalConfiguration.registeredAdminDelete ||
+            kind == "ADMIN_BATCH_DELETE" && drain.routing.journalConfiguration.registeredAdminBatchDelete)
         val targets = row.getInt("target_count").also { requireManifest(!row.wasNull()) }
         requireManifest(row.getObject("data_scope_id", UUID::class.java) == drain.scope && TestOrdinaryDrainRowsV1.boolean(row, "test_only") &&
             row.getObject("writer_generation", UUID::class.java).toString() == drain.writer &&
-            (if (kind == "OWNER_DELETE_ALL") targets in 0..100 else targets == 1) &&
+            (when (kind) { "OWNER_DELETE_ALL" -> targets in 0..100; "ADMIN_BATCH_DELETE" -> targets in 1..50; else -> targets == 1 }) &&
             TestOrdinaryDrainRowsV1.boolean(row, "finite") && row.getLong("journal_epoch") in 1..drain.cutoff)
         return TestOrdinaryDrainPersistenceV1.Applied(checkNotNull(row.getString("event_id")), checkNotNull(row.getString("object_key")),
             requireJournalVersion(row.getString("object_version")), TestOrdinaryDrainRowsV1.hash(row, "ciphertext_hash"),

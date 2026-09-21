@@ -143,7 +143,8 @@ internal object TestOrdinaryDrainRowsV1 {
     }
 
     /** Strict terminal reader deliberately separate from the unchanged RESERVED/PARTIAL lower reader. */
-    class Recovery(row: ResultSet, facts: TestOrdinaryDrainPersistenceV1.FamilyFacts, eventId: String, kind: String) {
+    class Recovery(row: ResultSet, facts: TestOrdinaryDrainPersistenceV1.FamilyFacts, eventId: String, kind: String,
+        event: me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1? = null) {
         constructor(row: ResultSet, original: TestRunOrdinaryDrainV1, eventId: String, kind: String) :
             this(row, TestOrdinaryDrainPersistenceV1.FamilyFacts(original.routing, original.cutoff), eventId, kind) {
             original.requireInventoryKind(kind)
@@ -156,16 +157,24 @@ internal object TestOrdinaryDrainRowsV1 {
         init {
             facts.requireKind(kind)
             val all = kind == "OWNER_DELETE_ALL"
+            val batch = kind == "ADMIN_BATCH_DELETE"
+            val batchEvent = if (batch) checkNotNull(event).also {
+                facts.requireEvent(it); requireDrain(it.route.eventId == eventId && it.comparison.eventKind.name == kind)
+            } else null
+            val ownerCount = batchEvent?.adminBatchTuple?.ownerInstallationIds()?.size ?: 1
+            val targetCount = batchEvent?.complaintIds()?.size ?: if (all) 100 else 1
+            val expected = if (batchEvent != null) me.manga.kira.backend.complaint.infrastructure.AdminDeleteRows.recovery(batchEvent)
+                else if (all) OwnerDeleteAllCapacityCharges.RECOVERY else OwnerDeleteCapacityCharges.RECOVERY
             requireDrain(row.getString("event_id") == eventId && row.getString("publication_ref") == eventId &&
                 row.getObject("data_scope_id", UUID::class.java) == facts.scope && boolean(row, "test_only") && boolean(row, "finite") &&
                 row.getInt("accounting_version") == 1 && state in setOf("PARTIAL", "CONVERTED") &&
-                promise == (if (all) OwnerDeleteAllCapacityCharges.RECOVERY else OwnerDeleteCapacityCharges.RECOVERY) &&
+                promise == expected &&
                 used.fitsWithin(promise) && !used.isZero())
             val installs = used[ComplaintCapacityCounter.INSTALLATION_IDS]
             val resources = used[ComplaintCapacityCounter.RESOURCE_IDS]
             val audits = used[ComplaintCapacityCounter.AUDIT_ROWS]
             val applied = used[ComplaintCapacityCounter.JOURNAL_APPLIED]
-            requireDrain(installs in 0..1 && resources in 0..(if (all) 100 else 1) && audits in 0..(if (all) 113 else 5) && applied in 1..4 &&
+            requireDrain(installs in 0..ownerCount.toLong() && resources in 0..targetCount.toLong() && audits in 0..(if (all) 113L else targetCount + 4L) && applied in 1..4 &&
                 used == ComplaintCapacityCharges.INSTALLATION_ID.scaled(installs) + ComplaintCapacityCharges.RESOURCE_ID.scaled(resources) +
                     ComplaintCapacityCharges.AUDIT.scaled(audits) +
                     (if (all) OwnerDeleteAllCapacityCharges.APPLIED else OwnerDeleteCapacityCharges.APPLIED).scaled(applied))

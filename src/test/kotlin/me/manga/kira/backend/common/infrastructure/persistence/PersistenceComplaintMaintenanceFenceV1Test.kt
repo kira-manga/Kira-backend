@@ -78,6 +78,7 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
+            PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
         )
         val registration = setOf(
@@ -90,15 +91,15 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         )
         val sealing = setOf(PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL, PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT)
         val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + initialAdmission + sealing
-        assertEquals(111, PersistencePhasePath.entries.size)
+        assertEquals(113, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
         assertEquals(3, adminWriters.size)
         assertEquals(3, adminDeletionWriters.size)
-        assertEquals(4, terminalWriters.size)
+        assertEquals(5, terminalWriters.size)
         assertEquals(2, registration.size)
         assertEquals(2, initialAdmission.size)
-        assertEquals(67, writers.size)
+        assertEquals(68, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,
@@ -150,12 +151,12 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_ADMIN_DELETE_RELOAD,
             PersistencePhasePath.COMPLAINT_ADMIN_DELETE_PREFLIGHT,
         )
-        val terminalObservations = setOf(PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_VERIFY)
+        val terminalObservations = setOf(PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_VERIFY, PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY)
         val snapshot = PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT
         assertEquals(30, oldObservations.size)
         assertEquals(9, adminObservations.size)
-        assertEquals(1, terminalObservations.size)
-        assertEquals(41, (oldObservations + adminObservations + terminalObservations + snapshot).size)
+        assertEquals(2, terminalObservations.size)
+        assertEquals(42, (oldObservations + adminObservations + terminalObservations + snapshot).size)
         assertEquals(oldObservations + adminObservations + terminalObservations + snapshot, PersistencePhasePath.entries.filter { !it.source && !it.complaintMaintenanceWriter }.toSet())
         assertEquals(testWriters + snapshot, PersistencePhasePath.entries.filter { it.catalogTestRunActivation }.toSet())
         assertTrue(snapshot.readOnly)

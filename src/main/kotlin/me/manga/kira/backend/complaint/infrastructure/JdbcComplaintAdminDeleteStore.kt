@@ -9,6 +9,9 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseF
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.AdminBatchDeleteCapacityCharges
+import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchDeleteFingerprint
+import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteFamily
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteFingerprint
 import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteReceipt
@@ -25,6 +28,8 @@ import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
 import me.manga.kira.backend.security.TestAdminDeleteJournalTupleV1
+import me.manga.kira.backend.security.TestAdminBatchDeleteJournalTupleV1
+import me.manga.kira.backend.security.TestAdminErasureJournalTupleV1
 import me.manga.kira.backend.common.Sha256
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
@@ -81,7 +86,11 @@ internal class ComplaintAdminDeleteCandidate private constructor(val request: Co
     companion object {
         fun prepare(actor: UUID, request: ComplaintAdminDeleteRequest): ComplaintAdminDeleteCandidate {
             requireConnectionFree()
-            return ComplaintAdminDeleteCandidate(request, ComplaintAdminDeleteTuple(actor, request.scope, request.key, request.targetId, ComplaintAdminDeleteFingerprint.of(request).bytes()))
+            val tuple = when (request.family) {
+                ComplaintAdminDeleteFamily.SINGLE -> ComplaintAdminDeleteTuple(actor, request.scope, request.key, request.targetId, ComplaintAdminDeleteFingerprint.of(request).bytes())
+                ComplaintAdminDeleteFamily.BATCH -> ComplaintAdminDeleteTuple.batch(actor, request.scope, request.key, request.targets.map { it.id }, ComplaintAdminBatchDeleteFingerprint.of(request))
+            }
+            return ComplaintAdminDeleteCandidate(request, tuple)
         }
     }
 }
@@ -129,14 +138,15 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
     private var stage = Stage.RETAINED
     private var fresh = false
     private var consumedGrantId: UUID? = null
-    private var owner: UUID? = null
-    private var requiredRecovery = OwnerDeleteCapacityCharges.RECOVERY
+    private var ownerByTarget: Map<UUID, UUID> = emptyMap()
+    private var requiredRecovery = if (tuple.family == ComplaintAdminDeleteFamily.SINGLE) OwnerDeleteCapacityCharges.RECOVERY
+        else AdminBatchDeleteCapacityCharges.recovery(tuple.targetIds().size, tuple.targetIds().size)
     private var paid: JdbcComplaintCapacityStore.LockedAdminDelete? = null
     private var event: TestOwnerDeleteJournalEventV1? = null
     private var recorded: OwnerDeleteRows.Publication? = null
     private var receipt: ComplaintAdminDeleteReceipt? = null
     private var authorizationTime: Instant? = null
-    private var auditOutcome: AdminDeleteAuditOutcome.Authorized? = null
+    private val auditOutcomes = ArrayList<AdminDeleteAuditOutcome.Authorized>(tuple.targetIds().size)
     private var released: TestAdminDeleteAuthorizationV1? = null
     override fun belongsTo(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = phase === selected && path === expected
     override fun completedFor(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = belongsTo(selected, expected) && stage === Stage.COMPLETE &&
@@ -163,15 +173,18 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
             fresh = true
             consumeGrant()
             // Discovery is nonauthoritative. Lock ordering later rechecks the exact owner/resource before authorization.
-            owner = jdbc.query(AdminDeletePersistenceSql.DISCOVER_OWNER, { row, _ -> row.getObject("owner_id", UUID::class.java) }, tuple.targetId, tuple.scope.id).singleOrNull()
-            if (owner != null) prepareEvent(control)
+            ownerByTarget = tuple.targetIds().mapNotNull { target ->
+                jdbc.query(AdminDeletePersistenceSql.DISCOVER_OWNER, { row, _ -> row.getObject("owner_id", UUID::class.java) }, target, tuple.scope.id)
+                    .singleOrNull()?.let { target to it }
+            }.toMap()
+            if (ownerByTarget.size == tuple.targetIds().size) prepareEvent(control)
             stage = Stage.COUNTERS_READY
             val allocation = capacity.lockForAdminDelete(this)
             stage = Stage.RESERVING
             checkWrite()
             event?.let { primary ->
                 check(jdbc.update(AdminDeletePersistenceSql.INSERT_RECOVERY, primary.route.eventId, tuple.scope.id, primary.route.eventId,
-                    OwnerDeleteRows.array(OwnerDeleteCapacityCharges.RECOVERY)) == 1)
+                    OwnerDeleteRows.array(requiredRecovery)) == 1)
             }
             stage = Stage.DOMAIN
             lockCurrentAdmin()
@@ -190,19 +203,19 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
             } else {
                 if (row.state != "AUTHORIZED_DELETE") rejectAdminDelete(ComplaintAdminDeleteFailure.IN_PROGRESS)
                 stage = Stage.PUBLICATION
-                val publication = jdbc.query(AdminDeletePersistenceSql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteRows.Publication.adminDelete(row) }, row.publication).single()
+                val publication = jdbc.query(AdminDeletePersistenceSql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteRows.Publication.adminErasure(row) }, row.publication).single()
                 check(publication.state in setOf("PREPARED", "VERIFIED"))
-                val canonical = TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(graph.routing, publication.bytes, publication.routingKey)
-                publication.requireAdminEvent(canonical)
+                val canonical = TestOwnerDeleteJournalCodecV1.restoreAdminErasureCanonical(graph.routing, publication.bytes, publication.routingKey, publication.kind)
+                publication.requireAdminErasureEvent(canonical)
                 check(publication.writer == graph.writer && publication.createdAt == row.authorizedAt)
                 requireTuple(canonical, tuple)
                 control.requireContinuation(publication.epoch, publication.state == "PREPARED")
-                check(row.consumedGrantId == canonical.adminTuple.consumedGrantId)
+                check(row.consumedGrantId == canonical.adminComparison.consumedGrantId)
                 consumedGrantId = row.consumedGrantId
                 event = canonical
                 recorded = publication
                 stage = Stage.RESERVATION
-                val recovery = jdbc.query(AdminDeletePersistenceSql.LOCK_RECOVERY, { result, _ -> OwnerDeleteRows.Recovery(result, tuple.scope, publication.eventId) }, publication.eventId).single()
+                val recovery = jdbc.query(AdminDeletePersistenceSql.LOCK_RECOVERY, { result, _ -> OwnerDeleteRows.Recovery(result, tuple.scope, publication.eventId, AdminDeleteRows.recovery(canonical)) }, publication.eventId).single()
                 requiredRecovery = recovery.remaining
                 stage = Stage.COUNTERS_READY
                 capacity.lockForAdminDelete(this)
@@ -215,52 +228,70 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         stage = Stage.COMPLETE
     }
     private fun prepareEvent(control: TestOwnerDeleteControlBindingV1.Locked) {
-        val journalTuple = TestAdminDeleteJournalTupleV1(control.epoch, identity.actor, tuple.key, tuple.fingerprintBytes(), tuple.scope, checkNotNull(consumedGrantId), checkNotNull(owner))
+        val owners = ownerByTarget.values.distinct().sortedBy(UUID::toString)
+        val journalTuple: TestAdminErasureJournalTupleV1 = when (tuple.family) {
+            ComplaintAdminDeleteFamily.SINGLE -> TestAdminDeleteJournalTupleV1(control.epoch, identity.actor, tuple.key, tuple.fingerprintBytes(), tuple.scope, checkNotNull(consumedGrantId), owners.single())
+            ComplaintAdminDeleteFamily.BATCH -> TestAdminBatchDeleteJournalTupleV1(control.epoch, identity.actor, tuple.key, tuple.fingerprintBytes(), tuple.scope, checkNotNull(consumedGrantId), owners)
+        }
         val routes = graph.routing.derive(journalTuple)
         // Occupied retained candidates demand recovery; never mint an alternative primary under another key.
         routes.candidates().forEach { route ->
             check(jdbc.queryForObject("SELECT NOT EXISTS (SELECT 1 FROM complaint_journal_publications WHERE event_id = ? OR object_key = ?)", Boolean::class.java, route.eventId, route.objectKey) == true)
         }
-        val canonical = codec.canonicalizeAdmin(journalTuple, tuple.targetId, routes.active.routingKeyId)
+        val canonical = when (journalTuple) {
+            is TestAdminDeleteJournalTupleV1 -> codec.canonicalizeAdmin(journalTuple, tuple.targetId, routes.active.routingKeyId)
+            is TestAdminBatchDeleteJournalTupleV1 -> codec.canonicalizeAdminBatch(journalTuple, tuple.targetIds(), routes.active.routingKeyId)
+        }
+        requiredRecovery = AdminDeleteRows.recovery(canonical)
         check(canonical.belongsTo(graph.routing) && canonical.route == routes.active)
         event = canonical
     }
     private fun authorizeNew(allocation: JdbcComplaintCapacityStore.LockedAdminDelete, audit: AuditService) {
-        val owner = owner ?: return rejectBusiness(ComplaintAdminDeleteRejection.COMPLAINT_NOT_FOUND, allocation)
-        val ownerRejection = lockOwner(owner)
-        val resource = jdbc.query(AdminDeletePersistenceSql.LOCK_RESOURCE, { row, _ ->
-            check(row.getObject("data_scope_id", UUID::class.java) == tuple.scope.id && row.getBoolean("test_only"))
-            row.getString("state")
-        }, tuple.targetId).singleOrNull()
-        val version = jdbc.query(AdminDeletePersistenceSql.LOCK_CONTENT, { row, _ ->
-            check(row.getObject("data_scope_id", UUID::class.java) == tuple.scope.id && row.getBoolean("test_only") && row.getObject("owner_id", UUID::class.java) == owner)
-            check(row.getString("ownership") == "INSTALLATION" && row.getString("kind") in setOf("REPORT", "REPLY"))
-            OwnerDeleteRows.positive(row, "version")
-        }, tuple.targetId).singleOrNull()
+        if (ownerByTarget.size != tuple.targetIds().size) return rejectBusiness(ComplaintAdminDeleteRejection.COMPLAINT_NOT_FOUND, allocation)
+        // Lock ALL owner reservation/credential pairs before ANY resource/content row. Discovery never authorizes.
+        val ownerRejections = ownerByTarget.values.distinct().sortedBy(UUID::toString).associateWith(::lockOwner)
+        val resources = tuple.targetIds().associateWith { target ->
+            jdbc.query(AdminDeletePersistenceSql.LOCK_RESOURCE, { row, _ ->
+                if (row.getObject("data_scope_id", UUID::class.java) == tuple.scope.id && row.getBoolean("test_only")) row.getString("state") else null
+            }, target).singleOrNull()
+        }
+        val versions = tuple.targetIds().associateWith { target ->
+            jdbc.query(AdminDeletePersistenceSql.LOCK_CONTENT, { row, _ ->
+                if (row.getObject("data_scope_id", UUID::class.java) == tuple.scope.id && row.getBoolean("test_only") &&
+                    row.getObject("owner_id", UUID::class.java) == ownerByTarget.getValue(target) &&
+                    row.getString("ownership") == "INSTALLATION" && row.getString("kind") in setOf("REPORT", "REPLY")) OwnerDeleteRows.positive(row, "version") else null
+            }, target).singleOrNull()
+        }
         requireTokenTime()
-        val rejection = when {
-            version == null -> ComplaintAdminDeleteRejection.COMPLAINT_NOT_FOUND
-            ownerRejection != null -> ownerRejection
-            resource == "DELETION_PENDING" -> ComplaintAdminDeleteRejection.COMPLAINT_DELETION_PENDING
-            resource != "LIVE" -> ComplaintAdminDeleteRejection.COMPLAINT_NOT_FOUND
-            version != candidate.request.precondition.version -> ComplaintAdminDeleteRejection.PRECONDITION_FAILED
-            else -> null
+        val rejection = candidate.request.targets.firstNotNullOfOrNull { target ->
+            when {
+                versions[target.id] == null -> ComplaintAdminDeleteRejection.COMPLAINT_NOT_FOUND
+                ownerRejections[ownerByTarget.getValue(target.id)] != null -> ownerRejections[ownerByTarget.getValue(target.id)]
+                resources[target.id] == "DELETION_PENDING" -> ComplaintAdminDeleteRejection.COMPLAINT_DELETION_PENDING
+                resources[target.id] != "LIVE" -> ComplaintAdminDeleteRejection.COMPLAINT_NOT_FOUND
+                versions[target.id] != target.precondition.version -> ComplaintAdminDeleteRejection.PRECONDITION_FAILED
+                else -> null
+            }
         }
         if (rejection != null) return rejectBusiness(rejection, allocation)
         val canonical = checkNotNull(event)
         stage = Stage.WRITING
-        checkWrite()
-        check(jdbc.update(AdminDeletePersistenceSql.PEND_RESOURCE, tuple.targetId, tuple.scope.id) == 1)
+        tuple.targetIds().forEach { target ->
+            checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.PEND_RESOURCE, target, tuple.scope.id) == 1)
+        }
         checkWrite()
         authorizationTime = jdbc.queryForObject(AdminDeletePersistenceSql.INSERT_PUBLICATION, { row, _ -> row.getTimestamp(1).toInstant() },
-            canonical.route.eventId, tuple.scope.id, graph.writer, canonical.adminTuple.epoch, canonical.route.routingKeyId, canonical.route.objectKey,
-            canonical.canonicalBytes(), HexFormat.of().parseHex(canonical.semanticSha256))!!
+            canonical.route.eventId, tuple.scope.id, graph.writer, canonical.adminComparison.epoch, tuple.operation, tuple.targetIds().size,
+            canonical.route.routingKeyId, canonical.route.objectKey, canonical.canonicalBytes(), HexFormat.of().parseHex(canonical.semanticSha256))!!
         checkWrite()
         check(jdbc.update(AdminDeletePersistenceSql.AUTHORIZE_RECEIPT, canonical.route.eventId, Timestamp.from(authorizationTime), consumedGrantId, tuple.actor, tuple.key,
-            tuple.scope.id, tuple.fingerprintBytes(), tuple.targetId) == 1)
+            tuple.scope.id, tuple.operation, tuple.fingerprintBytes(), AdminDeleteRows.array(tuple.targetIds())) == 1)
         stage = Stage.AUDIT
-        auditOutcome = AdminDeleteAuditOutcome.Authorized(tuple.scope, tuple.targetId, checkNotNull(version), identity.actor)
-        audit.recordAdminDelete(checkNotNull(auditOutcome), allocation, checkNotNull(authorizationTime))
+        tuple.targetIds().forEach { target ->
+            val outcome = AdminDeleteAuditOutcome.Authorized(tuple.scope, target, checkNotNull(versions[target]), identity.actor)
+            auditOutcomes.add(outcome)
+            audit.recordAdminDelete(outcome, allocation, checkNotNull(authorizationTime))
+        }
         check(allocation.completedFor(this))
     }
     private fun rejectBusiness(code: ComplaintAdminDeleteRejection, allocation: JdbcComplaintCapacityStore.LockedAdminDelete) {
@@ -268,16 +299,16 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         stage = Stage.REJECTING
         checkWrite()
         event?.let { check(jdbc.update(AdminDeletePersistenceSql.DROP_PROVISIONAL_RECOVERY, it.route.eventId, tuple.scope.id,
-            OwnerDeleteRows.array(OwnerDeleteCapacityCharges.RECOVERY)) == 1) }
+            OwnerDeleteRows.array(requiredRecovery)) == 1) }
         allocation.keepReceiptOnly(this)
         checkWrite()
         check(jdbc.update(AdminDeletePersistenceSql.REJECT_RECEIPT, code.status, code.name, consumedGrantId, tuple.actor, tuple.key, tuple.scope.id,
-            tuple.fingerprintBytes(), tuple.targetId) == 1)
+            tuple.operation, tuple.fingerprintBytes(), AdminDeleteRows.array(tuple.targetIds())) == 1)
         receipt = ComplaintAdminDeleteReceipt.Rejected(code, checkNotNull(consumedGrantId))
     }
     private fun claim(): Boolean {
         phase.adminDelete.checkReceiptWrite(this, jdbc)
-        return try { jdbc.update(AdminDeletePersistenceSql.INSERT_CLAIM, tuple.actor, tuple.key, tuple.fingerprintBytes(), tuple.targetId, tuple.scope.id) == 1 }
+        return try { jdbc.update(AdminDeletePersistenceSql.INSERT_CLAIM, tuple.actor, tuple.key, tuple.operation, tuple.fingerprintBytes(), AdminDeleteRows.array(tuple.targetIds()), tuple.scope.id) == 1 }
         catch (problem: DataAccessException) {
             if ((problem.cause as? SQLException)?.sqlState == "55P03") throw ComplaintAdminDeleteClaimWaitTimeout()
             throw problem
@@ -338,6 +369,9 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         if (jdbc.queryForObject(AdminDeletePersistenceSql.TOKEN_TIME, Boolean::class.java, identity.validFrom?.let(Timestamp::from), Timestamp.from(identity.validUntil)) != true)
             rejectAdminDelete(ComplaintAdminDeleteFailure.UNAUTHORIZED)
     }
+    internal fun authorizationCharge() = if (tuple.family == ComplaintAdminDeleteFamily.SINGLE) OwnerDeleteCapacityCharges.AUTHORIZATION
+        else AdminBatchDeleteCapacityCharges.authorization(tuple.targetIds().size)
+    internal fun authorizationAuditCount() = tuple.targetIds().size
     internal fun requiredRecovery() = requiredRecovery
     internal fun beginCounterLock(selected: JdbcTemplate): Boolean {
         requireSelected(selected)
@@ -361,9 +395,9 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         check(fresh && paid === allocation && stage === (if (rejecting) Stage.REJECTING else Stage.COUNTERS))
         checkWrite()
     }
-    internal fun auditConnection(allocation: JdbcComplaintCapacityStore.LockedAdminDelete, selected: JdbcTemplate, entry: CountedAdminDeleteAuditEntry): Connection {
+    internal fun auditConnection(allocation: JdbcComplaintCapacityStore.LockedAdminDelete, selected: JdbcTemplate, entry: CountedAdminDeleteAuditEntry, index: Int): Connection {
         requireAuditWrite(allocation, selected)
-        check(entry.outcome === auditOutcome && entry.createdAt == authorizationTime)
+        check(entry.outcome === auditOutcomes[index] && entry.createdAt == authorizationTime)
         return phase.adminDelete.connection(this, selected)
     }
     internal fun requireAuditWrite(allocation: JdbcComplaintCapacityStore.LockedAdminDelete, selected: JdbcTemplate) {
@@ -381,7 +415,7 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
     }
     private enum class Stage { RETAINED, CONTROL, RECEIPT, PUBLICATION, RESERVATION, COUNTERS_READY, COUNTERS, RESERVING, DOMAIN, WRITING, AUDIT, REJECTING, COMPLETE, FAILED }
     private abstract class Released(private val issuer: Any, private val routing: TestOwnerDeleteJournalRoutingV1, private val event: TestOwnerDeleteJournalEventV1) : CommittedTestAdminDeleteWork {
-        override val consumedGrantId: UUID get() = event.adminTuple.consumedGrantId
+        override val consumedGrantId: UUID get() = event.adminComparison.consumedGrantId
         override fun canonicalBytes(): ByteArray = event.canonicalBytes()
         fun owned(selectedIssuer: Any, selectedRouting: TestOwnerDeleteJournalRoutingV1): TestOwnerDeleteJournalEventV1 {
             check(issuer === selectedIssuer && routing === selectedRouting && event.belongsTo(routing)); return event
@@ -408,8 +442,8 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
             return if (row.state == "PREPARED") ReleasedPrepared(issuer, routing, event) else ReleasedVerified(issuer, routing, event, row)
         }
         fun requireTuple(event: TestOwnerDeleteJournalEventV1, tuple: ComplaintAdminDeleteTuple) {
-            check(event.adminTuple.scope == tuple.scope && event.adminTuple.actorId == tuple.actor && event.adminTuple.operationKey == tuple.key)
-            check(event.adminTuple.fingerprintBytes().contentEquals(tuple.fingerprintBytes()) && event.complaintIds() == listOf(tuple.targetId))
+            check(event.adminComparison.scope == tuple.scope && event.adminComparison.actorId == tuple.actor && event.adminComparison.operationKey == tuple.key)
+            check(event.adminComparison.eventKind.name == tuple.operation && event.adminComparison.fingerprintBytes().contentEquals(tuple.fingerprintBytes()) && event.complaintIds() == tuple.targetIds())
         }
         fun owned(work: CommittedTestAdminDeleteWork, issuer: Any, routing: TestOwnerDeleteJournalRoutingV1): TestOwnerDeleteJournalEventV1 =
             (work as? Released ?: error("Original released work required")).owned(issuer, routing)

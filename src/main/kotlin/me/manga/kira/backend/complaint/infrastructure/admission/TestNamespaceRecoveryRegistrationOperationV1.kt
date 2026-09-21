@@ -84,7 +84,7 @@ internal class TestNamespaceRecoveryRegistrationOperationV1 private constructor(
         requireRegistration(jdbc.query(TestRunSealingSqlV1.readAudit, { row, _ -> row.requiredTestActivationBoolean("valid") },
             scope, tail.generation, Timestamp.from(run.sealedAt)).single())
         requireRegistration(jdbc.query(TestOrdinaryDrainSqlV1.supported, { row, _ -> row.requiredTestActivationBoolean("valid") },
-            scope, journal.ordinaryPrefix + "%", journal.sealTerminalPrefix + "%", writer, journal.ownerDeleteAll, journal.registeredAdminDelete).single())
+            scope, journal.ordinaryPrefix + "%", journal.sealTerminalPrefix + "%", writer, journal.ownerDeleteAll, journal.registeredAdminDelete, journal.registeredAdminBatchDelete).single())
         requireRetained()
         var actualEntries = 0L
         val scans = jdbc.query(TestNamespaceRecoveryRegistrationSqlV1.scans, { row, _ ->

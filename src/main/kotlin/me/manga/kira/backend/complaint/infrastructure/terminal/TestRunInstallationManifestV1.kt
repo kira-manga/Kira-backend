@@ -109,6 +109,12 @@ internal class TestRunInstallationManifestV1 private constructor(internal val dr
     /** Only this actually completed original can admit a fresh publication child. */
     fun beginPublication(): TestRunInstallationManifestPublicationV1 = TestRunInstallationManifestPublicationV1.begin(this)
 
+    /** No result enum or supplied root can replace the retained successful manifest child. */
+    internal fun beginPurgePublication(): TestRunPurgePublicationV1 {
+        requireConnectionFree(); requirePublicationPredecessor()
+        return (publication ?: throw TestRunPurgeExceptionV1()).beginPurgePublication()
+    }
+
     internal fun requirePublicationPredecessor() {
         throwIfSignalled()
         requireManifest(caller === Thread.currentThread() && started && finished && completedPreparation && !cleanupUncertain &&

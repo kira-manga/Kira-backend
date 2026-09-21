@@ -50,6 +50,7 @@ internal class TestOrdinarySealHttpFixtureV1(
     val horizonPolicy: InitialPolicyReferenceV1 = policy("synthetic-test-restore-horizon"),
     val protectedIntake: Boolean = false,
     val manifestPublication: Boolean = false,
+    val purgePublication: Boolean = false,
 ) : AutoCloseable {
     val sts = AwsJournalKmsFixture()
     val kms = AwsJournalKmsFixture()
@@ -71,6 +72,7 @@ internal class TestOrdinarySealHttpFixtureV1(
     var stored: JournalPublisherObject? = null
     // Opt-in sibling family only. Keep the original strict seal object/version assertions intact.
     val manifestObjects = linkedMapOf<String, JournalPublisherObject>()
+    val purgeObjects = linkedMapOf<String, JournalPublisherObject>()
     var manifestListing: (String, List<JournalPublisherObject>) -> List<JournalPublisherObject> = { _, values -> values }
     var s3Created = 0
         private set
@@ -181,9 +183,10 @@ internal class TestOrdinarySealHttpFixtureV1(
         val location = j.declaration().journalLocation
         val key = checkNotNull(expectedKey)
         val manifest = "/installation-manifest/" in key
-        val existing = if (manifest) manifestObjects[key] else stored
+        val purge = "/test-run-purge/" in key
+        val existing = if (manifest) manifestObjects[key] else if (purge) purgeObjects[key] else stored
         journalPublisherRawAssertSigned(request, location.region, location.accountId, TARGET)
-        assertTrue(key.startsWith(j.sealTerminalPrefix) && ("/epoch-seal/" in key || manifestPublication && manifest))
+        assertTrue(key.startsWith(j.sealTerminalPrefix) && ("/epoch-seal/" in key || manifestPublication && manifest || purgePublication && purge))
         assertFalse(request.http.encodedPath().contains("/live/"))
         val reply = when (request.kind) {
             "LIST" -> {
@@ -196,7 +199,7 @@ internal class TestOrdinarySealHttpFixtureV1(
             "GET" -> {
                 assertEquals("/${location.bucket}/$key", request.http.encodedPath())
                 assertEquals(checkNotNull(existing).version, request.http.rawQueryParameters().getValue("versionId").single())
-                journalPublisherRawGetReply(location.region, if (manifest) existing.copy(bytes = existing.bytes.copyOf()) else existing)
+                journalPublisherRawGetReply(location.region, if (manifest || purge) existing.copy(bytes = existing.bytes.copyOf()) else existing)
             }
             else -> {
                 assertEquals("PUT", request.kind)
@@ -204,12 +207,12 @@ internal class TestOrdinarySealHttpFixtureV1(
                 assertEquals("*", request.header("If-None-Match"))
                 assertEquals("COMPLIANCE", request.header("x-amz-object-lock-mode"))
                 if (existing != null) OwnerDeleteAllJournalPublisherFixture.errorReply(412) else {
-                    val version = if (manifest) "test-manifest-version-${manifestObjects.size + 1}" else VERSION
+                    val version = if (manifest) "test-manifest-version-${manifestObjects.size + 1}" else if (purge) "test-purge-version-${purgeObjects.size + 1}" else VERSION
                     val value = JournalPublisherObject(key, version, request.body.copyOf(), now().truncatedTo(ChronoUnit.SECONDS),
                         Instant.parse(request.header("x-amz-object-lock-retain-until-date")),
                         request.http.headers().entries.filter { it.key.startsWith("x-amz-meta-", ignoreCase = true) }
                             .associate { it.key.lowercase().removePrefix("x-amz-meta-") to it.value.single() })
-                    if (manifest) manifestObjects[key] = value else stored = value
+                    if (manifest) manifestObjects[key] = value else if (purge) purgeObjects[key] = value else stored = value
                     if (lostPutAcknowledgment) OwnerDeleteAllJournalPublisherFixture.errorReply(500) else journalPublisherRawPutReply(value)
                 }
             }
@@ -231,10 +234,13 @@ internal class TestOrdinarySealHttpFixtureV1(
             assertEquals("900", fields.getValue("DurationSeconds"))
             session = fields.getValue("RoleSessionName")
             val manifest = session.startsWith("kira-manifest-")
-            assertTrue(Regex(if (manifestPublication) "kira-(seal|manifest)-[0-9a-f-]{36}" else "kira-seal-[0-9a-f-]{36}").matches(session))
+            val purge = session.startsWith("kira-purge-")
+            val sessions = listOfNotNull("seal", "manifest".takeIf { manifestPublication }, "purge".takeIf { purgePublication }).joinToString("|")
+            assertTrue(Regex("kira-($sessions)-[0-9a-f-]{36}").matches(session))
             val policy = ObjectMapper().readTree(fields.getValue("Policy"))
             expectedKey = policy["Statement"][4]["Condition"]["StringEquals"]["s3:prefix"].textValue()
             assertEquals(manifest, "/installation-manifest/" in checkNotNull(expectedKey))
+            assertEquals(purge, "/test-run-purge/" in checkNotNull(expectedKey))
             val location = checkNotNull(journal).declaration().journalLocation
             val resources = policy["Statement"][3]["Resource"].map { it.textValue() }
             assertEquals(listOf("arn:aws:s3:::${location.bucket}/$expectedKey", checkNotNull(journal).declaration().encryption.keyArn), resources)

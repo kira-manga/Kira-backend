@@ -63,7 +63,7 @@ internal object TestInstallationManifestSqlV1 {
     /** Complete applicable relations, including foreign-scope rows under this exact prefix. No state filter hides bad rows. */
     val relation = """
         WITH e AS MATERIALIZED (SELECT ?::uuid AS scope, ?::text AS ordinary_prefix, ?::text AS terminal_prefix,
-            ?::uuid AS writer, ?::bigint AS cutoff, ?::bigint AS epoch, ?::boolean AS allow_all, ?::boolean AS allow_admin)
+            ?::uuid AS writer, ?::bigint AS cutoff, ?::bigint AS epoch, ?::boolean AS allow_all, ?::boolean AS allow_admin, ?::boolean AS allow_batch)
         SELECT (NOT EXISTS (SELECT 1 FROM complaint_journal_publications p CROSS JOIN e
                 LEFT JOIN complaint_recovery_capacity_reservations r ON r.event_id = p.event_id
                 LEFT JOIN complaint_test_terminal_intents i ON i.publication_ref = p.event_id
@@ -74,7 +74,8 @@ internal object TestInstallationManifestSqlV1 {
                         AND ((p.state = 'APPLIED'
                                 AND ((p.event_kind = 'OWNER_DELETE' AND p.target_count = 1)
                                     OR (e.allow_all AND p.event_kind = 'OWNER_DELETE_ALL' AND p.target_count BETWEEN 0 AND 100)
-                                    OR (e.allow_admin AND p.event_kind = 'ADMIN_DELETE' AND p.target_count = 1))
+                                    OR (e.allow_admin AND p.event_kind = 'ADMIN_DELETE' AND p.target_count = 1)
+                                    OR (e.allow_batch AND p.event_kind = 'ADMIN_BATCH_DELETE' AND p.target_count BETWEEN 1 AND 50))
                                 AND p.journal_epoch BETWEEN 1 AND e.cutoff AND p.object_key LIKE e.ordinary_prefix
                                 AND r.state = 'CONVERTED' AND complaint_vector_lte(r.converted_amounts, r.reserved_amounts)
                                 AND r.converted_at IS NOT NULL AND isfinite(r.converted_at) AND i.operation_token IS NULL)
@@ -104,22 +105,27 @@ internal object TestInstallationManifestSqlV1 {
             AND NOT EXISTS (SELECT 1 FROM complaint_idempotency_receipts r CROSS JOIN e
                 LEFT JOIN complaint_journal_publications p ON p.event_id = r.publication_ref
                 WHERE (r.data_scope_id = e.scope OR p.data_scope_id = e.scope)
-                    AND (r.data_scope_id = e.scope AND r.test_only AND r.state = 'COMPLETED' AND r.operation <> 'ADMIN_BATCH_DELETE'
+                    AND (r.data_scope_id = e.scope AND r.test_only AND r.state = 'COMPLETED' AND (r.operation <> 'ADMIN_BATCH_DELETE' OR e.allow_batch)
                         AND (r.operation <> 'ADMIN_DELETE' OR e.allow_admin)
                         AND ((r.publication_ref IS NULL AND r.external_event_id IS NULL AND r.authorized_at IS NULL
-                                AND (r.operation NOT IN ('OWNER_DELETE', 'ADMIN_DELETE') OR r.outcome = 'REJECTED'))
+                                AND (r.operation NOT IN ('OWNER_DELETE', 'ADMIN_DELETE', 'ADMIN_BATCH_DELETE') OR r.outcome = 'REJECTED'))
                             OR (r.outcome = 'APPLIED' AND p.data_scope_id = e.scope AND p.state = 'APPLIED'
                                 AND r.external_event_id = p.event_id AND r.external_epoch = p.journal_epoch
                                 AND r.external_object_version = p.object_version AND r.external_ciphertext_hash = p.ciphertext_hash
-                                AND r.authorized_at = p.created_at AND p.target_count = 1
-                                AND ((r.operation = 'OWNER_DELETE' AND r.actor_kind = 'INSTALLATION' AND p.event_kind = 'OWNER_DELETE')
-                                    OR (e.allow_admin AND r.operation = 'ADMIN_DELETE' AND r.actor_kind = 'ADMIN' AND p.event_kind = 'ADMIN_DELETE'))))) IS NOT TRUE)
+                                AND r.authorized_at = p.created_at
+                                AND ((r.operation = 'OWNER_DELETE' AND r.actor_kind = 'INSTALLATION' AND p.event_kind = 'OWNER_DELETE' AND p.target_count = 1)
+                                    OR (e.allow_admin AND r.operation = 'ADMIN_DELETE' AND r.actor_kind = 'ADMIN' AND p.event_kind = 'ADMIN_DELETE' AND p.target_count = 1)
+                                    OR (e.allow_batch AND r.operation = 'ADMIN_BATCH_DELETE' AND r.actor_kind = 'ADMIN' AND p.event_kind = 'ADMIN_BATCH_DELETE'
+                                        AND p.target_count BETWEEN 1 AND 50 AND cardinality(r.target_ids) = p.target_count
+                                        AND r.response_status = 200 AND r.ack_ids = r.target_ids AND r.ack_versions IS NULL
+                                        AND r.response_location IS NULL AND r.response_etag IS NULL AND complaint_is_v4(r.consumed_grant_id)))))) IS NOT TRUE)
             AND NOT EXISTS (SELECT 1 FROM complaint_deletion_journal_applied a CROSS JOIN e
                 WHERE (a.data_scope_id = e.scope OR a.object_key LIKE e.ordinary_prefix OR a.object_key LIKE e.terminal_prefix)
                     AND (a.data_scope_id = e.scope AND a.test_only AND a.writer_generation = e.writer
                         AND ((a.event_kind = 'OWNER_DELETE' AND a.target_count = 1)
                             OR (e.allow_all AND a.event_kind = 'OWNER_DELETE_ALL' AND a.target_count BETWEEN 0 AND 100)
-                            OR (e.allow_admin AND a.event_kind = 'ADMIN_DELETE' AND a.target_count = 1))
+                            OR (e.allow_admin AND a.event_kind = 'ADMIN_DELETE' AND a.target_count = 1)
+                            OR (e.allow_batch AND a.event_kind = 'ADMIN_BATCH_DELETE' AND a.target_count BETWEEN 1 AND 50))
                         AND a.journal_epoch BETWEEN 1 AND e.cutoff AND a.object_key LIKE e.ordinary_prefix) IS NOT TRUE)
             AND NOT EXISTS (SELECT 1 FROM complaint_resource_ids r CROSS JOIN e WHERE r.data_scope_id = e.scope AND r.state = 'DELETION_PENDING')
             AND NOT EXISTS (SELECT 1 FROM complaint_installation_ids r CROSS JOIN e WHERE r.data_scope_id = e.scope AND r.state = 'DELETION_PENDING')

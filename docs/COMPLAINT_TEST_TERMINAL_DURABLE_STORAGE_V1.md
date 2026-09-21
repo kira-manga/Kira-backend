@@ -212,3 +212,42 @@ registration and the controlled first ordinary seal now have separate source
 slices; they are not supplied by these storage types. Complete terminal content,
 lineage/denial evidence, later seals, deployed publication intake and terminal
 settlement still require their own bounded producers and independent gates.
+
+
+## Atomic Admin batch ordinary family (source candidate)
+
+The explicit new J profiles `LOWER_TEST_ADMIN_BATCH_ERASURE` and
+`REGISTERED_TEST_ADMIN_BATCH_ERASURE` include OWNER_DELETE, OWNER_DELETE_ALL, ADMIN_DELETE and
+ADMIN_BATCH_DELETE. Their deployment/effective cases are
+`PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ORDINARY_DRAIN_V1` and
+`PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER`.
+Existing J/D profile bytes and scalar decoders stay unchanged; retained activations are never
+relabelled. These declarations confer no request, run, provider or LIVE authority.
+
+The closed ADMIN_BATCH_DELETE payload binds one Admin/grant/key/fingerprint/scope/epoch plus
+1–50 sorted distinct complaint IDs and their1–50 sorted distinct resolved owner IDs (owners≤targets).
+Owners are discovered and fully rechecked by AUTH, never supplied by HTTP. Owner, ALL and scalar
+Admin decoders reject the batch; registered header dispatch chooses the configured family before
+KMS. Plaintext64KiB and wire96KiB bounds are unchanged.
+
+For n targets and m owners, the one operation pays:
+
+```text
+AUTH = NORMAL_RECEIPT + PUBLICATION + RECOVERY_RESERVATION + n*AUDIT
+P    = m*INSTALLATION_ID + n*RESOURCE_ID + (n+4)*AUDIT + 4*APPLIED
+U    = actual rebuilt identities + actual removal/summary audits + new exact-version APPLIED
+```
+
+Normal APPLY emits n removal audits and no summary. Recovery adds one event-scoped SYSTEM
+summary per newly applied version, never one per target. Four is the TOTAL primary+same-key-copy+
+retained-key-alias limit, not a per-key allowance. Exact duplicates spend nothing; aliases cannot
+move the original primary/grant/receipt/proof. Credentials remain intact; an absent owner identity
+may only become RECOVERY_RESERVED without manufactured credentials.
+
+Registered primary continuation completes before ordinary inventory, without renewed user role,
+proof or tags. Drain and manifest CAPTURE/COMPLETE compare exact receipt/primary/alias/P−U/audit
+and domain facts, with scope-or-prefix detection of unsupported rows. A later DELETED owner
+requires the genuine separately checked ALL companion, not a terminal-state shortcut. Missing
+post-drain evidence refuses before manifest providers and cannot be repaired by a successor.
+Batch→purge publication composition/qualification remains required internal follow-on work;
+this tranche alone does not claim complete terminal activation, deployment or runtime verification.

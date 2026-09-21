@@ -1,6 +1,12 @@
 package me.manga.kira.backend.complaint.domain
 
 import java.util.UUID
+import java.util.Collections
+
+/** Closed comparison discriminator, not an admission, SQL selector or publication authority. */
+internal enum class ComplaintAdminDeleteFamily(val operation: String) {
+    SINGLE("ADMIN_DELETE"), BATCH("ADMIN_BATCH_DELETE");
+}
 
 /** Ingress identity only, never a supplied ADMIN role or deletion authority. */
 internal interface ComplaintAdminDeleteRequestContext
@@ -37,37 +43,62 @@ internal class ComplaintAdminDeleteInput(val scope: ComplaintDataScope, val targ
 
 /** Comparison data prepared only after normal JWT/current database ADMIN authentication. */
 internal class ComplaintAdminDeleteRequest private constructor(
-    val scope: ComplaintDataScope, val targetId: UUID, val key: UUID, val precondition: ComplaintAdminDeletePrecondition,
+    val scope: ComplaintDataScope, val key: UUID, val family: ComplaintAdminDeleteFamily,
+    val targets: List<ComplaintAdminBatchDeleteTarget>,
 ) {
+    val targetId: UUID get() { check(family == ComplaintAdminDeleteFamily.SINGLE); return targets.single().id }
+    val precondition: ComplaintAdminDeletePrecondition get() { check(family == ComplaintAdminDeleteFamily.SINGLE); return targets.single().precondition }
     override fun toString(): String = "ComplaintAdminDeleteRequest(redacted)"
     companion object {
-        fun normalize(input: ComplaintAdminDeleteInput) = ComplaintAdminDeleteRequest(input.scope, input.targetId, input.key, input.precondition)
+        fun normalize(input: ComplaintAdminDeleteInput) = ComplaintAdminDeleteRequest(input.scope, input.key, ComplaintAdminDeleteFamily.SINGLE,
+            listOf(ComplaintAdminBatchDeleteTarget(input.targetId, input.precondition)))
+        fun normalize(input: ComplaintAdminBatchDeleteInput) = ComplaintAdminDeleteRequest(input.scope, input.key, ComplaintAdminDeleteFamily.BATCH, input.targets)
     }
 }
 
 /** Actor kind is always ADMIN; the resolved installation owner belongs only to committed journal work. */
-internal class ComplaintAdminDeleteTuple(val actor: UUID, val scope: ComplaintDataScope, val key: UUID, val targetId: UUID, fingerprint: ByteArray) {
+internal class ComplaintAdminDeleteTuple private constructor(val actor: UUID, val scope: ComplaintDataScope, val key: UUID,
+    val family: ComplaintAdminDeleteFamily, targets: List<UUID>, fingerprint: ByteArray) {
+    constructor(actor: UUID, scope: ComplaintDataScope, key: UUID, targetId: UUID, fingerprint: ByteArray) :
+        this(actor, scope, key, ComplaintAdminDeleteFamily.SINGLE, listOf(targetId), fingerprint)
+    private val ids = Collections.unmodifiableList(targets.toList())
+    val targetId: UUID get() { check(family == ComplaintAdminDeleteFamily.SINGLE); return ids.single() }
+    val operation: String get() = family.operation
     private val digest = fingerprint.copyOf()
     init {
         ComplaintIdentifiers.idempotencyKey(key.toString())
-        ComplaintIdentifiers.resourceId(targetId.toString())
+        ids.forEach { ComplaintIdentifiers.resourceId(it.toString()) }
         require(scope.testOnly && digest.size == 32)
+        require(ids.size in 1..(if (family == ComplaintAdminDeleteFamily.SINGLE) 1 else 50) &&
+            ids.distinct().size == ids.size && ids == ids.sortedBy(UUID::toString))
     }
     fun fingerprintBytes(): ByteArray = digest.copyOf()
     fun matches(other: ComplaintAdminDeleteTuple): Boolean = actor == other.actor && scope == other.scope && key == other.key &&
-        targetId == other.targetId && digest.contentEquals(other.digest)
+        family == other.family && ids == other.ids && digest.contentEquals(other.digest)
+    fun targetIds(): List<UUID> = ids
     override fun toString(): String = "ComplaintAdminDeleteTuple(redacted)"
-    companion object { const val OPERATION = "ADMIN_DELETE" }
+    companion object {
+        const val OPERATION = "ADMIN_DELETE"
+        fun batch(actor: UUID, scope: ComplaintDataScope, key: UUID, targets: List<UUID>, fingerprint: ByteArray) =
+            ComplaintAdminDeleteTuple(actor, scope, key, ComplaintAdminDeleteFamily.BATCH, targets, fingerprint)
+    }
 }
 
 internal enum class ComplaintAdminDeleteRejection(val status: Int) {
     COMPLAINT_NOT_FOUND(404), COMPLAINT_DELETION_PENDING(409), PRECONDITION_FAILED(412),
 }
 
-/** Historical scalar only; returned after the actual terminal commit and original physical release. */
+/** Historical outcomes only; returned after the actual terminal commit and original physical release. */
 internal sealed class ComplaintAdminDeleteReceipt private constructor(val consumedGrantId: UUID?) {
     init { require(consumedGrantId == null || consumedGrantId.version() == 4 && consumedGrantId.variant() == 2) }
     class Applied(consumedGrantId: UUID) : ComplaintAdminDeleteReceipt(consumedGrantId)
+    class BatchApplied(targets: List<UUID>, consumedGrantId: UUID) : ComplaintAdminDeleteReceipt(consumedGrantId) {
+        val ids: List<UUID> = Collections.unmodifiableList(targets.toList())
+        init {
+            require(ids.size in 1..50 && ids.distinct().size == ids.size && ids == ids.sortedBy(UUID::toString))
+            ids.forEach { ComplaintIdentifiers.resourceId(it.toString()) }
+        }
+    }
     class Rejected(val code: ComplaintAdminDeleteRejection, consumedGrantId: UUID?) : ComplaintAdminDeleteReceipt(consumedGrantId) {
         val status: Int get() = code.status
         val problemCode: String get() = code.name

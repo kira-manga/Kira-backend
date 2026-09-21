@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBu
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPurgeCustodyV1
 
 internal enum class TestTerminalCodecKindV1 { INSTALLATION_MANIFEST, TEST_RUN_PURGE, EPOCH_SEAL }
 
@@ -23,6 +24,7 @@ internal class TestTerminalAttemptV1 internal constructor(
     private var expired = false
     private var ordinarySealCustody: TestOrdinarySealCustodyV1? = null
     private var installationManifestCustody: TestInstallationManifestCustodyV1? = null
+    private var testRunPurgeCustody: TestRunPurgeCustodyV1? = null
 
     init { remainingMillis(1) }
 
@@ -36,15 +38,21 @@ internal class TestTerminalAttemptV1 internal constructor(
 
     /** Optional closed producer binding; existing dormant codec/adapter fixtures retain their original behavior. */
     internal fun bindOrdinarySealCustody(custody: TestOrdinarySealCustodyV1) {
-        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.EPOCH_SEAL && ordinarySealCustody == null && installationManifestCustody == null)
+        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.EPOCH_SEAL && ordinarySealCustody == null && installationManifestCustody == null && testRunPurgeCustody == null)
         custody.requireAttempt(this)
         ordinarySealCustody = custody
     }
 
     internal fun bindInstallationManifestCustody(custody: TestInstallationManifestCustodyV1) {
-        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.INSTALLATION_MANIFEST && installationManifestCustody == null && ordinarySealCustody == null)
+        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.INSTALLATION_MANIFEST && installationManifestCustody == null && ordinarySealCustody == null && testRunPurgeCustody == null)
         custody.requireAttempt(this)
         installationManifestCustody = custody
+    }
+
+    internal fun bindTestRunPurgeCustody(custody: TestRunPurgeCustodyV1) {
+        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.TEST_RUN_PURGE && testRunPurgeCustody == null && ordinarySealCustody == null && installationManifestCustody == null)
+        custody.requireAttempt(this)
+        testRunPurgeCustody = custody
     }
 
     /** The fixed SDK adapter uses this same checked clock; even a rejected call cannot hide a backward/expired sample. */
@@ -52,6 +60,7 @@ internal class TestTerminalAttemptV1 internal constructor(
     internal fun providerNanoTime(): Long = testTerminalCodecBoundary {
         ordinarySealCustody?.requireAttempt(this)
         installationManifestCustody?.requireAttempt(this)
+        testRunPurgeCustody?.requireAttempt(this)
         checkRequest(1)
         val current = nanoTime()
         remainingAt(current, 1)
@@ -62,6 +71,7 @@ internal class TestTerminalAttemptV1 internal constructor(
     internal fun remainingProviderMillis(ceilingMillis: Int): Int {
         ordinarySealCustody?.requireAttempt(this)
         installationManifestCustody?.requireAttempt(this)
+        testRunPurgeCustody?.requireAttempt(this)
         return remainingMillis(ceilingMillis)
     }
 

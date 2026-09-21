@@ -14,6 +14,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableBindin
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableRowV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableStateV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalObjectRefV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalManifestSummaryV1
 import me.manga.kira.backend.security.TestTerminalAttemptV1
 import me.manga.kira.backend.security.TestTerminalCodecKindV1
 import me.manga.kira.backend.security.TestTerminalCodecV1
@@ -32,7 +33,8 @@ import java.util.concurrent.atomic.AtomicReference
  * One finite same-process child of an actually successful all-chunks PREPARE. No enum, row,
  * supplied reference list or bare registration admits it. Each paid winner is reloaded under a
  * fresh fence, restored connection-free, frozen/released, authenticated, disposed, then VERIFIED.
- * No purge, final seal, terminal catalog, APPLIED, capacity transfer or run-progress write exists.
+ * No final seal, terminal catalog, APPLIED, capacity transfer or run-progress write exists here.
+ * Only the actual completed original, with its genuine chunk fold, admits the separate purge child.
  */
 internal class TestRunInstallationManifestPublicationV1 private constructor(internal val preparation: TestRunInstallationManifestV1) {
     internal val drain = preparation.drain
@@ -71,6 +73,8 @@ internal class TestRunInstallationManifestPublicationV1 private constructor(inte
     private val publications = ArrayList<TestInstallationManifestPublicationRowsV1.Publication>(4)
     // Scalar, genuinely authenticated exact versions only. Never retain plaintext across chunks.
     private val references = ArrayList<TestInstallationManifestPublicationRowsV1.Verified>()
+    private var completedSummary: TestTerminalManifestSummaryV1? = null
+    private var purge: TestRunPurgePublicationV1? = null
     internal var step = TestInstallationManifestPublicationStepV1.CAPTURE
         private set
     internal var leaseToken = 0L
@@ -93,6 +97,7 @@ internal class TestRunInstallationManifestPublicationV1 private constructor(inte
         var complete = false
         try {
             capture = execute(TestInstallationManifestPublicationStepV1.CAPTURE)
+            val chunks = capturedSource().startChunks(epoch)
             repeat(capturedSource().count) { index ->
                 chunkIndex = index
                 codecAttempt = codec.startAttempt(TestTerminalCodecKindV1.INSTALLATION_MANIFEST, budget)
@@ -118,7 +123,12 @@ internal class TestRunInstallationManifestPublicationV1 private constructor(inte
                 checkNotNull(proof).requireOriginal(this)
                 val verified = execute(TestInstallationManifestPublicationStepV1.VERIFY)
                 requireManifest(references.size == index && index < 4096)
-                references.add(checkNotNull(verified.publication).verifiedFacts())
+                val reference = checkNotNull(verified.publication).verifiedFacts()
+                val canonical = content().canonicalBytes()
+                try {
+                    chunks.add(TestTerminalJsonV1(routing.journalConfiguration).installationManifest(canonical), reference.objectRef)
+                } finally { canonical.fill(0) }
+                references.add(reference)
                 owner.requireRetired(this)
                 custody = null
                 clearChunk()
@@ -126,6 +136,7 @@ internal class TestRunInstallationManifestPublicationV1 private constructor(inte
             execute(TestInstallationManifestPublicationStepV1.COMPLETE)
             requireRunning()
             requireConnectionFree()
+            completedSummary = chunks.finish()
             complete = true
         } catch (problem: Throwable) { observeFailure(problem) }
         finally {
@@ -223,12 +234,31 @@ internal class TestRunInstallationManifestPublicationV1 private constructor(inte
         try { requireManifest(MessageDigest.isEqual(a, b)) } finally { a.fill(0); b.fill(0) }
     }
 
-    /** Future purge code must consume this completed original, not adopt caller-supplied object refs. */
-    internal fun authenticatedChunk(index: Int): TestTerminalObjectRefV1 {
-        requireConnectionFree(); preparation.requirePublicationPredecessor(); throwIfSignalled()
+    internal fun requirePurgePredecessor() {
+        preparation.requirePublicationPredecessor(); throwIfSignalled()
         requireManifest(caller === Thread.currentThread() && started && finished && published && !cleanupUncertain && phase == null &&
-            !phaseEntered && custody == null && references.size == capturedSource().count)
+            !phaseEntered && custody == null && references.size == capturedSource().count && completedSummary != null)
+    }
+    internal fun beginPurgePublication(): TestRunPurgePublicationV1 = TestRunPurgePublicationV1.begin(this)
+
+    internal fun retainPurge(candidate: TestRunPurgePublicationV1) {
+        requireConnectionFree(); requirePurgePredecessor()
+        requireManifest(candidate.manifest === this)
+        purge?.requireRetiredForRetry(this)
+        purge = candidate
+    }
+    internal fun authenticatedSummary(): TestTerminalManifestSummaryV1 {
+        requirePurgePredecessor()
+        return checkNotNull(completedSummary)
+    }
+    /** Exact successful original; source summaries or a terminal result enum cannot admit a purge. */
+    internal fun authenticatedChunk(index: Int): TestTerminalObjectRefV1 {
+        requirePurgePredecessor()
         return references[index].objectRef
+    }
+    internal fun authenticatedFacts(index: Int): TestInstallationManifestPublicationRowsV1.Verified {
+        requirePurgePredecessor()
+        return references[index]
     }
     internal fun completedChunkForRecheck(index: Int): TestInstallationManifestPublicationRowsV1.Verified {
         requireRunning(); requireManifest(step === TestInstallationManifestPublicationStepV1.COMPLETE && references.size == capturedSource().count)
@@ -245,6 +275,7 @@ internal class TestRunInstallationManifestPublicationV1 private constructor(inte
         }
         requireManifest(!phaseEntered)
         custody?.requireRetired(this)
+        purge?.requireRetiredForRetry(this)
     }
     internal fun retainLease(operation: TestInstallationManifestPublicationOperationV1, token: Long) {
         requireRunning(); requireManifest(operation.original === this && step === TestInstallationManifestPublicationStepV1.CAPTURE && leaseToken == 0L && token > preparation.leaseToken)
@@ -310,7 +341,7 @@ internal class TestRunInstallationManifestPublicationV1 private constructor(inte
         }
     }
     internal fun throwIfSignalled() { failure.get()?.let { if (it is InterruptedException) Thread.currentThread().interrupt(); throw it } }
-    override fun toString(): String = "TestRunInstallationManifestPublicationV1(actual-preparation-child,no-purge,redacted)"
+    override fun toString(): String = "TestRunInstallationManifestPublicationV1(actual-preparation-child,redacted)"
     companion object {
         internal fun begin(preparation: TestRunInstallationManifestV1): TestRunInstallationManifestPublicationV1 {
             requireConnectionFree(); preparation.requirePublicationPredecessor()

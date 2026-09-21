@@ -24,6 +24,7 @@ import me.manga.kira.backend.security.aws.AwsEpochSealStsBinding
 import me.manga.kira.backend.security.aws.AwsEpochSealStsLimits
 import me.manga.kira.backend.security.aws.AwsTestOrdinarySealStsV1
 import me.manga.kira.backend.security.aws.AwsTestInstallationManifestStsV1
+import me.manga.kira.backend.security.aws.AwsTestRunPurgeStsV1
 import me.manga.kira.backend.security.aws.journalKmsUrlConnectionClient
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
@@ -195,6 +196,13 @@ internal class VersionBoundTestOrdinarySealV1 private constructor(
         custody.requireAcquisition(this)
         requireRetained(routing, lanes)
         return AwsTestInstallationManifestStsV1.coldBudgeted(routing, checkNotNull(material.get()), binding, limits, sts, kms, s3, nanoTime, ::sampleUtc)
+    }
+
+    internal fun construct(custody: TestRunPurgeCustodyV1): AwsTestRunPurgeStsV1 {
+        requireConnectionFree()
+        custody.requireAcquisition(this)
+        requireRetained(routing, lanes)
+        return AwsTestRunPurgeStsV1.coldBudgeted(routing, checkNotNull(material.get()), binding, limits, sts, kms, s3, nanoTime, ::sampleUtc)
     }
 
     @Synchronized internal fun sampleUtc(): Instant {

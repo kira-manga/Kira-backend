@@ -1,6 +1,6 @@
 package me.manga.kira.backend.complaint.infrastructure
 
-/** Fixed one-target TEST SQL. Caller values never select a relation, lock order or statement grammar. */
+/** Fixed closed Single/Batch TEST SQL. Caller values never select a relation, lock order or statement grammar. */
 internal object AdminDeletePersistenceSql {
     private val ACTOR = """
             WITH supplied AS (
@@ -22,6 +22,8 @@ internal object AdminDeletePersistenceSql {
     internal val RECEIPT_COLUMNS = """
         r.actor_id, r.idempotency_key, r.operation, r.data_scope_id, r.test_only, r.state,
         CASE WHEN cardinality(r.target_ids) = 1 THEN r.target_ids[1] END AS target_id,
+        CASE WHEN complaint_uuid_array_valid(r.target_ids, 1, 50) THEN r.target_ids END AS target_ids,
+        CASE WHEN complaint_uuid_array_valid(r.ack_ids, 1, 50) THEN r.ack_ids END AS ack_ids,
         CASE WHEN octet_length(r.fingerprint) = 32 THEN r.fingerprint END AS fingerprint,
         r.outcome, r.response_status, r.consumed_grant_id, r.completed_at, r.expires_at, r.authorized_at,
         CASE WHEN octet_length(r.publication_ref) <= 128 THEN r.publication_ref END AS publication_ref,
@@ -33,22 +35,26 @@ internal object AdminDeletePersistenceSql {
         (r.state <> 'COMPLETED' OR r.expires_at > clock_timestamp()) AS comparable,
         (r.state = 'COMPLETED' AND r.expires_at > clock_timestamp()) AS visible,
         COALESCE(complaint_finite_times(r.created_at, r.authorized_at, r.completed_at, r.expires_at)
-            AND r.ack_ids IS NULL AND r.ack_versions IS NULL AND r.response_etag IS NULL
+            AND ((r.operation = 'ADMIN_DELETE' AND complaint_uuid_array_valid(r.target_ids, 1, 1))
+                OR (r.operation = 'ADMIN_BATCH_DELETE' AND complaint_uuid_array_valid(r.target_ids, 1, 50)))
+            AND r.ack_versions IS NULL AND r.response_etag IS NULL
             AND r.response_location IS NULL AND (r.consumed_grant_id IS NULL OR complaint_is_v4(r.consumed_grant_id)) AND (
-                (r.state = 'IN_PROGRESS' AND r.consumed_grant_id IS NULL AND r.outcome IS NULL AND r.response_status IS NULL AND r.problem_code IS NULL
+                (r.state = 'IN_PROGRESS' AND r.ack_ids IS NULL AND r.consumed_grant_id IS NULL AND r.outcome IS NULL AND r.response_status IS NULL AND r.problem_code IS NULL
                     AND r.publication_ref IS NULL AND r.authorized_at IS NULL AND r.completed_at IS NULL AND r.expires_at IS NULL
                     AND r.external_event_id IS NULL AND r.external_epoch IS NULL AND r.external_object_version IS NULL AND r.external_ciphertext_hash IS NULL)
-                OR (r.state = 'AUTHORIZED_DELETE' AND r.consumed_grant_id IS NOT NULL AND r.outcome IS NULL AND r.response_status IS NULL AND r.problem_code IS NULL
+                OR (r.state = 'AUTHORIZED_DELETE' AND r.ack_ids IS NULL AND r.consumed_grant_id IS NOT NULL AND r.outcome IS NULL AND r.response_status IS NULL AND r.problem_code IS NULL
                     AND r.publication_ref IS NOT NULL AND octet_length(r.publication_ref) <= 128 AND r.authorized_at IS NOT NULL
                     AND r.completed_at IS NULL AND r.expires_at IS NULL AND r.external_event_id IS NULL AND r.external_epoch IS NULL
                     AND r.external_object_version IS NULL AND r.external_ciphertext_hash IS NULL)
                 OR (r.state = 'COMPLETED' AND r.completed_at IS NOT NULL AND r.expires_at = r.completed_at + interval '192 hours' AND (
-                    (r.outcome = 'REJECTED' AND r.publication_ref IS NULL AND r.authorized_at IS NULL
+                    (r.outcome = 'REJECTED' AND r.ack_ids IS NULL AND r.publication_ref IS NULL AND r.authorized_at IS NULL
                         AND r.external_event_id IS NULL AND r.external_epoch IS NULL AND r.external_object_version IS NULL AND r.external_ciphertext_hash IS NULL
                         AND ((r.problem_code = 'COMPLAINT_NOT_FOUND' AND r.response_status = 404)
                             OR (r.problem_code = 'COMPLAINT_DELETION_PENDING' AND r.response_status = 409)
                             OR (r.problem_code = 'PRECONDITION_FAILED' AND r.response_status = 412)))
-                    OR (r.outcome = 'APPLIED' AND r.consumed_grant_id IS NOT NULL AND r.response_status = 204 AND r.problem_code IS NULL
+                    OR (r.outcome = 'APPLIED' AND r.consumed_grant_id IS NOT NULL AND r.problem_code IS NULL
+                        AND ((r.operation = 'ADMIN_DELETE' AND r.response_status = 204 AND r.ack_ids IS NULL)
+                            OR (r.operation = 'ADMIN_BATCH_DELETE' AND r.response_status = 200 AND r.ack_ids = r.target_ids))
                         AND r.publication_ref = r.external_event_id AND r.authorized_at IS NOT NULL AND r.external_epoch > 0
                         AND complaint_opaque_valid(r.external_object_version, 1024) AND r.external_object_version <> 'null'
                         AND complaint_digest_valid(r.external_ciphertext_hash))
@@ -63,7 +69,7 @@ internal object AdminDeletePersistenceSql {
     val INSERT_CLAIM = """
         INSERT INTO complaint_idempotency_receipts
             (actor_kind, actor_id, idempotency_key, operation, fingerprint, target_ids, data_scope_id, test_only, state, created_at)
-        VALUES ('ADMIN', ?, ?, 'ADMIN_DELETE', ?, ARRAY[?::uuid], ?, true, 'IN_PROGRESS', clock_timestamp())
+        VALUES ('ADMIN', ?, ?, ?, ?, ?::uuid[], ?, true, 'IN_PROGRESS', clock_timestamp())
         ON CONFLICT (actor_kind, actor_id, idempotency_key) DO NOTHING
     """.trimIndent()
     val REJECT_RECEIPT = """
@@ -71,20 +77,21 @@ internal object AdminDeletePersistenceSql {
         SET state = 'COMPLETED', outcome = 'REJECTED', response_status = ?, problem_code = ?, consumed_grant_id = ?, completed_at = stamp.at,
             expires_at = stamp.at + interval '192 hours'
         FROM stamp WHERE actor_kind = 'ADMIN' AND actor_id = ? AND idempotency_key = ? AND data_scope_id = ? AND test_only
-            AND operation = 'ADMIN_DELETE' AND state = 'IN_PROGRESS' AND fingerprint = ? AND target_ids = ARRAY[?::uuid]
+            AND operation = ? AND state = 'IN_PROGRESS' AND fingerprint = ? AND target_ids = ?::uuid[]
     """.trimIndent()
     val AUTHORIZE_RECEIPT = """
         UPDATE complaint_idempotency_receipts SET state = 'AUTHORIZED_DELETE', publication_ref = ?, authorized_at = ?, consumed_grant_id = ?
         WHERE actor_kind = 'ADMIN' AND actor_id = ? AND idempotency_key = ? AND data_scope_id = ? AND test_only
-            AND operation = 'ADMIN_DELETE' AND state = 'IN_PROGRESS' AND fingerprint = ? AND target_ids = ARRAY[?::uuid]
+            AND operation = ? AND state = 'IN_PROGRESS' AND fingerprint = ? AND target_ids = ?::uuid[]
     """.trimIndent()
     val COMPLETE_RECEIPT = """
         WITH stamp AS (SELECT clock_timestamp() AS at) UPDATE complaint_idempotency_receipts
-        SET state = 'COMPLETED', outcome = 'APPLIED', response_status = 204, external_event_id = publication_ref,
+        SET state = 'COMPLETED', outcome = 'APPLIED', response_status = CASE operation WHEN 'ADMIN_DELETE' THEN 204 ELSE 200 END,
+            ack_ids = CASE operation WHEN 'ADMIN_BATCH_DELETE' THEN target_ids END, external_event_id = publication_ref,
             external_epoch = ?, external_object_version = ?, external_ciphertext_hash = ?, completed_at = stamp.at,
             expires_at = stamp.at + interval '192 hours'
         FROM stamp WHERE actor_kind = 'ADMIN' AND actor_id = ? AND idempotency_key = ? AND data_scope_id = ? AND test_only
-            AND operation = 'ADMIN_DELETE' AND state = 'AUTHORIZED_DELETE' AND publication_ref = ? AND fingerprint = ? AND target_ids = ARRAY[?::uuid]
+            AND operation = ? AND state = 'AUTHORIZED_DELETE' AND publication_ref = ? AND fingerprint = ? AND target_ids = ?::uuid[]
     """.trimIndent()
     const val LOCK_INSTALLATION = "SELECT data_scope_id, test_only, state FROM complaint_installation_ids WHERE id = ? FOR UPDATE"
     val LOCK_CREDENTIAL = """
@@ -115,7 +122,7 @@ internal object AdminDeletePersistenceSql {
         INSERT INTO complaint_journal_publications
             (event_id, data_scope_id, test_only, writer_generation, journal_epoch, event_kind, target_count,
                 routing_key_id, object_key, canonicalizer, event_bytes, semantic_hash, state, created_at)
-        VALUES (?, ?, true, ?, ?, 'ADMIN_DELETE', 1, ?, ?, 'kcj-1', ?, ?, 'PREPARED', clock_timestamp()) RETURNING created_at
+        VALUES (?, ?, true, ?, ?, ?, ?, ?, ?, 'kcj-1', ?, ?, 'PREPARED', clock_timestamp()) RETURNING created_at
     """.trimIndent()
     internal val PUBLICATION_COLUMNS = """
         CASE WHEN octet_length(event_id) = 43 THEN event_id END AS event_id,
@@ -142,12 +149,12 @@ internal object AdminDeletePersistenceSql {
     val RECORD_VERIFIED = """
         UPDATE complaint_journal_publications SET state = 'VERIFIED', object_version = ?, ciphertext_hash = ?, object_created_at = ?,
             retain_until = ?, verified_at = ?, verification_bytes = ?, verification_hash = ?
-        WHERE event_id = ? AND data_scope_id = ? AND test_only AND event_kind = 'ADMIN_DELETE' AND state = 'PREPARED'
+        WHERE event_id = ? AND data_scope_id = ? AND test_only AND event_kind IN ('ADMIN_DELETE', 'ADMIN_BATCH_DELETE') AND state = 'PREPARED'
             AND semantic_hash = ? RETURNING $PUBLICATION_COLUMNS
     """.trimIndent()
     val MARK_APPLIED = """
         UPDATE complaint_journal_publications SET state = 'APPLIED', applied_at = clock_timestamp()
-        WHERE event_id = ? AND data_scope_id = ? AND test_only AND event_kind = 'ADMIN_DELETE' AND state = 'VERIFIED'
+        WHERE event_id = ? AND data_scope_id = ? AND test_only AND event_kind IN ('ADMIN_DELETE', 'ADMIN_BATCH_DELETE') AND state = 'VERIFIED'
             AND object_version = ? AND ciphertext_hash = ? AND verification_hash = ? AND retain_until > clock_timestamp()
     """.trimIndent()
     val INSERT_RECOVERY = """
@@ -185,7 +192,7 @@ internal object AdminDeletePersistenceSql {
         INSERT INTO complaint_deletion_journal_applied
             (object_key, object_version, event_id, ciphertext_hash, writer_generation, journal_epoch, event_kind, target_count,
                 data_scope_id, test_only, applied_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'ADMIN_DELETE', 1, ?, true, clock_timestamp())
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, true, clock_timestamp())
     """.trimIndent()
     val DELETE_CONTENT = "DELETE FROM complaints WHERE id = ? AND data_scope_id = ? AND test_only AND owner_id = ? AND ownership = 'INSTALLATION' AND kind IN ('REPORT', 'REPLY') AND version = ?"
     val DELETE_RESOURCE = "UPDATE complaint_resource_ids SET state = 'DELETED', deleted_at = clock_timestamp() WHERE id = ? AND data_scope_id = ? AND test_only AND state IN ('LIVE', 'DELETION_PENDING')"

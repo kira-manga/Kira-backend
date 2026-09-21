@@ -40,6 +40,8 @@ import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.adminDeleteTestIngress
 import me.manga.kira.backend.security.adminDeleteTestJournal
 import me.manga.kira.backend.security.adminDeleteTestRequest
+import me.manga.kira.backend.security.adminBatchDeleteTestIngress
+import me.manga.kira.backend.security.adminBatchDeleteTestJournal
 import me.manga.kira.backend.security.ownerCreateTestCapacityPolicy
 import me.manga.kira.backend.security.ownerDeleteTestRouting
 import me.manga.kira.backend.user.domain.Role
@@ -82,13 +84,14 @@ internal fun withAdminDelete(database: PgLifecycleDatabaseFixture, test: (Compla
 internal class ComplaintAdminDeleteFixture(
     val existing: OwnerDeleteAllAuthorizationFixture,
     val run: OrdinaryComplaintTestInstallationFixture,
+    batchEnabled: Boolean = false,
 ) : AutoCloseable {
     val base = existing.base
     val observer = base.observer
     val scope = run.scope
     val policy = ownerCreateTestCapacityPolicy()
-    val ingress = adminDeleteTestIngress(policy)
-    val routing = ownerDeleteTestRouting(adminDeleteTestJournal(scope))
+    val ingress = if (batchEnabled) adminBatchDeleteTestIngress(policy, scope) else adminDeleteTestIngress(policy)
+    val routing = ownerDeleteTestRouting(if (batchEnabled) adminBatchDeleteTestJournal(scope) else adminDeleteTestJournal(scope))
     val lanes = JournalPublicationLanesV1(existing.routing.journalConfiguration)
     val ordinaryJdbc = AdminDeleteFixtureJdbc(this, base.ordinary.pool, deletion = false)
     val jdbc = AdminDeleteFixtureJdbc(this, existing.pool, deletion = true)
@@ -96,6 +99,7 @@ internal class ComplaintAdminDeleteFixture(
     val desired = graph.desiredSettings()
     val observations = CopyOnWriteArrayList<Pair<String, StepUpPhaseObservation>>()
     val statements = CopyOnWriteArrayList<String>()
+    val sqlCalls = CopyOnWriteArrayList<Pair<String, List<Any?>>>()
     private val deletionObservations = ConcurrentHashMap<PersistencePhaseContext, StepUpPhaseObservation>()
     var beforeSql: (String) -> Unit = {}
     var afterSql: (String) -> Unit = {}
@@ -120,7 +124,7 @@ internal class ComplaintAdminDeleteFixture(
             after("AUDIT", deletion = true)
         }
     }
-    private val audit = AuditService(counted, CurrentUser(), Clock.fixed(base.ordinary.cutoff, ZoneOffset.UTC))
+    val audit = AuditService(counted, CurrentUser(), Clock.fixed(base.ordinary.cutoff, ZoneOffset.UTC))
     val store = JdbcComplaintAdminDeleteStore(jdbc, capacity, audit, graph, codec)
     val reads = ComplaintAdminDeleteReadPhaseExecutor(base.ordinary.ownership, JdbcComplaintAdminDeleteReceiptStore(ordinaryJdbc, graph))
     val verification = JdbcComplaintAdminDeleteVerificationStore(jdbc, graph, store)
@@ -261,7 +265,7 @@ internal class ComplaintAdminDeleteFixture(
         beforeSql = {}; afterSql = {}; assertReleased()
         try {
             existing.transaction { sql ->
-                for (table in listOf("complaint_idempotency_receipts", "complaint_recovery_capacity_reservations", "complaint_deletion_journal_retirements",
+                for (table in listOf("complaint_idempotency_receipts", "installation_deletion_receipts", "complaint_recovery_capacity_reservations", "complaint_deletion_journal_retirements",
                     "complaint_deletion_journal_applied", "complaint_journal_publications", "complaint_journal_control")) {
                     sql.update("DELETE FROM $table WHERE data_scope_id = ?", scope.id)
                 }
@@ -284,11 +288,12 @@ internal class AdminDeleteFixtureAttempt(val raw: ComplaintAdminDeleteInput, val
 internal class AdminDeleteFixtureJdbc(private val fixture: ComplaintAdminDeleteFixture, source: DataSource, private val deletion: Boolean) : JdbcTemplate(source) {
     init { exceptionTranslator = SQLExceptionSubclassTranslator() }
     override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>): List<T> = around(sql) { super.query(sql, rowMapper) }
-    override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>, vararg args: Any?): List<T> = around(sql) { super.query(sql, rowMapper, *args) }
-    override fun <T : Any?> queryForObject(sql: String, rowMapper: RowMapper<T>, vararg args: Any?): T? = around(sql) { super.queryForObject(sql, rowMapper, *args) }
+    override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>, vararg args: Any?): List<T> = around(sql, args) { super.query(sql, rowMapper, *args) }
+    override fun <T : Any?> queryForObject(sql: String, rowMapper: RowMapper<T>, vararg args: Any?): T? = around(sql, args) { super.queryForObject(sql, rowMapper, *args) }
     override fun <T : Any?> queryForObject(sql: String, requiredType: Class<T>, vararg args: Any?): T? = queryForObject(sql, getSingleColumnRowMapper(requiredType), *args)
-    override fun update(sql: String, vararg args: Any?): Int = around(sql) { super.update(sql, *args) }
-    private fun <T> around(sql: String, operation: () -> T): T {
+    override fun update(sql: String, vararg args: Any?): Int = around(sql, args) { super.update(sql, *args) }
+    private fun <T> around(sql: String, args: Array<out Any?> = emptyArray(), operation: () -> T): T {
+        fixture.sqlCalls.add(sql to args.map { if (it is ByteArray) it.copyOf() else it })
         fixture.statements.add(sql); fixture.before(sql)
         return operation().also { fixture.after(sql, deletion) }
     }

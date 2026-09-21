@@ -125,7 +125,8 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
             OWNER_ERASURE_PROFILE -> !journal.adminDelete && journal.ownerDeleteAll && ordinaryDenial == null
             DRAIN_PROFILE -> !journal.adminDelete && !journal.ownerDeleteAll && ordinaryDenial != null
             OWNER_ERASURE_DRAIN_PROFILE -> !journal.adminDelete && journal.ownerDeleteAll && ordinaryDenial != null
-            ADMIN_ERASURE_DRAIN_PROFILE -> journal.registeredAdminDelete && ordinaryDenial != null
+            ADMIN_ERASURE_DRAIN_PROFILE -> journal.registeredAdminDelete && !journal.adminBatchDelete && ordinaryDenial != null
+            ADMIN_BATCH_ERASURE_DRAIN_PROFILE -> journal.registeredAdminBatchDelete && ordinaryDenial != null
             else -> false
         })
         valid(database.runtimeUsername != VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME &&
@@ -208,6 +209,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         const val DRAIN_PROFILE = "PRE_CUTOVER_TEST_ORDINARY_DRAIN_V1"
         const val OWNER_ERASURE_DRAIN_PROFILE = "PRE_CUTOVER_TEST_OWNER_ERASURE_ORDINARY_DRAIN_V1"
         const val ADMIN_ERASURE_DRAIN_PROFILE = "PRE_CUTOVER_TEST_ADMIN_ERASURE_ORDINARY_DRAIN_V1"
+        const val ADMIN_BATCH_ERASURE_DRAIN_PROFILE = "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ORDINARY_DRAIN_V1"
 
         @Suppress("TooGenericExceptionCaught")
         internal fun fromDecoded(document: ComplaintTestDeploymentDocumentV1): ComplaintTestDeploymentInputsV1 {

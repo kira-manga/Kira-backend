@@ -11,7 +11,7 @@ import software.amazon.awssdk.http.SdkHttpClient
 import java.time.Clock
 import java.util.UUID
 
-/** One exact existing ADMIN single-delete primary. No new AUTH, pagination or family-completion claim. */
+/** One exact existing configured ADMIN Single/Batch primary. No new AUTH, pagination or family-completion claim. */
 internal object TestRunPreparedAdminDeleteV1 {
     internal class Publication(
         private val credentials: AwsSessionCredentials,

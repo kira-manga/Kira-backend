@@ -25,6 +25,31 @@ class TestInstallationManifestSourceV1Test {
     private val at = Instant.parse("2026-09-20T00:00:00Z")
 
     @Test
+    fun actualEmptyTwoPassSourceCarriesItsOwnRootIntoAOnceOnlyZeroChunkFold() {
+        val source = fold(emptyList())
+        assertEquals(0, source.count)
+        val chunks = source.startChunks(3)
+        val summary = chunks.finish()
+        assertEquals(0L, summary.installationCount)
+        assertEquals(0L, summary.retiredCount)
+        assertEquals(0L, summary.deletedCount)
+        assertEquals(0, summary.chunkCount)
+        val run = f.run
+        val installations = terminalHash(terminalFrame(listOf("kira-test-installations-v1", run.dataScopeId,
+            run.activationCatalogGeneration.toString(), run.activationCatalogSha256, run.configurationSha256,
+            run.terminalEncodingSha256, "0", "0", "0")))
+        val references = terminalHash(terminalFrame(listOf("kira-test-manifest-chunks-v1", run.dataScopeId,
+            run.activationCatalogGeneration.toString(), run.activationCatalogSha256, "0")))
+        assertEquals(installations, summary.installationsSha256)
+        assertEquals(references, summary.chunksSha256)
+        assertEquals(source.progress.installationReads().first().installationsSha256, summary.installationsSha256)
+        assertThrows<RuntimeException> { source.startChunks(3) }
+        assertThrows<RuntimeException> { chunks.finish() }
+        // A distinct completed source has its own actual builder, not a reconstruction from progress.
+        assertEquals(summary, fold(emptyList()).startChunks(3).finish())
+    }
+
+    @Test
     fun fiveHundredAndOneMixedReservationsHaveExactIndependentDescriptorsAndUnsignedBoundaries() {
         val states = listOf(InstallationIdentityState.ACTIVE, InstallationIdentityState.RECOVERY_RESERVED,
             InstallationIdentityState.RETIRED, InstallationIdentityState.DELETED)

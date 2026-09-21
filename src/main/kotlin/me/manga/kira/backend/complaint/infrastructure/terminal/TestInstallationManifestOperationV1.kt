@@ -304,7 +304,7 @@ internal class TestInstallationManifestOperationV1 private constructor(
         requireManifest(jdbc.query(TestInstallationManifestSqlV1.relation, { value, _ -> TestOrdinaryDrainRowsV1.boolean(value, "valid") }, original.scope,
             original.routing.journalConfiguration.ordinaryPrefix + "%", original.routing.journalConfiguration.sealTerminalPrefix + "%",
             original.writer, original.control.cutoff, original.epoch,
-            original.routing.journalConfiguration.ownerDeleteAll, original.routing.journalConfiguration.registeredAdminDelete).single())
+            original.routing.journalConfiguration.ownerDeleteAll, original.routing.journalConfiguration.registeredAdminDelete, original.routing.journalConfiguration.registeredAdminBatchDelete).single())
     }
     private fun requireAppliedCut() {
         TestInstallationManifestFamilyJoinV1.requireClosed(jdbc, this, run)

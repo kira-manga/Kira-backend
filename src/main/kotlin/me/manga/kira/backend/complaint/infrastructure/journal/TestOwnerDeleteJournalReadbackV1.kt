@@ -44,6 +44,7 @@ internal class TestOwnerDeleteVersionReadbackV1(
                 val decoded = when (binding.event.comparison) {
                     is me.manga.kira.backend.security.TestOwnerDeleteJournalTupleV1 -> codec.open(bucket, binding.event.route.objectKey, fetched.bytes, binding.attempt)
                     is me.manga.kira.backend.security.TestAdminDeleteJournalTupleV1 -> codec.openAdmin(bucket, binding.event.route.objectKey, fetched.bytes, binding.attempt)
+                    is me.manga.kira.backend.security.TestAdminBatchDeleteJournalTupleV1 -> codec.openAdminBatch(bucket, binding.event.route.objectKey, fetched.bytes, binding.attempt)
                 }
                 requireJournalPublication(decoded.event.belongsTo(routing) && decoded.event.route == binding.event.route, JournalPublicationFailureV1.CONFLICT)
                 val expected = binding.event.canonicalBytes()

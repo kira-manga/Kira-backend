@@ -3,8 +3,10 @@ package me.manga.kira.backend.security
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 
-/** Only the original ingress owner's private registered handoff authorizes ADMIN_DELETE. */
-internal interface ComplaintAdmittedAdminDelete
+/** Closed Admin erasure handoffs; only the original ingress owner's private registered instance authorizes work. */
+internal sealed interface ComplaintAdmittedAdminErasure
+
+internal interface ComplaintAdmittedAdminDelete : ComplaintAdmittedAdminErasure
 
 internal sealed interface ComplaintAdminDeleteAdmissionPolicy {
     data object Disabled : ComplaintAdminDeleteAdmissionPolicy

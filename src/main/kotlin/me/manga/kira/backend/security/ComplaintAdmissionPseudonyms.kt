@@ -51,6 +51,16 @@ internal object ComplaintAdmissionPseudonyms {
         ),
     )
 
+    /** One batch member; the canonical fingerprint binds the full sorted target/tag set. */
+    fun adminBatchDeleteActor(keys: List<ComplaintAdmissionKey>, actor: UUID, scope: ComplaintDataScope): List<ComplaintAdmissionBucketKey> =
+        derive(keys, listOf(domain(), ascii("ACTOR"), ascii("ADMIN"), uuid(actor), uuid(scope.id), ascii("ADMIN_BATCH_DELETE")))
+
+    fun adminBatchDeleteMember(keys: List<ComplaintAdmissionKey>, tuple: ComplaintAdminDeleteTuple): List<ComplaintAdmissionBucketKey> {
+        require(tuple.family == me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteFamily.BATCH)
+        return derive(keys, listOf(domain(), ascii("MEMBER"), ascii("ADMIN"), uuid(tuple.actor), uuid(tuple.scope.id),
+            ascii("ADMIN_BATCH_DELETE"), uuid(tuple.key), tuple.fingerprintBytes()))
+    }
+
     /** Status and closure share ONE actor+scope allowance, distinct from the existing ADMIN_EDIT bucket. */
     fun adminStatusActor(keys: List<ComplaintAdmissionKey>, actor: UUID, scope: ComplaintDataScope): List<ComplaintAdmissionBucketKey> =
         derive(keys, listOf(domain(), ascii("ACTOR"), ascii("ADMIN"), uuid(actor), uuid(scope.id), ascii("ADMIN_STATUS_CLOSURE")))

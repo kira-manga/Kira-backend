@@ -6,7 +6,6 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseF
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
-import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteTuple
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalReadbackV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationRecordV1
@@ -25,7 +24,7 @@ internal class JdbcComplaintAdminDeleteVerificationStore(
     private val authorization: JdbcComplaintAdminDeleteStore,
 ) {
     private val issuer = Any()
-    private val codec = TestOwnerDeleteVerificationCodecV1.forAdmin(graph.routing)
+    private val codec = TestOwnerDeleteVerificationCodecV1.forAdminErasure(graph.routing)
     init { authorization.requireBinding(graph, jdbc); check(graph.routing.journalConfiguration.adminDelete) }
     fun capture(readback: TestOwnerDeleteJournalReadbackV1): TestAdminDeleteVerificationInputV1 {
         requireConnectionFree()
@@ -115,24 +114,24 @@ internal class ComplaintAdminDeleteVerificationOperation private constructor(
     private fun execute() {
         retained()
         val event = observed.event
-        val tuple = event.adminTuple
-        val apiTuple = ComplaintAdminDeleteTuple(tuple.actorId, tuple.scope, tuple.operationKey, event.complaintIds().single(), tuple.fingerprintBytes())
+        val tuple = event.adminComparison
+        val apiTuple = AdminDeleteRows.tuple(event)
         val receipt = jdbc.query(AdminDeletePersistenceSql.LOCK_RECEIPT, { row, _ -> AdminDeleteRows.Receipt(row) }, tuple.actorId, tuple.operationKey).single()
         check(receipt.consumedGrantId == tuple.consumedGrantId && receipt.matches(apiTuple) && receipt.valid && receipt.state in setOf("AUTHORIZED_DELETE", "COMPLETED") && receipt.publication == event.route.eventId)
-        var publication = jdbc.query(AdminDeletePersistenceSql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteRows.Publication.adminDelete(row) }, receipt.publication).single()
-        publication.requireAdminEvent(event)
+        var publication = jdbc.query(AdminDeletePersistenceSql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteRows.Publication.adminErasure(row) }, receipt.publication).single()
+        publication.requireAdminErasureEvent(event)
         check(publication.writer == graph.writer && publication.createdAt == receipt.authorizedAt)
         phase.requireTestRunAdminDeleteVerificationRun(graph, jdbc, publication.createdAt)
         if (publication.state == "PREPARED") {
             check(receipt.state == "AUTHORIZED_DELETE")
             phase.adminDelete.checkWrite(this, jdbc)
             val record = observed.record
-            publication = jdbc.query(AdminDeletePersistenceSql.RECORD_VERIFIED, { row, _ -> OwnerDeleteRows.Publication.adminDelete(row) }, record.objectVersion,
+            publication = jdbc.query(AdminDeletePersistenceSql.RECORD_VERIFIED, { row, _ -> OwnerDeleteRows.Publication.adminErasure(row) }, record.objectVersion,
                 HexFormat.of().parseHex(record.ciphertextSha256), Timestamp.from(Instant.parse(record.objectCreatedAt)), Timestamp.from(Instant.parse(record.retainUntil)),
                 Timestamp.from(Instant.parse(record.verifiedAt)), observed.bytes, observed.hash, event.route.eventId, tuple.scope.id, HexFormat.of().parseHex(event.semanticSha256)).single()
             check(publication.verificationBytes.contentEquals(observed.bytes) && publication.verificationHash.contentEquals(observed.hash))
         }
-        publication.requireAdminEvent(event)
+        publication.requireAdminErasureEvent(event)
         val storedBytes = checkNotNull(publication.verificationBytes)
         val storedHash = checkNotNull(publication.verificationHash)
         val record = codec.parse(storedBytes, event)

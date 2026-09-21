@@ -147,6 +147,9 @@ eligibility and old-writer drain, not automatic adoption/reset. See
 
 V14 adds backend-owned complaint storage with closed, zero-capacity seeds. It does not enable
 complaint APIs or authorize a Firebase cutover; see [`docs/COMPLAINT_SCHEMA.md`](docs/COMPLAINT_SCHEMA.md).
+The unregistered TEST-only [atomic Admin batch DELETE candidate](docs/API.md#atomic-admin-complaint-batch-delete-source-candidate-not-activated)
+shares the existing deletion lifecycle and registered drain/manifest comparisons. Source-authored
+selectors are not runtime acceptance; public/LIVE activation and the full terminal join remain gated.
 
 See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, seeding data, and gotchas.
 

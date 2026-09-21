@@ -34,7 +34,8 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             put("kind", "kira-complaint-effective-test-configuration")
             put("schemaVersion", 1)
             put("canonicalizerId", "kcj-1")
-            put("profile", if (journal.registeredAdminDelete) "PRE_CUTOVER_TEST_ADMIN_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+            put("profile", if (journal.registeredAdminBatchDelete) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+                else if (journal.registeredAdminDelete) "PRE_CUTOVER_TEST_ADMIN_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (journal.ownerDeleteAll) "PRE_CUTOVER_TEST_OWNER_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else "PRE_CUTOVER_TEST_OWNER_DELETE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER")
             put("identity", identity(owner))
@@ -178,7 +179,8 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             buildJsonObject {
                 put("operations", strings(listOf("OWNER_CREATE", "OWNER_REPLY", "OWNER_EDIT", "OWNER_DELETE") +
                     (if (owner.journalConfiguration.ownerDeleteAll) listOf("OWNER_DELETE_ALL") else emptyList()) +
-                    (if (owner.journalConfiguration.registeredAdminDelete) listOf("ADMIN_DELETE") else emptyList())))
+                    (if (owner.journalConfiguration.registeredAdminDelete) listOf("ADMIN_DELETE") else emptyList()) +
+                    (if (owner.journalConfiguration.registeredAdminBatchDelete) listOf("ADMIN_BATCH_DELETE") else emptyList())))
                 put("memberLimit", owner.ownerCreatePolicy.memberLimit)
                 put("pruneBatch", owner.ownerCreatePolicy.pruneBatch)
                 put("retentionNanos", ComplaintAdmissionPolicy.PREVIOUS_RETENTION_NANOS)
@@ -220,6 +222,16 @@ internal object ComplaintEffectiveTestConfigurationV1 {
                 ?: error(INVALID_TEST_PROCESS_CONFIGURATION)
             put("adminDeleteEnabled", true)
             put("adminDeleteActorPerHour", admin.perHour)
+        }
+        if (owner.journalConfiguration.registeredAdminBatchDelete) {
+            val batch = owner.adminBatchDeletePolicy as? me.manga.kira.backend.security.ComplaintAdminBatchDeleteAdmissionPolicy.Bounded
+                ?: error(INVALID_TEST_PROCESS_CONFIGURATION)
+            put("adminBatchDeleteEnabled", true)
+            put("adminBatchDeleteActorPerHour", batch.perHour)
+            put("adminBatchDeleteMaximumTargets", 50)
+            put("adminBatchDeleteMaximumOwners", 50)
+            put("adminBatchDeleteMaximumFamilyVersions", 4)
+            put("adminBatchDeleteRecoveryAccounting", "OWNER_SET+TARGET_SET+REMOVALS+EVENT_SUMMARY_PER_VERSION")
         }
     }
 

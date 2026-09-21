@@ -24,7 +24,7 @@ import me.manga.kira.backend.complaint.infrastructure.TestAdminDeleteAuthorizati
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteLocalGraphV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestAdminDeleteJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalReadbackV1
-import me.manga.kira.backend.security.ComplaintAdmittedAdminDelete
+import me.manga.kira.backend.security.ComplaintAdmittedAdminErasure
 
 /** Fixed existing-deletion-holder phases only; all results follow real commit AND original physical release. */
 internal class ComplaintAdminDeletePhaseExecutor(
@@ -37,7 +37,7 @@ internal class ComplaintAdminDeletePhaseExecutor(
     fun requirePublisher(publisher: TestAdminDeleteJournalPublisherFactoryV1) = publisher.requireBinding(store)
     fun requireGraph(graph: TestOwnerDeleteLocalGraphV1, selectedReads: ComplaintAdminDeleteReadPhaseExecutor) { check(store.graph === graph && reads === selectedReads); graph.requireUnchanged() }
     @Suppress("TooGenericExceptionCaught")
-    fun authorize(identity: ComplaintAdminReadIdentity, candidate: ComplaintAdminDeleteCandidate, preflight: ComplaintAdminDeleteObservation, proof: String?, admitted: ComplaintAdmittedAdminDelete): TestAdminDeleteAuthorizationV1 {
+    fun authorize(identity: ComplaintAdminReadIdentity, candidate: ComplaintAdminDeleteCandidate, preflight: ComplaintAdminDeleteObservation, proof: String?, admitted: ComplaintAdmittedAdminErasure): TestAdminDeleteAuthorizationV1 {
         reads.requirePreflight(preflight, identity, candidate.tuple)
         check(!preflight.authorized)
         val phase = ownership.enterComplaintAdminDeleteAuthorize(admitted, candidate.tuple)

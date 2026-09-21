@@ -16,8 +16,12 @@ internal class TestOwnerDeleteJournalConfigurationV1 private constructor(
     val ownerDeleteAll: Boolean,
     val adminDelete: Boolean = false,
     val registeredAdminDelete: Boolean = false,
+    val adminBatchDelete: Boolean = false,
 ) {
+    val registeredAdminBatchDelete: Boolean get() = registeredAdminDelete && adminBatchDelete
     val profile: String = when {
+        registeredAdminBatchDelete -> "REGISTERED_TEST_ADMIN_BATCH_ERASURE"
+        adminBatchDelete -> "LOWER_TEST_ADMIN_BATCH_ERASURE"
         registeredAdminDelete -> "REGISTERED_TEST_ADMIN_ERASURE"
         adminDelete -> "LOWER_TEST_ADMIN_ERASURE"
         ownerDeleteAll -> "REGISTERED_TEST_OWNER_ERASURE"
@@ -32,7 +36,8 @@ internal class TestOwnerDeleteJournalConfigurationV1 private constructor(
         stored.routing.activeKeyId,
         stored.routing.keys.map { TestOwnerDeleteRoutingKeyDocumentV1(it.keyId, it.secret.resourceArn, it.secret.versionId) },
         stored.routing.retentionSeconds, stored.routing.minimumRotationIntervalSeconds, stored.encryption, stored.recovery, stored.limits,
-        (if (adminDelete) "KJEV-1/OWNER_DELETE+OWNER_DELETE_ALL+ADMIN_DELETE/INSTALLATION+ADMIN"
+        (if (adminBatchDelete) "KJEV-1/OWNER_DELETE+OWNER_DELETE_ALL+ADMIN_DELETE+ADMIN_BATCH_DELETE/INSTALLATION+ADMIN"
+            else if (adminDelete) "KJEV-1/OWNER_DELETE+OWNER_DELETE_ALL+ADMIN_DELETE/INSTALLATION+ADMIN"
             else (if (ownerDeleteAll) "KJEV-1/OWNER_DELETE+OWNER_DELETE_ALL" else "KJEV-1/OWNER_DELETE") + "/INSTALLATION") +
             "/TEST/LP32BE-UTF8/HMAC-SHA-256/AES-256-GCM/FRESH_PER_OBJECT_KMS_WRAPPED",
     )
@@ -71,6 +76,7 @@ internal class TestOwnerDeleteJournalConfigurationV1 private constructor(
                 "REGISTERED_TEST_OWNER_DELETE" -> of(declaration)
                 "REGISTERED_TEST_OWNER_ERASURE" -> of(declaration, ownerDeleteAll = true)
                 "REGISTERED_TEST_ADMIN_ERASURE" -> registeredAdminErasure(declaration)
+                "REGISTERED_TEST_ADMIN_BATCH_ERASURE" -> registeredAdminBatchErasure(declaration)
                 else -> throw IllegalArgumentException(INVALID)
             }
             val bytes = CanonicalJson.canonicalize(TestOwnerDeleteJournalDocumentV1.serializer(), snapshot).toByteArray(Charsets.UTF_8)
@@ -86,6 +92,13 @@ internal class TestOwnerDeleteJournalConfigurationV1 private constructor(
         /** Distinct registered TEST declaration; retains no run/request/provider authority. */
         fun registeredAdminErasure(input: TestOwnerDeleteJournalDeclarationV1): TestOwnerDeleteJournalConfigurationV1 =
             TestOwnerDeleteJournalConfigurationV1(of(input, ownerDeleteAll = true).declaration(), true, true, true)
+
+        /** Explicit new profiles; never relabel a retained single-target declaration. */
+        fun lowerAdminBatchErasure(input: TestOwnerDeleteJournalDeclarationV1): TestOwnerDeleteJournalConfigurationV1 =
+            TestOwnerDeleteJournalConfigurationV1(of(input, ownerDeleteAll = true).declaration(), true, true, false, true)
+
+        fun registeredAdminBatchErasure(input: TestOwnerDeleteJournalDeclarationV1): TestOwnerDeleteJournalConfigurationV1 =
+            TestOwnerDeleteJournalConfigurationV1(of(input, ownerDeleteAll = true).declaration(), true, true, true, true)
 
         fun of(input: TestOwnerDeleteJournalDeclarationV1, ownerDeleteAll: Boolean = false): TestOwnerDeleteJournalConfigurationV1 {
             require(input.scope.testOnly && OfflineBootstrapGrammar.uuidV4(input.scope.id.toString())) { INVALID }

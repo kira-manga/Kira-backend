@@ -74,7 +74,11 @@ internal object OwnerDeleteRows {
         val verificationHash: ByteArray? = row.getBytes("verification_hash")
         init {
             check(bool(row, "test_only") && bool(row, "valid_shape") && row.getString("event_kind") == kind.name)
-            check(if (kind === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) targetCount in 0..100 else targetCount == 1)
+            check(when (kind) {
+                ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> targetCount in 0..100
+                ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE -> targetCount in 1..50
+                else -> targetCount == 1
+            })
             check(row.getString("canonicalizer") == "kcj-1")
             check(state in setOf("PREPARED", "VERIFIED", "APPLIED"))
         }
@@ -91,6 +95,13 @@ internal object OwnerDeleteRows {
             check(routingKey == event.route.routingKeyId && objectKey == event.route.objectKey)
             check(bytes.contentEquals(event.canonicalBytes()) && semantic.contentEquals(HexFormat.of().parseHex(event.semanticSha256)))
         }
+        fun requireAdminErasureEvent(event: TestOwnerDeleteJournalEventV1) {
+            val tuple = event.adminComparison
+            check(kind in setOf(ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) && tuple.eventKind === kind)
+            check(targetCount == event.complaintIds().size && eventId == event.route.eventId && scope == tuple.scope.id && epoch == tuple.epoch)
+            check(routingKey == event.route.routingKeyId && objectKey == event.route.objectKey)
+            check(bytes.contentEquals(event.canonicalBytes()) && semantic.contentEquals(HexFormat.of().parseHex(event.semanticSha256)))
+        }
         fun requireEvent(event: OwnerDeleteAllJournalEventV1) {
             check(kind === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL && event.tuple.eventKind === kind && event.tuple.scope.testOnly)
             check(eventId == event.route.eventId && scope == event.tuple.scope.id && epoch == event.tuple.epoch && targetCount == event.complaintIds().size)
@@ -100,11 +111,16 @@ internal object OwnerDeleteRows {
         companion object {
             /** Comparison reader only. The ordinary per-report constructor and requireEvent remain one-family. */
             fun adminDelete(row: ResultSet): Publication = Publication(row, ComplaintJournalDeletionKindV1.ADMIN_DELETE)
+            fun adminErasure(row: ResultSet): Publication = when (row.getString("event_kind")) {
+                "ADMIN_DELETE" -> adminDelete(row)
+                "ADMIN_BATCH_DELETE" -> Publication(row, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE)
+                else -> error("Stored Admin deletion family refused")
+            }
             fun ownerDeleteAll(row: ResultSet): Publication = Publication(row, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL)
         }
     }
 
-    class Recovery(row: ResultSet, expectedScope: ComplaintDataScope, eventId: String) {
+    class Recovery(row: ResultSet, expectedScope: ComplaintDataScope, eventId: String, expected: ComplaintCapacityVector = OwnerDeleteCapacityCharges.RECOVERY) {
         val convertedAt: Instant? = row.getTimestamp("converted_at")?.toInstant()
         val original: ComplaintCapacityVector = vector(row, "reserved_amounts")
         val used: ComplaintCapacityVector = if (row.getString("state") == "RESERVED") ComplaintCapacityVector.ZERO else vector(row, "converted_amounts")
@@ -112,7 +128,7 @@ internal object OwnerDeleteRows {
         init {
             check(row.getString("event_id") == eventId && row.getString("publication_ref") == eventId && row.getObject("data_scope_id", UUID::class.java) == expectedScope.id)
             check(expectedScope.testOnly && bool(row, "test_only") && bool(row, "finite") && row.getInt("accounting_version") == 1)
-            check(original == OwnerDeleteCapacityCharges.RECOVERY && used.fitsWithin(original))
+            check(original == expected && used.fitsWithin(original))
             check((row.getString("state") == "RESERVED" && used == ComplaintCapacityVector.ZERO && convertedAt == null) ||
                 (row.getString("state") == "PARTIAL" && used != ComplaintCapacityVector.ZERO && remaining != ComplaintCapacityVector.ZERO && convertedAt != null))
         }

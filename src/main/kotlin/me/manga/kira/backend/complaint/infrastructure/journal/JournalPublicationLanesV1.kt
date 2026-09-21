@@ -16,6 +16,7 @@ import me.manga.kira.backend.security.JournalCodecAttemptV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPurgeCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -45,6 +46,7 @@ internal class JournalPublicationLanesV1 private constructor(
     private val seals = HashSet<CatalogEpochSealCustodyV1>()
     private val testSeals = HashSet<TestOrdinarySealCustodyV1>()
     private val testManifests = HashSet<TestInstallationManifestCustodyV1>()
+    private val testPurges = HashSet<TestRunPurgeCustodyV1>()
     private var stopping = false
 
     internal fun requireJournal(expected: ComplaintJournalConfigurationV1) = requireJournalPublication(journal === expected)
@@ -229,15 +231,30 @@ internal class JournalPublicationLanesV1 private constructor(
         owner.requireClosedLane(this)
         lock.withLock { testManifests.remove(owner) }
     }
+    internal fun tryTestRunPurge(owner: TestRunPurgeCustodyV1): Boolean {
+        if (!lock.tryLock()) return false
+        try {
+            if (stopping || owner.acquisitionStopped() || privacy.isNotEmpty() || testPrivacy.isNotEmpty() || testAllPrivacy.isNotEmpty() || testAdminPrivacy.isNotEmpty() || routineCount() >= limits.routinePublicationLanes) return false
+            owner.requireLane(this)
+            return testPurges.add(owner)
+        } finally { lock.unlock() }
+    }
+    internal fun requireTestRunPurgeRunning(owner: TestRunPurgeCustodyV1) = lock.withLock {
+        requireJournalPublication(!stopping && !owner.acquisitionStopped() && owner in testPurges)
+    }
+    internal fun releaseTestRunPurge(owner: TestRunPurgeCustodyV1) {
+        owner.requireClosedLane(this)
+        lock.withLock { testPurges.remove(owner) }
+    }
     internal fun closeTestOrdinarySealAcquisition(acquisition: VersionBoundTestOrdinarySealV1) {
         val owned = lock.withLock { buildList<AutoCloseable> {
-            addAll(testSeals.filter { it.belongsTo(acquisition) }); addAll(testManifests.filter { it.belongsTo(acquisition) })
+            addAll(testSeals.filter { it.belongsTo(acquisition) }); addAll(testManifests.filter { it.belongsTo(acquisition) }); addAll(testPurges.filter { it.belongsTo(acquisition) })
         } }
         closeOwners(owned)
     }
 
     // Call only under the registry lock. Widen before every addition, including held/failed seal owners.
-    private fun routineCount(): Long = routine.size.toLong() + cutoff.size + seals.size + testSeals.size + testManifests.size
+    private fun routineCount(): Long = routine.size.toLong() + cutoff.size + seals.size + testSeals.size + testManifests.size + testPurges.size
 
     fun activeOwners(): JournalPublicationLaneSnapshotV1 = lock.withLock { JournalPublicationLaneSnapshotV1(routineCount().toInt(), privacy.size + testPrivacy.size + testAllPrivacy.size + testAdminPrivacy.size) }
 
@@ -269,6 +286,7 @@ internal class JournalPublicationLanesV1 private constructor(
                 addAll(seals)
                 addAll(testSeals)
                 addAll(testManifests)
+                addAll(testPurges)
             }
         }
         closeOwners(owned)
@@ -575,6 +593,25 @@ internal class JournalPublicationLanesV1 private constructor(
                     val publisher = factory.construct(this, construction, time)
                     requireConstructing(factory, construction, time)
                     publisher.readExisting(tuple, targetId, routingKeyId, time).also { requireConstructing(factory, construction, time) }
+                }, ::finishPublication)
+            }
+
+        internal fun readExistingBatch(tuple: me.manga.kira.backend.security.TestAdminBatchDeleteJournalTupleV1, targets: List<java.util.UUID>, routingKeyId: String): TestOwnerDeleteJournalReadbackV1 =
+            journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
+                requireConnectionFree()
+                factory.requireRecoveryRead() // A registered continuation publishes only its exact retained primary work.
+                requireJournalPublication(tuple.eventKind == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE)
+                synchronized(lifecycle) {
+                    requireJournalPublication(state == PublicationOwnerStateV1.RESERVED && !stopRequested)
+                    requireRunning(this)
+                    state = PublicationOwnerStateV1.RUNNING
+                    caller = Thread.currentThread()
+                }
+                withJournalPublicationCleanup({
+                    val time = factory.startAttempt().also { synchronized(lifecycle) { attempt = it } }
+                    val publisher = factory.construct(this, construction, time)
+                    requireConstructing(factory, construction, time)
+                    publisher.readExistingBatch(tuple, targets, routingKeyId, time).also { requireConstructing(factory, construction, time) }
                 }, ::finishPublication)
             }
 

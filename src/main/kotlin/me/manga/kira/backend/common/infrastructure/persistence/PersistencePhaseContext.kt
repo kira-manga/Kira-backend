@@ -12,7 +12,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteTuple
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminDeletePhaseOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminDeleteReadOperation
-import me.manga.kira.backend.security.ComplaintAdmittedAdminDelete
+import me.manga.kira.backend.security.ComplaintAdmittedAdminErasure
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeletePhaseOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteReadOperation
@@ -32,8 +32,10 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySe
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestPublicationOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPurgeOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestPublicationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPurgePublicationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
@@ -205,6 +207,8 @@ constructor(
     private val testInstallationManifestWork: PersistenceTimeBudget? = null,
     private val testInstallationManifestPublication: TestRunInstallationManifestPublicationV1? = null,
     private val testInstallationManifestPublicationWork: PersistenceTimeBudget? = null,
+    private val testRunPurge: TestRunPurgePublicationV1? = null,
+    private val testRunPurgeWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -289,6 +293,7 @@ constructor(
     internal val testOrdinarySeal: PersistenceTestOrdinarySealV1 = TestOrdinarySealBoundary()
     internal val testInstallationManifestBoundary: PersistenceTestInstallationManifestV1 = TestInstallationManifestBoundary()
     internal val testInstallationManifestPublicationBoundary: PersistenceTestInstallationManifestPublicationV1 = TestInstallationManifestPublicationBoundary()
+    internal val testRunPurgeBoundary: PersistenceTestRunPurgeV1 = TestRunPurgeBoundary()
     internal val testOrdinaryDrainBoundary: PersistenceTestOrdinaryDrainV1 = TestOrdinaryDrainBoundary()
 
     // The SQL-created batch retains the private grant -> counters -> delete -> refund cursor, never a caller count or UUID.
@@ -450,7 +455,7 @@ constructor(
         work =
             rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
                 ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-                ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testRecoveryRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork
+                ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testRecoveryRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork ?: testRunPurgeWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
@@ -458,7 +463,7 @@ constructor(
         requireCaller()
         val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
             ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-            ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testRecoveryRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork
+            ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testRecoveryRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork ?: testRunPurgeWork
         return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
@@ -682,6 +687,9 @@ constructor(
         PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
         PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_VERIFY,
         -> testInstallationManifestPublicationBoundary.completed()
+        PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
+        PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY,
+        -> testRunPurgeBoundary.completed()
         PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN -> testOrdinaryDrainBoundary.completed()
 
         PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT -> installationEnrollment.completed()
@@ -906,6 +914,7 @@ constructor(
         testOrdinarySealer?.observeFailure(problem)
         testInstallationManifest?.observeFailure(problem)
         testInstallationManifestPublication?.observeFailure(problem)
+        testRunPurge?.observeFailure(problem)
         testRunOwnerDelete?.observeFailure(problem)
         testRunOwnerDeleteAll?.observeFailure(problem)
         testRunAdminDelete?.observeFailure(problem)
@@ -1022,6 +1031,17 @@ constructor(
     internal fun testInstallationManifestPublicationResourcesRetired(original: TestRunInstallationManifestPublicationV1): Boolean =
         caller.isCurrent() && testInstallationManifestPublication === original && path in setOf(
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION, PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_VERIFY) &&
+            stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
+            acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
+            (rootStatus?.hasReturnedStatus() != true || completionEnded)
+
+    internal fun testRunPurgeCleanupProven(original: TestRunPurgePublicationV1): Boolean =
+        testRunPurgeResourcesRetired(original) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
+
+    /** Physical retirement only. UNKNOWN and quarantined originals never gain a successful result from it. */
+    internal fun testRunPurgeResourcesRetired(original: TestRunPurgePublicationV1): Boolean =
+        caller.isCurrent() && testRunPurge === original && path in setOf(
+            PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION, PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY) &&
             stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
             acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
             (rootStatus?.hasReturnedStatus() != true || completionEnded)
@@ -1248,6 +1268,7 @@ constructor(
             testOrdinarySealer != null -> testOrdinarySealer.requireMaintenanceGate(ownership, path, gate)
             testInstallationManifest != null -> testInstallationManifest.requireMaintenanceGate(ownership, path, gate)
             testInstallationManifestPublication != null -> testInstallationManifestPublication.requireMaintenanceGate(ownership, path, gate)
+            testRunPurge != null -> testRunPurge.requireMaintenanceGate(ownership, path, gate)
             testRegistration != null -> testRegistration.requireMaintenanceGate(ownership, path, gate)
             initialAdmission != null -> initialAdmission.requireMaintenanceGate(ownership, path, gate)
             testRecoveryRegistration != null -> testRecoveryRegistration.requireMaintenanceGate(ownership, path, gate)
@@ -1284,7 +1305,7 @@ constructor(
     internal fun requireDeletionFence(fence: PersistenceDeletionFence, selected: Connection): Boolean {
         selectedHolder.requireFence(fence, selected)
         return path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION ||
-            path === PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION || path === PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE || path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL || path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN || testOrdinaryDrain != null
+            path === PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION || path === PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION || path === PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE || path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL || path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN || testOrdinaryDrain != null
     }
 
     internal fun requireComplaintMaintenanceFence(fence: PersistenceComplaintMaintenanceFenceV1, selected: Connection) =
@@ -1404,6 +1425,7 @@ constructor(
                 testOrdinarySealer?.observeFailure(problem)
                 testInstallationManifest?.observeFailure(problem)
                 testInstallationManifestPublication?.observeFailure(problem)
+                testRunPurge?.observeFailure(problem)
                 testRunOwnerDelete?.observeFailure(problem)
                 testRunOwnerDeleteAll?.observeFailure(problem)
                 testRunAdminDelete?.observeFailure(problem)
@@ -1484,7 +1506,7 @@ constructor(
     internal fun deadlineExpired(): Boolean {
         val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
             ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork
-            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testRecoveryRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork
+            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testRecoveryRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork ?: testRunPurgeWork
             ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
@@ -1524,13 +1546,13 @@ constructor(
 
     private fun usesCatalogLifecycleCleanup(): Boolean = catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null ||
         catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationAuthor != null || signerRotationDelivery != null ||
-        signerRotationActivation != null || testRunActivation != null || testRegistration != null || initialAdmission != null || testRecoveryRegistration != null || testRunSealer != null || testOrdinarySealer != null || testInstallationManifest != null || testInstallationManifestPublication != null || testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testRunAdminDelete != null || testOrdinaryDrain != null
+        signerRotationActivation != null || testRunActivation != null || testRegistration != null || initialAdmission != null || testRecoveryRegistration != null || testRunSealer != null || testOrdinarySealer != null || testInstallationManifest != null || testInstallationManifestPublication != null || testRunPurge != null || testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testRunAdminDelete != null || testOrdinaryDrain != null
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
         val catalogBudget =
-            testInstallationManifest?.budget ?: testInstallationManifestPublication?.budget ?: testRunAdminDelete?.budget ?: testRunOwnerDeleteAll?.budget ?: testOrdinaryDrain?.budget ?: testRunOwnerDelete?.budget ?: testRunSealer?.budget ?: testOrdinarySealer?.budget ?: testRegistration?.budget ?: initialAdmission?.budget ?: testRecoveryRegistration?.budget ?: testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
+            testInstallationManifest?.budget ?: testInstallationManifestPublication?.budget ?: testRunPurge?.budget ?: testRunAdminDelete?.budget ?: testRunOwnerDeleteAll?.budget ?: testOrdinaryDrain?.budget ?: testRunOwnerDelete?.budget ?: testRunSealer?.budget ?: testOrdinarySealer?.budget ?: testRegistration?.budget ?: initialAdmission?.budget ?: testRecoveryRegistration?.budget ?: testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
                 ?: catalogSignerRotationAttempt?.budget
                 ?: catalogPublisherAttempt?.budget
                 ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
@@ -1618,6 +1640,7 @@ constructor(
                 testOrdinarySealer?.observeFailure(problem)
                 testInstallationManifest?.observeFailure(problem)
                 testInstallationManifestPublication?.observeFailure(problem)
+                testRunPurge?.observeFailure(problem)
                 testRunOwnerDelete?.observeFailure(problem)
                 testRunOwnerDeleteAll?.observeFailure(problem)
                 testRunAdminDelete?.observeFailure(problem)
@@ -1721,6 +1744,7 @@ constructor(
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
+            PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
             PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT, // The run-only seal must commit/release BEFORE E or any control/counter lock.
             PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
@@ -1796,6 +1820,9 @@ constructor(
         fun fenceReady(): Boolean = fenceAccepted() && fenceLimitsRestored
 
         fun receiptlessManifestReady(): Boolean = path === PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_VERIFY &&
+            maintenanceFence == null && deletionFence == null && deletionControlSnapshot == null
+
+        fun receiptlessPurgeReady(): Boolean = path === PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY &&
             maintenanceFence == null && deletionFence == null && deletionControlSnapshot == null
 
         fun requireControlSnapshot(snapshot: PersistenceDeletionControlSnapshot, selected: Connection) {
@@ -2368,6 +2395,53 @@ constructor(
             selectedHolder.receiptlessManifestReady() else selectedHolder.fenceReady()
 
         override fun completed(): Boolean = retained?.let { it.original === testInstallationManifestPublication && it.path === path && it.completedFor(this@PersistencePhaseContext) } == true
+    }
+
+    private inner class TestRunPurgeBoundary : PersistenceTestRunPurgeV1 {
+        private var selected = false
+        private var retained: TestRunPurgeOperationV1? = null
+
+        override fun requireOperation(original: TestRunPurgePublicationV1, jdbc: JdbcTemplate) {
+            if (path !in setOf(PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION, PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY) || original !== testRunPurge || original.path !== path) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            requireStepUpResource(jdbc, path)
+            if (selected || !ready()) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            original.requirePersistence(ownership, jdbc)
+            selected = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: TestRunPurgeOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!selected || retained != null || operation.original !== testRunPurge || operation.path !== path || !operation.belongsTo(this@PersistencePhaseContext)) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            operation.original.requirePersistence(ownership, jdbc)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: TestRunPurgeOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation || operation.original !== testRunPurge || operation.path !== path ||
+                !ready()) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            operation.original.requirePersistence(ownership, jdbc)
+        }
+
+        override fun requireCommitted(operation: TestRunPurgeOperationV1) {
+            if (retained !== operation || !completed() || !testRunPurgeCleanupProven(operation.original)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        private fun ready(): Boolean = if (path === PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY)
+            selectedHolder.receiptlessPurgeReady() else selectedHolder.fenceReady()
+
+        override fun completed(): Boolean = retained?.let { it.original === testRunPurge && it.path === path && it.completedFor(this@PersistencePhaseContext) } == true
     }
 
     private inner class TestOrdinaryDrainBoundary : PersistenceTestOrdinaryDrainV1 {
@@ -3041,15 +3115,15 @@ constructor(
     private inner class AdminDeleteBoundary : PersistenceAdminDelete {
         private var issued = false
         private var retained: ComplaintAdminDeletePhaseOperation? = null
-        private var admission: ComplaintAdmittedAdminDelete? = null
+        private var admission: ComplaintAdmittedAdminErasure? = null
         private val admissionIdentity = Any()
         private var claimed = false
         private var boundsChecked = false
 
-        override fun bindAuthorize(handoff: ComplaintAdmittedAdminDelete) {
+        override fun bindAuthorize(handoff: ComplaintAdmittedAdminErasure) {
             requireCaller()
             if (stage !== Stage.PREPARED || path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE || admission != null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
-            ComplaintIngressAdmission.bindAdminDelete(handoff, admissionIdentity)
+            ComplaintIngressAdmission.bindAdminErasure(handoff, admissionIdentity)
             admission = handoff
         }
 
@@ -3080,7 +3154,7 @@ constructor(
         override fun claim(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate, tuple: ComplaintAdminDeleteTuple) {
             requireRetained(operation, jdbc)
             if (path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE || claimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
-            ComplaintIngressAdmission.claimAdminDelete(checkNotNull(admission), admissionIdentity, tuple)
+            ComplaintIngressAdmission.claimAdminErasure(checkNotNull(admission), admissionIdentity, tuple)
             claimed = true
         }
 
@@ -3093,7 +3167,7 @@ constructor(
                 return
             }
             if (!claimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
-            ComplaintIngressAdmission.checkAdminDeleteReceipt(checkNotNull(admission), admissionIdentity)
+            ComplaintIngressAdmission.checkAdminErasureReceipt(checkNotNull(admission), admissionIdentity)
         }
 
         override fun checkCapacity(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate, ledger: ComplaintCapacityLedger) {
@@ -3101,7 +3175,7 @@ constructor(
             if (boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             if (path === PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE) {
                 if (!claimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
-                ComplaintIngressAdmission.checkAdminDeleteBounds(checkNotNull(admission), admissionIdentity, ledger)
+                ComplaintIngressAdmission.checkAdminErasureBounds(checkNotNull(admission), admissionIdentity, ledger)
             }
             boundsChecked = true
         }
@@ -3111,7 +3185,7 @@ constructor(
             when (path) {
                 PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE -> {
                     if (!claimed || !boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
-                    ComplaintIngressAdmission.checkAdminDeleteWrite(checkNotNull(admission), admissionIdentity)
+                    ComplaintIngressAdmission.checkAdminErasureWrite(checkNotNull(admission), admissionIdentity)
                 }
                 PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY -> if (!boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
                 PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY -> Unit
@@ -4592,7 +4666,7 @@ internal interface PersistenceOwnerDeleteRead {
 }
 
 internal interface PersistenceAdminDelete {
-    fun bindAuthorize(handoff: ComplaintAdmittedAdminDelete)
+    fun bindAuthorize(handoff: ComplaintAdmittedAdminErasure)
     fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath)
     fun retain(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate)
     fun requireRetained(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate)

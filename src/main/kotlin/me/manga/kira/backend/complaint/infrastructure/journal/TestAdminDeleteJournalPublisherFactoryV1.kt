@@ -38,6 +38,10 @@ internal class TestAdminDeleteJournalPublisherFactoryV1 private constructor(
         requireConnectionFree(); requireRecoveryRead()
         return reserve().use { it.readExisting(tuple, targetId, routingKeyId) }
     }
+    fun readExistingBatch(tuple: me.manga.kira.backend.security.TestAdminBatchDeleteJournalTupleV1, targets: List<UUID>, routingKeyId: String): TestOwnerDeleteJournalReadbackV1 {
+        requireConnectionFree(); requireRecoveryRead()
+        return reserve().use { it.readExistingBatch(tuple, targets, routingKeyId) }
+    }
     internal fun requireBinding(selected: JdbcComplaintAdminDeleteStore) { requireJournalPublication(store === selected && !closed.get()); requireOpen() }
     internal fun requireLane(expected: JournalPublicationLanesV1) = requireJournalPublication(lanes === expected)
     internal fun journalConfiguration() = routing.journalConfiguration

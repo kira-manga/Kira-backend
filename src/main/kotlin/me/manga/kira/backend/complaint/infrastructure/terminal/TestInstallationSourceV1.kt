@@ -12,6 +12,8 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalRunContextV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSourceHighWaterV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSyntaxV1
 import me.manga.kira.backend.security.TestTerminalFramesV1
+import me.manga.kira.backend.security.TestTerminalChunkFoldV1
+import me.manga.kira.backend.security.TestTerminalInstallationRootV1
 import me.manga.kira.backend.security.TestTerminalJsonV1
 import me.manga.kira.backend.security.TestTerminalRootsV1
 import java.security.MessageDigest
@@ -39,6 +41,8 @@ internal class TestInstallationSourceV1(
     private var current: Pass? = null
     private var completedChunk: ChunkSummary? = null
     private val completed = ArrayList<Read>(2)
+    private var completedRoot: TestTerminalInstallationRootV1? = null
+    private var chunksStarted = false
 
     init {
         requireOrdinarySeal(enrolledCount in 0..installationLimit)
@@ -99,8 +103,16 @@ internal class TestInstallationSourceV1(
         }
         val progress = TestTerminalProgressV1.create(context, emptyList(), reads)
         TestTerminalJsonV1(journal).encodeProgress(progress).fill(0) // Enforce actual J/closed-codec bounds; nothing is persisted.
+        completedRoot = root
         stage = Stage.DONE
         progress
+    }
+
+    /** Same finished builder/owner, never a reconstruction from progress or scalar digests. */
+    internal fun startChunks(publicationEpoch: Long): TestTerminalChunkFoldV1 {
+        requireOrdinarySeal(stage === Stage.DONE && !chunksStarted)
+        chunksStarted = true
+        return roots.chunks(checkNotNull(completedRoot), publicationEpoch)
     }
 
     /** Last bounded plaintext grouping only; no identities or database/read authority are exposed. */

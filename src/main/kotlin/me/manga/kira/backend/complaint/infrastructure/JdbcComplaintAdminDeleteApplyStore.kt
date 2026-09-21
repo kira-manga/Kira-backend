@@ -9,12 +9,11 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseF
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
-import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
+import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteFamily
 import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteReceipt
-import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteTuple
 import me.manga.kira.backend.complaint.domain.InstallationCredentialSnapshot
 import me.manga.kira.backend.complaint.domain.InstallationCredentialState
 import me.manga.kira.backend.complaint.domain.InstallationIdentityState
@@ -55,7 +54,7 @@ internal class JdbcComplaintAdminDeleteApplyStore(
     private val verification: JdbcComplaintAdminDeleteVerificationStore,
 ) {
     private val issuer = Any()
-    private val codec = TestOwnerDeleteVerificationCodecV1.forAdmin(graph.routing)
+    private val codec = TestOwnerDeleteVerificationCodecV1.forAdminErasure(graph.routing)
     init { authorization.requireBinding(graph, jdbc); verification.requireBinding(authorization); check(graph.routing.journalConfiguration.adminDelete) }
     fun capture(work: CommittedTestAdminDeleteWork, proof: CommittedTestAdminDeleteVerificationV1): TestAdminDeleteApplyInputV1 {
         requireConnectionFree()
@@ -89,6 +88,13 @@ private class CapturedTestAdminDeleteApply(val issuer: Any, val event: TestOwner
     val hash: ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
     val ciphertext: ByteArray = HexFormat.of().parseHex(record.ciphertextSha256)
 }
+internal class TestAdminDeleteMaterializedCounts(val installation: Int, val resource: Int, val removed: Int, val applied: Int, val summary: Int,
+    ownerCount: Int, targetCount: Int) {
+    init {
+        check(targetCount in 1..50 && ownerCount in 1..targetCount && installation in 0..ownerCount &&
+            resource in 0..targetCount && removed in 0..targetCount && applied in 0..1 && summary in 0..applied)
+    }
+}
 internal class ComplaintAdminDeleteApplyOperation private constructor(
     private val phase: PersistencePhaseContext,
     private val jdbc: JdbcTemplate,
@@ -97,10 +103,11 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
     private val input: CapturedTestAdminDeleteApply,
 ) : ComplaintAdminDeletePhaseOperation {
     private val event = input.event
-    private val scope = event.adminTuple.scope
-    private val installation = ScopedInstallationId(event.adminTuple.ownerInstallationId, scope)
-    private val target = event.complaintIds().single()
-    private val tuple = ComplaintAdminDeleteTuple(event.adminTuple.actorId, scope, event.adminTuple.operationKey, target, event.adminTuple.fingerprintBytes())
+    private val scope = event.adminComparison.scope
+    private val installations = event.adminComparison.ownerInstallationIds().map { ScopedInstallationId(it, scope) }
+    private val targets = event.complaintIds()
+    private val tuple = AdminDeleteRows.tuple(event)
+    private val promised = AdminDeleteRows.recovery(event)
     private var stage = Stage.RETAINED
     private var allocation: JdbcComplaintCapacityStore.LockedAdminDeleteApply? = null
     private var primary: TestOwnerDeleteJournalEventV1 = event
@@ -112,15 +119,15 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
     private var missingL = false
     private var exactApplied = false
     private var familyApplied = 0
-    private var counts: TestOwnerDeleteMaterializedCounts? = null
-    private val auditOutcomes = ArrayList<AdminDeleteAuditOutcome>(2)
+    private var counts: TestAdminDeleteMaterializedCounts? = null
+    private val auditOutcomes = ArrayList<AdminDeleteAuditOutcome>(targets.size + 1)
     private var appliedAt: Instant? = null
     private var primaryCompleted = false
     override fun belongsTo(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = phase === selected && expected === PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY
     override fun completedFor(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = belongsTo(selected, expected) && stage === Stage.COMPLETE &&
         allocation?.completedFor(this) == true && (input.recovery || primaryCompleted)
     val result: ComplaintAdminDeleteReceipt get() {
-        phase.adminDelete.requireCommitted(this); requireConnectionFree(); check(!input.recovery && primaryCompleted); return ComplaintAdminDeleteReceipt.Applied(event.adminTuple.consumedGrantId)
+        phase.adminDelete.requireCommitted(this); requireConnectionFree(); check(!input.recovery && primaryCompleted); return AdminDeleteRows.completed(event)
     }
     fun requireRecovered() { phase.adminDelete.requireCommitted(this); requireConnectionFree(); check(input.recovery) }
     internal fun requireRegisteredContinuation(original: TestRunAdminDeleteContinuationV1) {
@@ -134,7 +141,7 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
     private fun execute(capacity: JdbcComplaintCapacityStore, audit: AuditService) {
         retained()
         val controls = TestOwnerDeleteControlBindingV1(graph)
-        controls.lock(jdbc, false).requireContinuation(event.adminTuple.epoch, prepared = false)
+        controls.lock(jdbc, false).requireContinuation(event.adminComparison.epoch, prepared = false)
         stage = Stage.RECEIPT
         receipt = jdbc.query(AdminDeletePersistenceSql.LOCK_RECEIPT, { row, _ -> AdminDeleteRows.Receipt(row) }, tuple.actor, tuple.key).singleOrNull()
         if (receipt == null && input.recovery && input.registeredInventory == null) {
@@ -142,26 +149,26 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
             // concurrent first use must settle here, never below a later-class lock. Capacity is
             // charged later in this same transaction; any failure rolls this provisional claim back.
             phase.adminDelete.checkReceiptWrite(this, jdbc)
-            missingN = jdbc.update(AdminDeletePersistenceSql.INSERT_CLAIM, tuple.actor, tuple.key, tuple.fingerprintBytes(), target, scope.id) == 1
+            missingN = jdbc.update(AdminDeletePersistenceSql.INSERT_CLAIM, tuple.actor, tuple.key, tuple.operation, tuple.fingerprintBytes(), AdminDeleteRows.array(targets), scope.id) == 1
             if (!missingN) receipt = jdbc.query(AdminDeletePersistenceSql.LOCK_RECEIPT, { row, _ -> AdminDeleteRows.Receipt(row) }, tuple.actor, tuple.key).single()
         }
-        receipt?.let { check(it.consumedGrantId == event.adminTuple.consumedGrantId && it.matches(tuple) && it.valid && it.state in setOf("AUTHORIZED_DELETE", "COMPLETED")); if (it.state == "COMPLETED") check(it.completed() is ComplaintAdminDeleteReceipt.Applied) }
+        receipt?.let { check(it.consumedGrantId == event.adminComparison.consumedGrantId && it.matches(tuple) && it.valid && it.state in setOf("AUTHORIZED_DELETE", "COMPLETED")); if (it.state == "COMPLETED") AdminDeleteRows.requireApplied(it.completed(), event) }
         check(input.recovery || receipt != null)
         stage = Stage.PUBLICATION
-        val routes = graph.routing.derive(event.adminTuple).candidates()
+        val routes = graph.routing.derive(event.adminComparison).candidates()
         val publications = routes.sortedBy { it.eventId }.mapNotNull { route ->
-            jdbc.query(AdminDeletePersistenceSql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteRows.Publication.adminDelete(row) }, route.eventId).singleOrNull()?.also { row ->
-                val canonical = TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(graph.routing, row.bytes, row.routingKey)
-                row.requireAdminEvent(canonical)
+            jdbc.query(AdminDeletePersistenceSql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteRows.Publication.adminErasure(row) }, route.eventId).singleOrNull()?.also { row ->
+                val canonical = TestOwnerDeleteJournalCodecV1.restoreAdminErasureCanonical(graph.routing, row.bytes, row.routingKey, row.kind)
+                row.requireAdminErasureEvent(canonical)
                 ComplaintAdminDeleteAuthorizationOperation.requireTuple(canonical, tuple)
-                check(canonical.route == route && canonical.adminTuple.epoch == event.adminTuple.epoch && canonical.adminTuple.ownerInstallationId == event.adminTuple.ownerInstallationId && canonical.adminTuple.consumedGrantId == event.adminTuple.consumedGrantId && row.writer == graph.writer)
+                check(canonical.route == route && canonical.adminComparison.epoch == event.adminComparison.epoch && canonical.adminComparison.ownerInstallationIds() == event.adminComparison.ownerInstallationIds() && canonical.adminComparison.consumedGrantId == event.adminComparison.consumedGrantId && row.writer == graph.writer)
             }
         }
         check(publications.size <= 1) // One primary per logical tuple; aliases have applied rows only.
         publication = publications.singleOrNull()
         missingP = publication == null
         check(input.recovery || !missingP)
-        publication?.let { row -> primary = TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(graph.routing, row.bytes, row.routingKey) }
+        publication?.let { row -> primary = TestOwnerDeleteJournalCodecV1.restoreAdminErasureCanonical(graph.routing, row.bytes, row.routingKey, row.kind) }
         receipt?.let { check(it.publication == primary.route.eventId && (!missingP || input.recovery)) }
         if (receipt != null && missingP) error("Receipt cannot reference absent primary")
         val isPrimary = primary.route == event.route &&
@@ -177,7 +184,7 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
             receipt?.let { check(it.authorizedAt == row.createdAt) }
         }
         stage = Stage.RESERVATION
-        reserve = jdbc.query(AdminDeletePersistenceSql.LOCK_RECOVERY, { row, _ -> OwnerDeleteRows.Recovery(row, scope, primary.route.eventId) }, primary.route.eventId).singleOrNull()
+        reserve = jdbc.query(AdminDeletePersistenceSql.LOCK_RECOVERY, { row, _ -> OwnerDeleteRows.Recovery(row, scope, primary.route.eventId, promised) }, primary.route.eventId).singleOrNull()
         missingL = reserve == null
         check(input.recovery || !missingL)
         if (input.registeredInventory != null) {
@@ -187,7 +194,7 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
         }
         val appliedRows = jdbc.query(AdminDeletePersistenceSql.READ_APPLIED_FAMILY, { row, _ ->
             check(row.getObject("data_scope_id", UUID::class.java) == scope.id && row.getBoolean("test_only") && row.getObject("writer_generation", UUID::class.java) == graph.writer &&
-                row.getLong("journal_epoch") == event.adminTuple.epoch && row.getString("event_kind") == "ADMIN_DELETE" && row.getInt("target_count") == 1 && row.getBoolean("finite"))
+                row.getLong("journal_epoch") == event.adminComparison.epoch && row.getString("event_kind") == tuple.operation && row.getInt("target_count") == targets.size && row.getBoolean("finite"))
             val route = routes.single { it.eventId == row.getString("event_id") }
             check(row.getString("object_key") == route.objectKey)
             val version = requireJournalVersion(row.getString("object_version"))
@@ -213,54 +220,79 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
         // Old-backup recovery may use SYSTEM for a genuinely absent user; it creates no user or credential.
         val auditActor = jdbc.query("SELECT id FROM users WHERE id = ? FOR KEY SHARE", { row, _ -> row.getObject(1, UUID::class.java) }, tuple.actor).singleOrNull()
         controls.lockRun(jdbc, false)
-        val ownerState = jdbc.query(AdminDeletePersistenceSql.LOCK_INSTALLATION, { row, _ ->
-            requireScope(row.getObject("data_scope_id", UUID::class.java), row.getBoolean("test_only")); InstallationIdentityState.valueOf(row.getString("state"))
-        }, installation.id).singleOrNull()
-        val credentialState = jdbc.query(AdminDeletePersistenceSql.LOCK_CREDENTIAL, { row, _ ->
-            requireScope(row.getObject("data_scope_id", UUID::class.java), row.getBoolean("test_only")); InstallationCredentialState.valueOf(row.getString("state"))
-        }, installation.id).singleOrNull()
-        val hasContent = jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM complaints WHERE owner_id = ?)", Boolean::class.java, installation.id) == true
-        val disposition = InstallationRecoveryReducer.reduce(InstallationRecoverySnapshot(installation,
-            ownerState?.let { InstallationReservationSnapshot(installation, it) }, credentialState?.let { InstallationCredentialSnapshot(installation, it) }, hasContent),
-            InstallationRecoveryEvidence.OrdinaryDeletion(installation, OrdinaryInstallationDeletion.ADMIN_REPORT)) as? InstallationRecoveryDecision.Apply ?: error("Ordinary deletion disposition required")
-        check(disposition.credentialEffect === RecoveryCredentialEffect.PRESERVE && disposition.contentEffect === RecoveryContentEffect.ERASE_AUTHORIZED_RESOURCES)
-        var reconstructedOwner = 0
-        if (disposition.reserveIdentityCapacity) {
-            check(input.recovery && !exactApplied && disposition.identityState === InstallationIdentityState.RECOVERY_RESERVED)
-            checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.RECONSTRUCT_INSTALLATION, installation.id, scope.id) == 1); reconstructedOwner = 1
+        // Every owner pair precedes every resource, then every content lock. No reconstruction or
+        // erasure write occurs until all authenticated owners/targets have been checked together.
+        val owners = installations.map { installation ->
+            val ownerState = jdbc.query(AdminDeletePersistenceSql.LOCK_INSTALLATION, { row, _ ->
+                requireScope(row.getObject("data_scope_id", UUID::class.java), row.getBoolean("test_only")); InstallationIdentityState.valueOf(row.getString("state"))
+            }, installation.id).singleOrNull()
+            val credentialState = jdbc.query(AdminDeletePersistenceSql.LOCK_CREDENTIAL, { row, _ ->
+                requireScope(row.getObject("data_scope_id", UUID::class.java), row.getBoolean("test_only")); InstallationCredentialState.valueOf(row.getString("state"))
+            }, installation.id).singleOrNull()
+            val hasContent = jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM complaints WHERE owner_id = ?)", Boolean::class.java, installation.id) == true
+            val disposition = InstallationRecoveryReducer.reduce(InstallationRecoverySnapshot(installation,
+                ownerState?.let { InstallationReservationSnapshot(installation, it) }, credentialState?.let { InstallationCredentialSnapshot(installation, it) }, hasContent),
+                InstallationRecoveryEvidence.OrdinaryDeletion(installation, OrdinaryInstallationDeletion.ADMIN_REPORT)) as? InstallationRecoveryDecision.Apply
+                ?: error("Ordinary deletion disposition required")
+            check(disposition.credentialEffect === RecoveryCredentialEffect.PRESERVE && disposition.contentEffect === RecoveryContentEffect.ERASE_AUTHORIZED_RESOURCES)
+            if (disposition.reserveIdentityCapacity) check(input.recovery && !exactApplied && disposition.identityState === InstallationIdentityState.RECOVERY_RESERVED)
+            if (exactApplied) check(ownerState != null)
+            installation to disposition.reserveIdentityCapacity
         }
-        val resourceState = jdbc.query(AdminDeletePersistenceSql.LOCK_RESOURCE, { row, _ ->
-            requireScope(row.getObject("data_scope_id", UUID::class.java), row.getBoolean("test_only")); row.getString("state")
-        }, target).singleOrNull()
-        val version = jdbc.query(AdminDeletePersistenceSql.LOCK_CONTENT, { row, _ ->
-            requireScope(row.getObject("data_scope_id", UUID::class.java), row.getBoolean("test_only"))
-            check(row.getObject("owner_id", UUID::class.java) == installation.id && row.getString("ownership") == "INSTALLATION" && row.getString("kind") in setOf("REPORT", "REPLY"))
-            OwnerDeleteRows.positive(row, "version")
-        }, target).singleOrNull()
-        if (familyApplied > 0) check(version == null && resourceState == "DELETED")
-        if (exactApplied) check(ownerState != null && resourceState == "DELETED" && version == null)
-        if (!input.recovery && familyApplied == 0) check(resourceState == "DELETION_PENDING" && version != null)
+        val resources = targets.associateWith { target ->
+            jdbc.query(AdminDeletePersistenceSql.LOCK_RESOURCE, { row, _ ->
+                requireScope(row.getObject("data_scope_id", UUID::class.java), row.getBoolean("test_only")); row.getString("state")
+            }, target).singleOrNull()
+        }
+        val ownerIds = installations.map { it.id }.toSet()
+        val content = targets.associateWith { target ->
+            jdbc.query(AdminDeletePersistenceSql.LOCK_CONTENT, { row, _ ->
+                requireScope(row.getObject("data_scope_id", UUID::class.java), row.getBoolean("test_only"))
+                val owner = row.getObject("owner_id", UUID::class.java)
+                check(owner in ownerIds && row.getString("ownership") == "INSTALLATION" && row.getString("kind") in setOf("REPORT", "REPLY"))
+                checkNotNull(owner) to OwnerDeleteRows.positive(row, "version")
+            }, target).singleOrNull()
+        }
+        targets.forEach { target ->
+            val state = resources[target]
+            val row = content[target]
+            if (familyApplied > 0) check(row == null && state == "DELETED")
+            if (exactApplied) check(state == "DELETED" && row == null)
+            if (!input.recovery && familyApplied == 0) check(state == "DELETION_PENDING" && row != null)
+            check(state in setOf(null, "LIVE", "DELETION_PENDING", "DELETED"))
+            if (row != null) check(state == "LIVE" || state == "DELETION_PENDING")
+            if (state == null) check(input.recovery && row == null && !exactApplied)
+        }
         appliedAt = jdbc.queryForObject("SELECT clock_timestamp()", { row, _ -> row.getTimestamp(1).toInstant() })!!
         check(Instant.parse(input.record.retainUntil).isAfter(checkNotNull(appliedAt)))
+        var reconstructedOwner = 0
         var reconstructedResource = 0
         var removed = 0
         if (!exactApplied) {
-            check(resourceState in setOf(null, "LIVE", "DELETION_PENDING", "DELETED"))
-            if (version != null) {
-                check(resourceState == "LIVE" || resourceState == "DELETION_PENDING")
-                checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.DELETE_CONTENT, target, scope.id, installation.id, version) == 1)
-                removed = 1
-                auditOutcomes.add(AdminDeleteAuditOutcome.Removed(scope, target, version, auditActor))
+            owners.filter { it.second }.forEach { (installation, _) ->
+                checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.RECONSTRUCT_INSTALLATION, installation.id, scope.id) == 1); reconstructedOwner++
             }
-            if (resourceState == null) {
-                check(input.recovery && version == null)
-                checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.RECONSTRUCT_RESOURCE, target, scope.id) == 1); reconstructedResource = 1
-            } else if (resourceState != "DELETED") { checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.DELETE_RESOURCE, target, scope.id) == 1) }
+            targets.forEach { target ->
+                val state = resources[target]
+                val row = content[target]
+                if (row != null) {
+                    checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.DELETE_CONTENT, target, scope.id, row.first, row.second) == 1)
+                    removed++
+                    auditOutcomes.add(AdminDeleteAuditOutcome.Removed(scope, target, row.second, auditActor))
+                }
+                if (state == null) {
+                    checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.RECONSTRUCT_RESOURCE, target, scope.id) == 1); reconstructedResource++
+                } else if (state != "DELETED") { checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.DELETE_RESOURCE, target, scope.id) == 1) }
+            }
             checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.INSERT_APPLIED, event.route.objectKey, input.record.objectVersion, event.route.eventId, input.ciphertext,
-                graph.writer, event.adminTuple.epoch, scope.id) == 1)
-            if (input.recovery) auditOutcomes.add(AdminDeleteAuditOutcome.RecoveryApplied(scope, target))
+                graph.writer, event.adminComparison.epoch, tuple.operation, targets.size, scope.id) == 1)
+            if (input.recovery) auditOutcomes.add(when (tuple.family) {
+                ComplaintAdminDeleteFamily.SINGLE -> AdminDeleteAuditOutcome.RecoveryApplied(scope, targets.single())
+                ComplaintAdminDeleteFamily.BATCH -> AdminDeleteAuditOutcome.BatchRecoveryApplied(scope, event.route.eventId, removed, reconstructedResource, reconstructedOwner)
+            })
         }
-        counts = TestOwnerDeleteMaterializedCounts(reconstructedOwner, reconstructedResource, removed, if (exactApplied) 0 else 1, if (!exactApplied && input.recovery) 1 else 0)
+        counts = TestAdminDeleteMaterializedCounts(reconstructedOwner, reconstructedResource, removed, if (exactApplied) 0 else 1, if (!exactApplied && input.recovery) 1 else 0,
+            installations.size, targets.size)
         stage = Stage.SETTLING
         paid.settle(this)
         stage = Stage.AUDIT
@@ -278,24 +310,24 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
             check(input.recovery && isPrimary && missingL)
             checkWrite()
             jdbc.queryForObject(AdminDeletePersistenceSql.INSERT_PUBLICATION, { row, _ -> row.getTimestamp(1).toInstant() }, event.route.eventId, scope.id,
-                graph.writer, event.adminTuple.epoch, event.route.routingKeyId, event.route.objectKey, event.canonicalBytes(), HexFormat.of().parseHex(event.semanticSha256))!!
-            publication = jdbc.query(AdminDeletePersistenceSql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteRows.Publication.adminDelete(row) }, event.route.eventId).single()
+                graph.writer, event.adminComparison.epoch, tuple.operation, targets.size, event.route.routingKeyId, event.route.objectKey, event.canonicalBytes(), HexFormat.of().parseHex(event.semanticSha256))!!
+            publication = jdbc.query(AdminDeletePersistenceSql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteRows.Publication.adminErasure(row) }, event.route.eventId).single()
         }
         if (isPrimary && publication?.state == "PREPARED") {
             check(input.recovery)
             checkWrite()
-            publication = jdbc.query(AdminDeletePersistenceSql.RECORD_VERIFIED, { row, _ -> OwnerDeleteRows.Publication.adminDelete(row) }, input.record.objectVersion, input.ciphertext,
+            publication = jdbc.query(AdminDeletePersistenceSql.RECORD_VERIFIED, { row, _ -> OwnerDeleteRows.Publication.adminErasure(row) }, input.record.objectVersion, input.ciphertext,
                 Timestamp.from(Instant.parse(input.record.objectCreatedAt)), Timestamp.from(Instant.parse(input.record.retainUntil)), Timestamp.from(Instant.parse(input.record.verifiedAt)),
                 input.bytes, input.hash, event.route.eventId, scope.id, HexFormat.of().parseHex(event.semanticSha256)).single()
             requireProof(checkNotNull(publication), exactLocal = true)
         }
         if (missingL) {
-            checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.INSERT_RECOVERY, event.route.eventId, scope.id, event.route.eventId, OwnerDeleteRows.array(OwnerDeleteCapacityCharges.RECOVERY)) == 1)
+            checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.INSERT_RECOVERY, event.route.eventId, scope.id, event.route.eventId, OwnerDeleteRows.array(promised)) == 1)
         }
         if (missingN) {
             check(input.recovery)
-            checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.AUTHORIZE_RECEIPT, event.route.eventId, Timestamp.from(checkNotNull(publication).createdAt), event.adminTuple.consumedGrantId, tuple.actor,
-                tuple.key, scope.id, tuple.fingerprintBytes(), target) == 1)
+            checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.AUTHORIZE_RECEIPT, event.route.eventId, Timestamp.from(checkNotNull(publication).createdAt), event.adminComparison.consumedGrantId, tuple.actor,
+                tuple.key, scope.id, tuple.operation, tuple.fingerprintBytes(), AdminDeleteRows.array(targets)) == 1)
         }
     }
     private fun completePrimary() {
@@ -306,16 +338,16 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
         } else check(row.state == "APPLIED" && exactApplied)
         val old = receipt
         if (old == null || old.state == "AUTHORIZED_DELETE") {
-            checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.COMPLETE_RECEIPT, event.adminTuple.epoch, row.objectVersion, row.ciphertextHash, tuple.actor, tuple.key,
-                scope.id, row.eventId, tuple.fingerprintBytes(), target) == 1)
+            checkWrite(); check(jdbc.update(AdminDeletePersistenceSql.COMPLETE_RECEIPT, event.adminComparison.epoch, row.objectVersion, row.ciphertextHash, tuple.actor, tuple.key,
+                scope.id, tuple.operation, row.eventId, tuple.fingerprintBytes(), AdminDeleteRows.array(targets)) == 1)
         } else {
-            check(old.state == "COMPLETED" && old.externalEvent == row.eventId && old.externalEpoch == event.adminTuple.epoch && old.externalVersion == row.objectVersion &&
+            check(old.state == "COMPLETED" && old.externalEvent == row.eventId && old.externalEpoch == event.adminComparison.epoch && old.externalVersion == row.objectVersion &&
                 old.externalHash.contentEquals(row.ciphertextHash))
         }
         primaryCompleted = true
     }
     private fun requireProof(row: OwnerDeleteRows.Publication, exactLocal: Boolean) {
-        row.requireAdminEvent(event)
+        row.requireAdminErasureEvent(event)
         val record = codec.parse(checkNotNull(row.verificationBytes), event)
         ComplaintAdminDeleteVerificationOperation.requireColumns(record, row)
         check(record.objectVersion == input.record.objectVersion && record.ciphertextSha256 == input.record.ciphertextSha256 && record.objectCreatedAt == input.record.objectCreatedAt)
@@ -338,21 +370,21 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
         requireSelected(selected); check(stage === Stage.COUNTERS && allocation === paid)
         val charge = OwnerDeleteCapacityCharges.RECEIPT.scaled(if (missingN) 1L else 0L) + OwnerDeleteCapacityCharges.PUBLICATION.scaled(if (missingP) 1L else 0L) +
             OwnerDeleteCapacityCharges.RESERVATION.scaled(if (missingL) 1L else 0L)
-        return charge to (if (missingL) OwnerDeleteCapacityCharges.RECOVERY else ComplaintCapacityVector.ZERO)
+        return charge to (if (missingL) promised else ComplaintCapacityVector.ZERO)
     }
-    internal fun materializedCounts(paid: JdbcComplaintCapacityStore.LockedAdminDeleteApply, selected: JdbcTemplate): TestOwnerDeleteMaterializedCounts {
+    internal fun materializedCounts(paid: JdbcComplaintCapacityStore.LockedAdminDeleteApply, selected: JdbcTemplate): TestAdminDeleteMaterializedCounts {
         requireSelected(selected); check(stage === Stage.SETTLING && allocation === paid); return checkNotNull(counts)
     }
     internal fun remainingReserve(paid: JdbcComplaintCapacityStore.LockedAdminDeleteApply, selected: JdbcTemplate): ComplaintCapacityVector {
-        requireSelected(selected); check(stage === Stage.SETTLING && allocation === paid); return reserve?.remaining ?: OwnerDeleteCapacityCharges.RECOVERY
+        requireSelected(selected); check(stage === Stage.SETTLING && allocation === paid); return reserve?.remaining ?: promised
     }
     internal fun recordProgress(paid: JdbcComplaintCapacityStore.LockedAdminDeleteApply, selected: JdbcTemplate, use: ComplaintCapacityVector) {
         requireSelected(selected); check(stage === Stage.SETTLING && allocation === paid)
         val prior = reserve?.used ?: ComplaintCapacityVector.ZERO
         val total = prior + use
-        check(total != OwnerDeleteCapacityCharges.RECOVERY && total.fitsWithin(OwnerDeleteCapacityCharges.RECOVERY))
+        check(total != promised && total.fitsWithin(promised))
         checkWrite()
-        check(jdbc.update(AdminDeletePersistenceSql.SPEND_RECOVERY, OwnerDeleteRows.array(total), primary.route.eventId, scope.id, OwnerDeleteRows.array(OwnerDeleteCapacityCharges.RECOVERY),
+        check(jdbc.update(AdminDeletePersistenceSql.SPEND_RECOVERY, OwnerDeleteRows.array(total), primary.route.eventId, scope.id, OwnerDeleteRows.array(promised),
             if (prior.isZero()) null else OwnerDeleteRows.array(prior), reserve?.convertedAt?.let(Timestamp::from)) == 1)
     }
     internal fun requireCapacityWrite(paid: JdbcComplaintCapacityStore.LockedAdminDeleteApply, selected: JdbcTemplate) { requireSelected(selected); check(allocation === paid && stage in setOf(Stage.COUNTERS, Stage.SETTLING)); checkWrite() }

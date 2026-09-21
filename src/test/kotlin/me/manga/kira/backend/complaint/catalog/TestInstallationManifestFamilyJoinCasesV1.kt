@@ -17,16 +17,25 @@ import org.junit.jupiter.api.assertThrows
 
 /** Focused connected source cases; execution/acceptance belongs to the controller, not this author. */
 internal object TestInstallationManifestFamilyJoinCasesV1 {
-    fun mixedEmittedFamiliesAndAliases(tls: VersionBoundPersistenceConnectedFixture) = withManifestFamilyJoinRun(tls, aliases = true) { f, admin, drain ->
+    fun mixedEmittedFamiliesAndAliases(tls: VersionBoundPersistenceConnectedFixture, adminBatch: Boolean = false) = withManifestFamilyJoinRun(tls, aliases = true, adminBatch = adminBatch) { f, admin, drain ->
         drain.requireManifestPredecessor()
-        assertThrows<TestOrdinaryDrainExceptionV1> { drain.requireInventoryKind("ADMIN_DELETE") }
+        val adminKind = if (adminBatch) "ADMIN_BATCH_DELETE" else "ADMIN_DELETE"
+        assertThrows<TestOrdinaryDrainExceptionV1> { drain.requireInventoryKind(adminKind) }
         val observed = TestOrdinaryDrainAccountingObservationV1(f, admin.eventId)
         val ordinary = manifestOrdinaryFamilyImage(f)
         val before = observed.state()
         val primaries = setOf(f.history.eventId, admin.eventId, f.history.allEventId)
         assertEquals(6L, drain.manifestCut().denial.firstInventory.versionCount)
-        assertEquals(4L, f.observer.queryForObject("SELECT count(*) FROM complaint_deletion_journal_applied WHERE data_scope_id = ? AND event_kind = 'ADMIN_DELETE'",
-            Long::class.java, f.scope))
+        assertEquals(4L, f.observer.queryForObject("SELECT count(*) FROM complaint_deletion_journal_applied WHERE data_scope_id = ? AND event_kind = ?",
+            Long::class.java, f.scope, adminKind))
+        assertEquals(if (adminBatch) 2 else 1, f.observer.queryForObject("SELECT target_count FROM complaint_journal_publications WHERE event_id = ?", Int::class.java, admin.eventId))
+        if (adminBatch) {
+            val literal = me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteLiteralCharges
+            assertEquals(literal.installation + literal.resource.scaled(2) + literal.audit.scaled(6) + literal.appliedOnly.scaled(4), before.promise)
+            assertEquals(literal.audit.scaled(5) + literal.appliedOnly.scaled(4), before.used)
+            assertEquals("CONVERTED", before.recoveryState)
+            assertEquals(3L, f.observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND entity_type = 'complaint_scope' AND action = 'COMPLAINT_RECOVERY_APPLIED'", Long::class.java, f.scope))
+        }
         assertEquals(0, f.observer.queryForObject("SELECT target_count FROM complaint_journal_publications WHERE event_id = ?", Int::class.java, f.history.allEventId))
         assertEquals("DELETED", f.observer.queryForObject("SELECT state FROM complaint_installation_ids WHERE id = ?", String::class.java, f.history.actor.id))
         assertEquals("DELETED", f.observer.queryForObject("SELECT state FROM app_installations WHERE id = ?", String::class.java, f.history.actor.id))
@@ -64,12 +73,13 @@ internal object TestInstallationManifestFamilyJoinCasesV1 {
     }
 
     /** Two fresh genuine histories only; damage is after drain and never restored/adopted by a successor. */
-    fun missingReceiptAndPaidAuditRefuse(tls: VersionBoundPersistenceConnectedFixture) {
-        for (publication in listOf(false, true)) withManifestFamilyJoinRun(tls) { f, admin, drain ->
+    fun missingReceiptAndPaidAuditRefuse(tls: VersionBoundPersistenceConnectedFixture, adminBatch: Boolean = false) {
+        for (publication in listOf(false, true)) withManifestFamilyJoinRun(tls, adminBatch = adminBatch) { f, admin, drain ->
+            val adminKind = if (adminBatch) "ADMIN_BATCH_DELETE" else "ADMIN_DELETE"
             val preparation = if (publication) prepare(f, drain) else null
             manifestRaw(f) { connection ->
                 val sql = if (publication) "DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND entity_id = ? AND action = 'COMPLAINT_DELETED' AND complaint_actor_kind = 'ADMIN'"
-                    else "DELETE FROM complaint_idempotency_receipts WHERE data_scope_id = ? AND publication_ref = ? AND operation = 'ADMIN_DELETE'"
+                    else "DELETE FROM complaint_idempotency_receipts WHERE data_scope_id = ? AND publication_ref = ? AND operation = '$adminKind'"
                 connection.prepareStatement(sql).use { statement ->
                     statement.setObject(1, f.scope)
                     statement.setString(2, if (publication) admin.target.toString() else admin.eventId)

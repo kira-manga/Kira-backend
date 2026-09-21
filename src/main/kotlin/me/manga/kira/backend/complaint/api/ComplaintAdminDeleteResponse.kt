@@ -17,6 +17,7 @@ internal class ComplaintAdminDeleteResponses(private val owner: ComplaintOwnerHi
         try {
             when (receipt) {
                 is ComplaintAdminDeleteReceipt.Applied -> Unit // No body writer, JSON or invented acknowledgement.
+                is ComplaintAdminDeleteReceipt.BatchApplied -> error("Batch receipt cannot acknowledge scalar DELETE")
                 is ComplaintAdminDeleteReceipt.Rejected -> buffer.write(checkNotNull(REJECTIONS[receipt.code]))
             }
             owner.requirePermit(permit)

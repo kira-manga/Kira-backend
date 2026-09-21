@@ -62,6 +62,16 @@ internal class TestAdminDeleteJournalPublisherV1 private constructor(
             val listed = s3.listExact(binding) ?: throw JournalPublicationExceptionV1(JournalPublicationFailureV1.UNRESOLVED)
             readback.verify(binding, listed, null) // Only real exact GET + AEAD/KMS can produce this recovery observation.
         }
+    internal fun readExistingBatch(tuple: me.manga.kira.backend.security.TestAdminBatchDeleteJournalTupleV1, targets: List<UUID>, routingKeyId: String, attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteJournalReadbackV1 =
+        journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
+            requireConnectionFree()
+            requireJournalPublication(tuple.eventKind == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE)
+            requireJournalPublication(!closed.get() && used.compareAndSet(false, true))
+            val expected = codec.canonicalizeAdminBatch(tuple, targets, routingKeyId)
+            val binding = TestOwnerDeleteS3BindingV1.readOnly(expected, routing, attempt)
+            val listed = s3.listExact(binding) ?: throw JournalPublicationExceptionV1(JournalPublicationFailureV1.UNRESOLVED)
+            readback.verify(binding, listed, null) // Only real exact GET + AEAD/KMS can produce this recovery observation.
+        }
     @Synchronized override fun close() {
         closed.set(true)
         withJournalPublicationCleanup({ journalPublicationClose { s3.close() } }) { journalPublicationClose { keys.close() } }

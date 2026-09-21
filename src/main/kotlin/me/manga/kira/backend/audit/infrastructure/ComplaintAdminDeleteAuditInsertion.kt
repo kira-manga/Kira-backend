@@ -30,14 +30,21 @@ internal class ComplaintAdminDeleteAuditInsertion private constructor(private va
                     statement.setString(1, when (entry.outcome) {
                         is AdminDeleteAuditOutcome.Authorized -> "COMPLAINT_DELETE_AUTHORIZED"
                         is AdminDeleteAuditOutcome.Removed -> "COMPLAINT_DELETED"
-                        is AdminDeleteAuditOutcome.RecoveryApplied -> "COMPLAINT_RECOVERY_APPLIED"
+                        is AdminDeleteAuditOutcome.RecoveryApplied, is AdminDeleteAuditOutcome.BatchRecoveryApplied -> "COMPLAINT_RECOVERY_APPLIED"
                     })
-                    statement.setString(2, entry.outcome.resourceId.toString())
-                    statement.setString(3, entry.detailJson)
-                    statement.setTimestamp(4, Timestamp.from(entry.createdAt))
-                    statement.setObject(5, entry.outcome.scope.id)
-                    statement.setString(6, if (entry.outcome.actorId == null) "SYSTEM" else "ADMIN")
-                    statement.setObject(7, entry.outcome.actorId)
+                    when (val outcome = entry.outcome) {
+                        is AdminDeleteAuditOutcome.Resource -> {
+                            statement.setString(2, "complaint"); statement.setString(3, outcome.resourceId.toString())
+                        }
+                        is AdminDeleteAuditOutcome.BatchRecoveryApplied -> {
+                            statement.setString(2, "complaint_scope"); statement.setString(3, outcome.scope.id.toString())
+                        }
+                    }
+                    statement.setString(4, entry.detailJson)
+                    statement.setTimestamp(5, Timestamp.from(entry.createdAt))
+                    statement.setObject(6, entry.outcome.scope.id)
+                    statement.setString(7, if (entry.outcome.actorId == null) "SYSTEM" else "ADMIN")
+                    statement.setObject(8, entry.outcome.actorId)
                     statement.executeQuery().use { row -> check(row.next() && row.getLong(1) > 0 && !row.wasNull() && !row.next()) }
                 }
                 charged.requireAuditInsert(insertion)
@@ -49,6 +56,6 @@ internal class ComplaintAdminDeleteAuditInsertion private constructor(private va
 
         private const val INSERT = "INSERT INTO audit_log " +
             "(action, entity_type, entity_id, detail, created_at, complaint_data_scope_id, complaint_actor_kind, actor_user_id) " +
-            "VALUES (?, 'complaint', ?, ?::jsonb, ?, ?, ?, ?) RETURNING id"
+            "VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?) RETURNING id"
     }
 }

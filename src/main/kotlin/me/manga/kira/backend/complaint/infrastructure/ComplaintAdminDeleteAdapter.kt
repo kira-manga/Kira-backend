@@ -2,6 +2,10 @@ package me.manga.kira.backend.complaint.infrastructure
 
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchDeleteInput
+import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchDeletePort
+import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchDeleteRequestContext
+import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteFamily
 import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteFailure
 import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteInput
 import me.manga.kira.backend.complaint.domain.ComplaintAdminDeletePort
@@ -28,15 +32,23 @@ internal class ComplaintAdminDeleteAdapter(
     private val reads: ComplaintAdminDeleteReadPhaseExecutor,
     private val phases: ComplaintAdminDeletePhaseExecutor,
     private val publisher: TestAdminDeleteJournalPublisherFactoryV1,
-) : ComplaintAdminDeletePort {
+) : ComplaintAdminDeletePort, ComplaintAdminBatchDeletePort {
     private val admission = graph.ingress
     private val continuation = ComplaintAdminDeleteContinuation(phases, publisher)
     init { phases.requireGraph(graph, reads); check(graph.recoveryRegistration == null && graph.routing.journalConfiguration.adminDelete) }
+    override fun delete(context: ComplaintAdminDeleteRequestContext, bearer: String, proof: String?, input: ComplaintAdminDeleteInput): ComplaintAdminDeleteReceipt =
+        execute(context as? ComplaintIngressContext ?: rejectAdminDelete(ComplaintAdminDeleteFailure.UNAVAILABLE), bearer, proof, ComplaintAdminDeleteRequest.normalize(input))
+    override fun deleteBatch(context: ComplaintAdminBatchDeleteRequestContext, bearer: String, proof: String?, input: ComplaintAdminBatchDeleteInput): ComplaintAdminDeleteReceipt {
+        check(graph.routing.journalConfiguration.adminBatchDelete)
+        return execute(context as? ComplaintIngressContext ?: rejectAdminDelete(ComplaintAdminDeleteFailure.UNAVAILABLE), bearer, proof, ComplaintAdminDeleteRequest.normalize(input))
+    }
     @Suppress("TooGenericExceptionCaught")
-    override fun delete(context: ComplaintAdminDeleteRequestContext, bearer: String, proof: String?, input: ComplaintAdminDeleteInput): ComplaintAdminDeleteReceipt {
+    private fun execute(ingress: ComplaintIngressContext, bearer: String, proof: String?, input: ComplaintAdminDeleteRequest): ComplaintAdminDeleteReceipt {
         requireConnectionFree()
-        val ingress = context as? ComplaintIngressContext ?: rejectAdminDelete(ComplaintAdminDeleteFailure.UNAVAILABLE)
-        admission.startAdminDelete(ingress)
+        when (input.family) {
+            ComplaintAdminDeleteFamily.SINGLE -> admission.startAdminDelete(ingress)
+            ComplaintAdminDeleteFamily.BATCH -> admission.startAdminBatchDelete(ingress)
+        }
         var confirmedGrant: UUID? = null
         try {
             val identity = decoder.decode(bearer)
@@ -44,14 +56,17 @@ internal class ComplaintAdminDeleteAdapter(
             if (!authenticated.contractValid) rejectAdminDelete(ComplaintAdminDeleteFailure.INTERNAL)
             authenticated.verdict.failure?.let { rejectAdminDelete(deleteFailure(it)) }
             if (input.scope != graph.routing.journalConfiguration.scope) rejectAdminDelete(ComplaintAdminDeleteFailure.NOT_FOUND)
-            val candidate = ComplaintAdminDeleteCandidate.prepare(identity.actor, ComplaintAdminDeleteRequest.normalize(input))
+            val candidate = ComplaintAdminDeleteCandidate.prepare(identity.actor, input)
             val preflight = reads.preflight(identity, candidate.tuple)
             preflight.failure?.let(::rejectAdminDelete)
             preflight.receipt?.let { return it }
             // Only a physically released committed receipt observation confirms historical authorization.
             confirmedGrant = preflight.authorizedGrantId
             if (preflight.authorized) return continuation.complete(phases.reload(identity, candidate, preflight))
-            val admitted = admission.admitAdminDelete(ingress, candidate.tuple)
+            val admitted = when (input.family) {
+                ComplaintAdminDeleteFamily.SINGLE -> admission.admitAdminDelete(ingress, candidate.tuple)
+                ComplaintAdminDeleteFamily.BATCH -> admission.admitAdminBatchDelete(ingress, candidate.tuple)
+            }
             return publisher.reserve().use { lane ->
                 val authorized = phases.authorize(identity, candidate, preflight, proof, admitted)
                 confirmedGrant = when (authorized) {

@@ -229,8 +229,8 @@ internal class TestOwnerDeleteJournalPublisherFixture(
         assertEquals(16, fields.last().length)
         assertEquals(
             AwsJournalKmsFixture.testOwnerDeleteFields(
-                journal, selected.route.objectKey, selected.route.eventId, selected.tuple.epoch, selected.route.routingKeyId, fields.last(),
-            ).toMutableList().also { it[5] = selected.tuple.eventKind.name },
+                journal, selected.route.objectKey, selected.route.eventId, selected.comparison.epoch, selected.route.routingKeyId, fields.last(),
+            ).toMutableList().also { it[5] = selected.comparison.eventKind.name },
             fields,
         )
         assertEquals(AwsJournalKmsFixture.url(AwsJournalKmsFixture.frame(fields)), encoded)

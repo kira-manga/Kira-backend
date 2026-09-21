@@ -9,10 +9,19 @@ internal class TestAdminDeleteJournalJsonV1(private val limits: JournalDecoderLi
     fun payload(bytes: ByteArray): TestAdminDeleteJournalPayloadV1 = parser.parse(bytes, limits.maximumPlaintextBytes,
         FIELDS, setOf("schemaVersion", "publicationEpoch"), mapOf("ownerInstallationIds" to 1, "complaintIds" to 1), TestAdminDeleteJournalPayloadV1.serializer())
     fun encodePayload(value: TestAdminDeleteJournalPayloadV1): ByteArray = parser.encode(TestAdminDeleteJournalPayloadV1.serializer(), value) { payload(it) }
-    private companion object {
+    internal companion object {
         val FIELDS = setOf("schemaVersion", "eventKind", "eventId", "publicationEpoch", "writerGeneration", "actorKind", "actorId",
             "operationKey", "requestFingerprint", "consumedGrantId", "ownerInstallationIds", "dataScopeKind", "dataScopeId", "complaintIds")
     }
+}
+
+/** Explicit batch grammar, retaining the exact flat Admin field set without widening scalar parsing. */
+internal class TestAdminBatchDeleteJournalJsonV1(private val limits: JournalDecoderLimitsV1) {
+    private val parser = ClosedJournalJsonV1(limits)
+    fun payload(bytes: ByteArray): TestAdminDeleteJournalPayloadV1 = parser.parse(bytes, limits.maximumPlaintextBytes,
+        TestAdminDeleteJournalJsonV1.FIELDS, setOf("schemaVersion", "publicationEpoch"),
+        mapOf("ownerInstallationIds" to 50, "complaintIds" to 50), TestAdminDeleteJournalPayloadV1.serializer())
+    fun encodePayload(value: TestAdminDeleteJournalPayloadV1): ByteArray = parser.encode(TestAdminDeleteJournalPayloadV1.serializer(), value) { payload(it) }
 }
 
 @Serializable

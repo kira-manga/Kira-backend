@@ -101,6 +101,7 @@ internal fun withActivationEvidence(
     ownerDeleteAll: Boolean = false,
     ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
     registeredAdminDelete: Boolean = false,
+    registeredAdminBatchDelete: Boolean = false,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
 ) {
     val rotations = OfflineCatalogRotationFixture.chain()
@@ -111,7 +112,10 @@ internal fun withActivationEvidence(
         limits = ordinaryDrain?.limits(original.limits)
             ?: original.limits.copy(capacity = original.limits.capacity.copy(maximumRetainedVersions = 10_000)),
     )
-    val journal = if (registeredAdminDelete) {
+    val journal = if (registeredAdminBatchDelete) {
+        require(ordinarySealHttp != null && ordinaryDrain != null)
+        TestOwnerDeleteJournalConfigurationV1.registeredAdminBatchErasure(declaration)
+    } else if (registeredAdminDelete) {
         require(ordinarySealHttp != null && ordinaryDrain != null)
         TestOwnerDeleteJournalConfigurationV1.registeredAdminErasure(declaration)
     } else TestOwnerDeleteJournalConfigurationV1.of(declaration, ownerDeleteAll = ownerDeleteAll)

@@ -8,6 +8,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProgressV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalRunContextV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSyntaxV1
 import me.manga.kira.backend.security.TestTerminalFramesV1
+import me.manga.kira.backend.security.TestTerminalChunkFoldV1
 import java.security.MessageDigest
 
 /**
@@ -83,7 +84,7 @@ internal class TestInstallationManifestSourceV1(
         val progress = source.finish()
         historical?.let { requireSameMembership(it, progress.installationReads().first()) }
         done = true
-        Observation(progress, descriptors.toList())
+        Observation(progress, descriptors.toList(), source)
     }
 
     private fun flush() {
@@ -115,9 +116,10 @@ internal class TestInstallationManifestSourceV1(
         override fun toString(): String = "TestInstallationManifestSourceV1.Descriptor(comparison-only,redacted)"
     }
 
-    class Observation(val progress: TestTerminalProgressV1, private val chunks: List<Descriptor>) {
+    class Observation(val progress: TestTerminalProgressV1, private val chunks: List<Descriptor>, private val source: TestInstallationSourceV1) {
         val count: Int get() = chunks.size
         fun chunk(index: Int): Descriptor = chunks[index]
+        internal fun startChunks(epoch: Long): TestTerminalChunkFoldV1 = source.startChunks(epoch)
         fun requireSame(other: Observation) {
             requireManifest(progress.context() == other.progress.context() && chunks == other.chunks)
             val first = progress.installationReads().first()

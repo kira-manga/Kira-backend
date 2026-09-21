@@ -68,6 +68,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingOpe
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestPublicationOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPurgeOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainOperationV1
 import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
 import me.manga.kira.backend.security.ComplaintGrantConsumption
@@ -105,6 +106,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForTestRunSealedAudit(operation: TestRunSealingOperationV1): LockedTestRunSealedAudit = LockedTestRunSealedAudit.lock(this, operation)
     internal fun lockForTestInstallationManifest(operation: TestInstallationManifestOperationV1): LockedTestInstallationManifest = LockedTestInstallationManifest.lock(this, operation)
     internal fun lockForTestInstallationManifestPublication(operation: TestInstallationManifestPublicationOperationV1): LockedTestInstallationManifestPublication = LockedTestInstallationManifestPublication.lock(this, operation)
+    internal fun lockForTestRunPurge(operation: TestRunPurgeOperationV1): LockedTestRunPurge = LockedTestRunPurge.lock(this, operation)
     internal fun lockForTestOrdinarySeal(operation: TestOrdinarySealOperationV1): LockedTestOrdinarySeal = LockedTestOrdinarySeal.lock(this, operation)
     internal fun lockForTestOrdinaryDrain(operation: TestOrdinaryDrainOperationV1): LockedTestOrdinaryDrain = LockedTestOrdinaryDrain.lock(this, operation)
 
@@ -467,14 +469,14 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     ) : AdminDeleteAuditAllocation {
         private var settled = false
         private var rejected = false
-        private var audit: ComplaintAdminDeleteAuditInsertion? = null
+        private val audits = ArrayList<ComplaintAdminDeleteAuditInsertion>(operation.authorizationAuditCount())
         fun belongsTo(candidate: ComplaintAdminDeleteAuthorizationOperation): Boolean = operation === candidate
         fun settledFor(candidate: ComplaintAdminDeleteAuthorizationOperation): Boolean = belongsTo(candidate) && settled
         fun completedFor(candidate: ComplaintAdminDeleteAuthorizationOperation): Boolean = settledFor(candidate) &&
-            (if (fresh && !rejected) audit?.completedFor(this) == true else audit == null)
+            (if (fresh && !rejected) audits.size == operation.authorizationAuditCount() && audits.all { it.completedFor(this) } else audits.isEmpty())
         fun keepReceiptOnly(candidate: ComplaintAdminDeleteAuthorizationOperation) {
             try {
-                check(candidate === operation && settled && fresh && !rejected && audit == null)
+                check(candidate === operation && settled && fresh && !rejected && audits.isEmpty())
                 val final = before.chargePrivacyActual(checkNotNull(store.expectedPolicyDigest), OwnerDeleteCapacityCharges.RECEIPT)
                 persist(charged.balance, final.balance, true)
                 rejected = true // The provisional obligation never commits; no promised future work is released here.
@@ -490,11 +492,11 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
             operation.requireCapacityWrite(this, store.jdbc, rejecting)
         }
         override fun beginAuditInsert(insertion: ComplaintAdminDeleteAuditInsertion, entry: CountedAdminDeleteAuditEntry): Connection {
-            check(fresh && settled && !rejected && audit == null && insertion.belongsTo(this))
-            val connection = operation.auditConnection(this, store.jdbc, entry)
-            audit = insertion; return connection
+            check(fresh && settled && !rejected && audits.size < operation.authorizationAuditCount() && audits.all { it.completedFor(this) } && insertion.belongsTo(this))
+            val connection = operation.auditConnection(this, store.jdbc, entry, audits.size)
+            audits.add(insertion); return connection
         }
-        override fun requireAuditInsert(insertion: ComplaintAdminDeleteAuditInsertion) { check(audit === insertion); operation.requireAuditWrite(this, store.jdbc) }
+        override fun requireAuditInsert(insertion: ComplaintAdminDeleteAuditInsertion) { check(audits.lastOrNull() === insertion); operation.requireAuditWrite(this, store.jdbc) }
         override fun failed(problem: Throwable): Nothing = operation.failed(problem)
         companion object {
             @Suppress("TooGenericExceptionCaught")
@@ -503,8 +505,8 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                     val fresh = operation.beginCounterLock(store.jdbc)
                     val before = store.readLockedLedger()
                     operation.requireCapacityPolicy(before, store.jdbc)
-                    val after = if (fresh) before.chargePrivacyActual(checkNotNull(store.expectedPolicyDigest), OwnerDeleteCapacityCharges.AUTHORIZATION)
-                        .reserveRecovery(checkNotNull(store.expectedPolicyDigest), OwnerDeleteCapacityCharges.RECOVERY) else {
+                    val after = if (fresh) before.chargePrivacyActual(checkNotNull(store.expectedPolicyDigest), operation.authorizationCharge())
+                        .reserveRecovery(checkNotNull(store.expectedPolicyDigest), operation.requiredRecovery()) else {
                         check((OwnerDeleteCapacityCharges.AUTHORIZATION - ComplaintCapacityCharges.AUDIT).fitsWithin(before.balance.actual))
                         check(operation.requiredRecovery().fitsWithin(before.balance.recoveryReserved))
                         before
@@ -1859,6 +1861,52 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 try {
                     operation.beginCounterLock(store.jdbc)
                     return LockedTestInstallationManifest(store, operation, store.readLockedCounters())
+                } catch (problem: Throwable) {
+                    operation.failed(problem)
+                }
+            }
+        }
+    }
+
+    internal class LockedTestRunPurge private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: TestRunPurgeOperationV1,
+        private val counters: LockedCounters,
+    ) {
+        private var issued = false
+        private var completed = false
+
+        internal fun completedFor(candidate: TestRunPurgeOperationV1): Boolean = operation === candidate && completed
+
+        internal fun settle(candidate: TestRunPurgeOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                operation.requireCounterTransfer(this, store.jdbc)
+                issued = true
+                val before = counters.ledger.balance
+                val after = operation.settleLockedLedger(store.jdbc, counters.ledger, counters.daily, checkNotNull(store.expectedPolicyDigest)).balance
+                for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                    operation.requireCounterTransfer(this, store.jdbc)
+                    if (before.actual[counter] == after.actual[counter] && before.recoveryReserved[counter] == after.recoveryReserved[counter] &&
+                        before.testReserved[counter] == after.testReserved[counter]) continue
+                    check(store.jdbc.update(TEST_RESERVE_COUNTER,
+                        after.actual[counter], after.recoveryReserved[counter], after.testReserved[counter], counter.storedName,
+                        before.free[counter], before.actual[counter], before.recoveryReserved[counter], before.testReserved[counter]) == 1)
+                }
+                operation.requireCounterTransfer(this, store.jdbc)
+                completed = true
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        override fun toString(): String = "LockedTestRunPurge(original-run-purge-physical-and-audit-promise,redacted)"
+
+        companion object {
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: TestRunPurgeOperationV1): LockedTestRunPurge {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    return LockedTestRunPurge(store, operation, store.readLockedCounters())
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }

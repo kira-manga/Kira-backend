@@ -25,6 +25,7 @@ internal class TestOwnerDeleteJournalRoutingV1 private constructor(
         require(tuple.scope == journalConfiguration.scope && when (tuple) {
             is TestOwnerDeleteJournalTupleV1 -> tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE || journalConfiguration.ownerDeleteAll
             is TestAdminDeleteJournalTupleV1 -> journalConfiguration.adminDelete
+            is TestAdminBatchDeleteJournalTupleV1 -> journalConfiguration.adminBatchDelete
         }) { INVALID_CONFIGURATION }
         val candidates = keys.map { key ->
             val opaqueKey = deriveMac(key, ROUTING_DOMAIN, tuple)

@@ -18,6 +18,12 @@ internal sealed interface TestDeletionJournalTupleV1 {
     fun encodedFingerprint(): String
 }
 
+/** Only immutable Admin erasure comparisons. Single-owner callers retain their exact scalar type. */
+internal sealed interface TestAdminErasureJournalTupleV1 : TestDeletionJournalTupleV1 {
+    val consumedGrantId: UUID
+    fun ownerInstallationIds(): List<UUID>
+}
+
 /** ADMIN and resolved owner are deliberately distinct. The grant is journal history, never a proof token. */
 internal class TestAdminDeleteJournalTupleV1(
     override val epoch: Long,
@@ -25,9 +31,9 @@ internal class TestAdminDeleteJournalTupleV1(
     override val operationKey: UUID,
     fingerprint: ByteArray,
     override val scope: ComplaintDataScope,
-    val consumedGrantId: UUID,
+    override val consumedGrantId: UUID,
     val ownerInstallationId: UUID,
-) : TestDeletionJournalTupleV1 {
+) : TestAdminErasureJournalTupleV1 {
     private val digest = fingerprint.copyOf()
     override val credentialVersion: Long? get() = null
     override val actorKind: ComplaintJournalActorKindV1 get() = ComplaintJournalActorKindV1.ADMIN
@@ -40,6 +46,7 @@ internal class TestAdminDeleteJournalTupleV1(
         ComplaintIdentifiers.installationId(ownerInstallationId.toString())
     }
     override fun fingerprintBytes(): ByteArray = digest.copyOf()
+    override fun ownerInstallationIds(): List<UUID> = listOf(ownerInstallationId)
     override fun encodedFingerprint(): String = Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
     override fun toString(): String = "TestAdminDeleteJournalTupleV1(redacted,no-authority)"
 }

@@ -197,15 +197,16 @@ internal object TestOrdinaryDrainSqlV1 {
     """.trimIndent()
     val adminPrimaryPage = """
         SELECT r.actor_id, r.idempotency_key,
-            (r.test_only AND r.actor_kind = 'ADMIN' AND r.operation = 'ADMIN_DELETE'
+            (r.test_only AND r.actor_kind = 'ADMIN' AND ((r.operation = 'ADMIN_DELETE' AND p.target_count = 1)
+                    OR (e.allow_batch AND r.operation = 'ADMIN_BATCH_DELETE' AND p.target_count BETWEEN 1 AND 50))
                 AND r.state = 'AUTHORIZED_DELETE' AND r.data_scope_id = e.scope AND complaint_is_v4(r.consumed_grant_id)
-                AND p.test_only AND p.data_scope_id = e.scope AND p.event_kind = 'ADMIN_DELETE' AND p.target_count = 1
+                AND p.test_only AND p.data_scope_id = e.scope AND p.event_kind = r.operation AND cardinality(r.target_ids) = p.target_count
                 AND p.state IN ('PREPARED', 'VERIFIED') AND p.writer_generation = e.writer
                 AND r.authorized_at = p.created_at AND isfinite(p.created_at) AND p.created_at <= e.sealed_at) IS TRUE AS valid
         FROM complaint_idempotency_receipts r FULL JOIN complaint_journal_publications p ON p.event_id = r.publication_ref
-        CROSS JOIN (SELECT ?::uuid AS scope, ?::uuid AS writer, ?::timestamptz AS sealed_at) e
-        WHERE (r.data_scope_id = e.scope AND r.operation = 'ADMIN_DELETE' AND r.state <> 'COMPLETED')
-            OR (p.data_scope_id = e.scope AND p.event_kind = 'ADMIN_DELETE' AND p.state <> 'APPLIED')
+        CROSS JOIN (SELECT ?::uuid AS scope, ?::uuid AS writer, ?::timestamptz AS sealed_at, ?::boolean AS allow_batch) e
+        WHERE (r.data_scope_id = e.scope AND r.operation IN ('ADMIN_DELETE', 'ADMIN_BATCH_DELETE') AND r.state <> 'COMPLETED')
+            OR (p.data_scope_id = e.scope AND p.event_kind IN ('ADMIN_DELETE', 'ADMIN_BATCH_DELETE') AND p.state <> 'APPLIED')
         ORDER BY COALESCE(p.created_at, r.authorized_at, r.created_at), COALESCE(p.event_id, r.publication_ref) COLLATE "C",
             r.actor_kind COLLATE "C", r.actor_id, r.idempotency_key LIMIT 3
     """.trimIndent()
@@ -278,29 +279,36 @@ internal object TestOrdinaryDrainSqlV1 {
     /** Unfiltered applicable relations: unsupported kinds/foreign scope, extra intents or orphaned history fail the whole attempt. */
     val supported = """
         WITH e AS MATERIALIZED (SELECT ?::uuid AS scope, ?::text AS ordinary_prefix, ?::text AS terminal_prefix, ?::uuid AS writer,
-            ?::boolean AS allow_all, ?::boolean AS allow_admin)
+            ?::boolean AS allow_all, ?::boolean AS allow_admin, ?::boolean AS allow_batch)
         SELECT (NOT EXISTS (SELECT 1 FROM complaint_journal_publications p CROSS JOIN e
                 WHERE (p.data_scope_id = e.scope OR p.object_key LIKE e.ordinary_prefix OR p.object_key LIKE e.terminal_prefix)
-                    AND (p.data_scope_id <> e.scope OR NOT p.test_only OR p.writer_generation <> e.writer OR NOT (p.event_kind = 'OWNER_DELETE' OR (e.allow_all AND p.event_kind = 'OWNER_DELETE_ALL') OR (e.allow_admin AND p.event_kind = 'ADMIN_DELETE'))
+                    AND (p.data_scope_id <> e.scope OR NOT p.test_only OR p.writer_generation <> e.writer OR NOT (p.event_kind = 'OWNER_DELETE' OR (e.allow_all AND p.event_kind = 'OWNER_DELETE_ALL') OR (e.allow_admin AND p.event_kind = 'ADMIN_DELETE') OR (e.allow_batch AND p.event_kind = 'ADMIN_BATCH_DELETE'))
+                        OR NOT ((p.event_kind = 'OWNER_DELETE' AND p.target_count = 1)
+                            OR (e.allow_all AND p.event_kind = 'OWNER_DELETE_ALL' AND p.target_count BETWEEN 0 AND 100)
+                            OR (e.allow_admin AND p.event_kind = 'ADMIN_DELETE' AND p.target_count = 1)
+                            OR (e.allow_batch AND p.event_kind = 'ADMIN_BATCH_DELETE' AND p.target_count BETWEEN 1 AND 50))
                         OR p.object_key NOT LIKE e.ordinary_prefix))
             AND NOT EXISTS (SELECT 1 FROM complaint_deletion_journal_applied a CROSS JOIN e
                 WHERE (a.data_scope_id = e.scope OR a.object_key LIKE e.ordinary_prefix OR a.object_key LIKE e.terminal_prefix)
-                    AND (a.data_scope_id <> e.scope OR NOT a.test_only OR a.writer_generation <> e.writer OR NOT (a.event_kind = 'OWNER_DELETE' OR (e.allow_all AND a.event_kind = 'OWNER_DELETE_ALL') OR (e.allow_admin AND a.event_kind = 'ADMIN_DELETE'))
+                    AND (a.data_scope_id <> e.scope OR NOT a.test_only OR a.writer_generation <> e.writer OR NOT (a.event_kind = 'OWNER_DELETE' OR (e.allow_all AND a.event_kind = 'OWNER_DELETE_ALL') OR (e.allow_admin AND a.event_kind = 'ADMIN_DELETE') OR (e.allow_batch AND a.event_kind = 'ADMIN_BATCH_DELETE'))
                         OR NOT ((a.event_kind = 'OWNER_DELETE' AND a.target_count = 1) OR (e.allow_all AND a.event_kind = 'OWNER_DELETE_ALL' AND a.target_count BETWEEN 0 AND 100)
-                            OR (e.allow_admin AND a.event_kind = 'ADMIN_DELETE' AND a.target_count = 1)) OR a.object_key NOT LIKE e.ordinary_prefix))
+                            OR (e.allow_admin AND a.event_kind = 'ADMIN_DELETE' AND a.target_count = 1)
+                            OR (e.allow_batch AND a.event_kind = 'ADMIN_BATCH_DELETE' AND a.target_count BETWEEN 1 AND 50)) OR a.object_key NOT LIKE e.ordinary_prefix))
             AND NOT EXISTS (SELECT 1 FROM complaint_journal_scan_entries a CROSS JOIN e
                 WHERE (a.data_scope_id = e.scope OR a.object_key LIKE e.ordinary_prefix OR a.object_key LIKE e.terminal_prefix)
-                    AND (a.data_scope_id <> e.scope OR NOT a.test_only OR a.writer_generation <> e.writer OR NOT (a.event_kind = 'OWNER_DELETE' OR (e.allow_all AND a.event_kind = 'OWNER_DELETE_ALL') OR (e.allow_admin AND a.event_kind = 'ADMIN_DELETE'))
+                    AND (a.data_scope_id <> e.scope OR NOT a.test_only OR a.writer_generation <> e.writer OR NOT (a.event_kind = 'OWNER_DELETE' OR (e.allow_all AND a.event_kind = 'OWNER_DELETE_ALL') OR (e.allow_admin AND a.event_kind = 'ADMIN_DELETE') OR (e.allow_batch AND a.event_kind = 'ADMIN_BATCH_DELETE'))
                         OR a.object_key NOT LIKE e.ordinary_prefix))
             AND NOT EXISTS (SELECT 1 FROM complaint_recovery_capacity_reservations r CROSS JOIN e
                 LEFT JOIN complaint_journal_publications p ON p.event_id = r.publication_ref
                 WHERE r.data_scope_id = e.scope AND (NOT r.test_only OR r.event_id <> r.publication_ref OR p.event_id IS NULL OR p.data_scope_id <> e.scope))
             AND NOT EXISTS (SELECT 1 FROM complaint_idempotency_receipts r CROSS JOIN e
                 LEFT JOIN complaint_journal_publications p ON p.event_id = r.publication_ref
-                WHERE r.data_scope_id = e.scope AND (NOT r.test_only OR (r.publication_ref IS NOT NULL AND
+                WHERE r.data_scope_id = e.scope AND (NOT r.test_only OR (r.operation = 'ADMIN_BATCH_DELETE' AND NOT e.allow_batch) OR (r.publication_ref IS NOT NULL AND
                     (p.event_id IS NULL OR p.data_scope_id <> e.scope OR NOT p.test_only OR
                         NOT ((r.operation = 'OWNER_DELETE' AND r.actor_kind = 'INSTALLATION' AND p.event_kind = 'OWNER_DELETE') OR
-                            (e.allow_admin AND r.operation = 'ADMIN_DELETE' AND r.actor_kind = 'ADMIN' AND p.event_kind = 'ADMIN_DELETE' AND p.target_count = 1))))
+                            (e.allow_admin AND r.operation = 'ADMIN_DELETE' AND r.actor_kind = 'ADMIN' AND p.event_kind = 'ADMIN_DELETE' AND p.target_count = 1) OR
+                            (e.allow_batch AND r.operation = 'ADMIN_BATCH_DELETE' AND r.actor_kind = 'ADMIN' AND p.event_kind = 'ADMIN_BATCH_DELETE'
+                                AND p.target_count BETWEEN 1 AND 50 AND cardinality(r.target_ids) = p.target_count))))
                     OR (r.external_event_id IS NOT NULL AND r.publication_ref IS NULL)))
             AND NOT EXISTS (SELECT 1 FROM complaint_deletion_journal_retirements r CROSS JOIN e WHERE r.data_scope_id = e.scope)
             AND NOT EXISTS (SELECT 1 FROM installation_deletion_receipts r CROSS JOIN e

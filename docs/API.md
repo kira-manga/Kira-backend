@@ -623,5 +623,40 @@ must never clear a fresh B from the historical Boolean alone. Duplicate/noncanon
 not usable evidence. Neither identity nor token/hash belongs in browser JSON, history/detail,
 URLs, logs or audits. Complaint mutation activation and BFF mounting remain separate work.
 Older backend readers require NULL ordinary associations: mixed old/new writers and rollback
-are not transparently compatible and require coordinated rollout. Future Admin delete/batch
-paths must preserve exact association, including the authorized-deletion phase-two 503 rule.
+are not transparently compatible and require coordinated rollout. The TEST Admin delete/batch
+paths preserve exact association, including the authorized-deletion phase-two 503 rule below.
+
+
+## Atomic Admin complaint batch DELETE (source candidate, not activated)
+
+The unregistered TEST-only shared batch dispatcher accepts:
+
+```text
+POST /api/v1/admin/complaints/batch?dataScopeId=<canonical TEST v4 UUID>
+X-Kira-Idempotency-Key: <canonical v4 UUID>
+{"action":"DELETE","targets":[{"id":"<canonical UUID>","actionTag":"\"complaint-<same UUID>-v7\""}]}
+200 {"items":[{"id":"<canonical UUID>"}]}
+```
+
+One current DB ADMIN and one complaint-scoped step-up grant authorize the complete batch.
+There are 1–50 distinct intact ID/tag pairs, sorted by UUID text; body and response are bounded
+32 KiB. Structural errors return400 before missing-tag428 before malformed/weak/wrong-target412.
+DELETE has no `status`, closure, owner or cascade fields and needs no successor version, including
+at Long.MAX_VALUE. The existing STATUS branch and scalar DELETE/204 remain distinct; a batch of
+one still returns the complete ID-only200, without ETag, Location or per-item outcomes.
+
+All targets must be current INSTALLATION REPORT/REPLY rows in the captured TEST scope. One
+missing/NOTICE target404, pending owner/resource409 or stale tag412 rejects the whole batch;
+unselected children never cascade. AUTH locks all sorted owner pairs, then resources/content,
+commits one pending set/outbox/receipt, and releases before native publication. Exact VERIFIED
+precedes one atomic APPLY. A midway failure cannot expose a partial deletion or partial ACK.
+
+The actor/key receipt is unique across operations/scopes. Exact replay/authorized continuation
+precedes new proof, admission and target checks, retaining the original consumed grant. Default
+admission is one batch member,60 batches/actor/hour, configurable1–60 in the same finite stores.
+Known post-authorization503 may carry the original consumed-grant headers; it is not completion.
+Unknown commit/release cannot invent that association. Retry uses the original key/body/scope/tags.
+
+These source paths do not mount a route, authorize LIVE, replace disabled404 or finish activation.
+Registered continuation/drain/manifest support and its accounting are described in
+[terminal family contract](COMPLAINT_TEST_TERMINAL_DURABLE_STORAGE_V1.md#atomic-admin-batch-ordinary-family-source-candidate).

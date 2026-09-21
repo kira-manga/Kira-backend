@@ -2,6 +2,8 @@ package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.common.infrastructure.persistence.ScopedStepUpFixture
+import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchDeleteInput
+import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchDeleteTarget
 import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteInput
 import me.manga.kira.backend.complaint.domain.ComplaintAdminDeletePrecondition
 import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteReceipt
@@ -21,6 +23,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintAdmin
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintAdminDeleteReadPhaseExecutor
 import me.manga.kira.backend.security.AdminReadTestUserJwt
 import me.manga.kira.backend.security.ScopedAdminStepUpScope
+import me.manga.kira.backend.security.TestAdminBatchDeleteJournalTupleV1
 import me.manga.kira.backend.security.TestAdminDeleteJournalTupleV1
 import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.User
@@ -196,6 +199,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
     val adminHistories = mutableListOf<AdminHistory>()
     class AdminHistory(val actor: UUID, val target: UUID, val key: UUID, val event: TestOwnerDeleteJournalEventV1, val grant: UUID) {
         val eventId: String get() = event.route.eventId
+        val targets: List<UUID> get() = event.complaintIds()
     }
     val histories = mutableListOf<History>()
     class History(val target: UUID, val key: UUID, val eventId: String)
@@ -340,9 +344,11 @@ internal class TestRunVerifiedOwnerDeleteFixture(
      * scoped complaint grant, AUTH commit/release and native publish/VERIFY/APPLY are genuine.
      * The registered continuation later receives actor/key LOCATORS only, never this work/proof.
      */
-    fun authorEarlierAdminHistory(verified: Boolean = false, applied: Boolean = false, recoverMissingOwner: Boolean = false): AdminHistory {
+    fun authorEarlierAdminHistory(verified: Boolean = false, applied: Boolean = false, recoverMissingOwner: Boolean = false,
+        batchTargets: Int? = null): AdminHistory {
         require(!applied || verified)
-        require(!recoverMissingOwner || verified && !applied && histories.isEmpty())
+        require(batchTargets == null || batchTargets in 1..50 && routing.journalConfiguration.registeredAdminBatchDelete)
+        require(!recoverMissingOwner || batchTargets == null && verified && !applied && histories.isEmpty())
         check(routing.journalConfiguration.registeredAdminDelete && adminHistories.isEmpty())
         check(histories.all { publicationState(it.eventId) == "APPLIED" })
         stageSyntheticComparisons()
@@ -356,22 +362,26 @@ internal class TestRunVerifiedOwnerDeleteFixture(
                 assertInstanceOf(InstallationEnrollmentResult.Enrolled::class.java, enrollment.enroll(context, enrollment.admitEnrollment(context, candidate)))
             }.also { historyEnrollment = it }
         }
-        val selectedTarget = if (histories.isEmpty()) target else UUID.randomUUID().also(ownedTargets::add)
+        val firstTarget = if (histories.isEmpty()) target else UUID.randomUUID().also(ownedTargets::add)
+        val selectedTargets = (listOf(firstTarget) + List((batchTargets ?: 1) - 1) { UUID.randomUUID().also(ownedTargets::add) }).sortedBy(UUID::toString)
+        val selectedTarget = selectedTargets.first()
         val selectedKey = UUID.randomUUID()
         val ownerJwt = InstallationJwtCodec(process.consumers.jwt.installationKeyRing, Clock.systemUTC())
         val ownerToken = ownerJwt.issue(enrolled.installation, enrolled.credentialVersion, enrolled.issuedAt).value
-        val report = (ComplaintReportRequest.normalize(checkNotNull(ComplaintReportIdentity.checked(selectedTarget.toString(), UUID.randomUUID().toString(), scope.id.toString())),
-            ComplaintType.TECHNICAL, "Synthetic Admin target", "Synthetic owner content to erase", ComplaintReportMetadataInput(null, "fixture", "", "")) as ComplaintReportRequestResult.Accepted).request
-        val createCandidate = ComplaintOwnerCreateCandidate.prepare(actor, report)
         val create = ComplaintOwnerCreatePhaseExecutor(ordinary.ownership, JdbcComplaintOwnerCreateStore(ordinary.jdbc, ordinaryCapacity, audit, lowerDesired))
-        ingress.withIngress(request()) { context ->
-            ingress.startOwnerCreate(context)
-            val identity = ownerJwt.verify(ownerToken).let { ComplaintOwnerOperationIdentity(it.installation, it.credentialVersion, it.issuedAt, it.expiresAt) }
-            assertEquals(ComplaintPlatform.ANDROID, create.authenticate(identity).platform)
-            assertNull(create.preflight(identity, createCandidate.tuple).receipt)
-            val created = create.create(identity, createCandidate, ComplaintPlatform.ANDROID, ingress.admitOwnerCreate(context, createCandidate.tuple))
-            assertNull(created.failure)
-            assertEquals(selectedTarget, assertInstanceOf(ComplaintOwnerReceipt.Applied::class.java, created.receipt).id)
+        selectedTargets.forEach { selected ->
+            val report = (ComplaintReportRequest.normalize(checkNotNull(ComplaintReportIdentity.checked(selected.toString(), UUID.randomUUID().toString(), scope.id.toString())),
+                ComplaintType.TECHNICAL, "Synthetic Admin target", "Synthetic owner content to erase", ComplaintReportMetadataInput(null, "fixture", "", "")) as ComplaintReportRequestResult.Accepted).request
+            val createCandidate = ComplaintOwnerCreateCandidate.prepare(actor, report)
+            ingress.withIngress(request()) { context ->
+                ingress.startOwnerCreate(context)
+                val identity = ownerJwt.verify(ownerToken).let { ComplaintOwnerOperationIdentity(it.installation, it.credentialVersion, it.issuedAt, it.expiresAt) }
+                assertEquals(ComplaintPlatform.ANDROID, create.authenticate(identity).platform)
+                assertNull(create.preflight(identity, createCandidate.tuple).receipt)
+                val created = create.create(identity, createCandidate, ComplaintPlatform.ANDROID, ingress.admitOwnerCreate(context, createCandidate.tuple))
+                assertNull(created.failure)
+                assertEquals(selected, assertInstanceOf(ComplaintOwnerReceipt.Applied::class.java, created.receipt).id)
+            }
         }
         val user = checkNotNull(observer.queryForObject(
             "SELECT id, email, password_hash, role, enabled, created_at, updated_at, credential_version FROM users WHERE id = ?",
@@ -383,11 +393,16 @@ internal class TestRunVerifiedOwnerDeleteFixture(
         val decoder = ComplaintAdminJwtIdentityDecoder(scope, userJwt.decoder, userJwt.properties.clockSkew)
         val grant = ScopedStepUpFixture(ordinary, p.f.rows.counters, policy.digestBytes(), phaseClock = Clock.systemUTC())
             .issue(ScopedAdminStepUpScope.COMPLAINT)
-        val raw = ComplaintAdminDeleteInput(scope, selectedTarget, selectedKey,
-            ComplaintAdminDeletePrecondition.parse(selectedTarget, "\"complaint-$selectedTarget-v1\""))
-        val candidate = ComplaintAdminDeleteCandidate.prepare(ordinary.userId, ComplaintAdminDeleteRequest.normalize(raw))
-        val event = codec.canonicalizeAdmin(TestAdminDeleteJournalTupleV1(11, ordinary.userId, selectedKey,
+        val description = if (batchTargets == null) ComplaintAdminDeleteRequest.normalize(ComplaintAdminDeleteInput(scope, selectedTarget, selectedKey,
+            ComplaintAdminDeletePrecondition.parse(selectedTarget, "\"complaint-$selectedTarget-v1\"")))
+        else ComplaintAdminDeleteRequest.normalize(ComplaintAdminBatchDeleteInput(scope, selectedKey, selectedTargets.map {
+            ComplaintAdminBatchDeleteTarget(it, ComplaintAdminDeletePrecondition.parse(it, "\"complaint-$it-v1\""))
+        }))
+        val candidate = ComplaintAdminDeleteCandidate.prepare(ordinary.userId, description)
+        val event = if (batchTargets == null) codec.canonicalizeAdmin(TestAdminDeleteJournalTupleV1(11, ordinary.userId, selectedKey,
             candidate.tuple.fingerprintBytes(), scope, grant.grantId, actor.id), selectedTarget)
+        else codec.canonicalizeAdminBatch(TestAdminBatchDeleteJournalTupleV1(11, ordinary.userId, selectedKey,
+            candidate.tuple.fingerprintBytes(), scope, grant.grantId, listOf(actor.id)), selectedTargets)
         val provider = TestOwnerDeleteJournalPublisherFixture(routing, event).also { wire = it }
         provider.wall = p.databaseTime()
         provider.beforeOpen = { requireConnectionFree(); provider.wall = p.databaseTime() }
@@ -402,12 +417,13 @@ internal class TestRunVerifiedOwnerDeleteFixture(
             provider.clock, { provider.nanos }).use { publishers ->
             val work = publishers.reserve().use {
                 ingress.withIngress(request()) { context ->
-                    ingress.startAdminDelete(context)
+                    if (batchTargets == null) ingress.startAdminDelete(context) else ingress.startAdminBatchDelete(context)
                     val identity = decoder.decode(token)
                     assertNull(adminReads.authenticate(identity).verdict.failure)
                     val preflight = adminReads.preflight(identity, candidate.tuple)
                     assertNull(preflight.failure); assertNull(preflight.receipt); assertFalse(preflight.authorized)
-                    val authorized = adminPhases.authorize(identity, candidate, preflight, grant.token, ingress.admitAdminDelete(context, candidate.tuple))
+                    val admitted = if (batchTargets == null) ingress.admitAdminDelete(context, candidate.tuple) else ingress.admitAdminBatchDelete(context, candidate.tuple)
+                    val authorized = adminPhases.authorize(identity, candidate, preflight, grant.token, admitted)
                     assertInstanceOf(CommittedTestAdminDeleteWork.Prepared::class.java,
                         assertInstanceOf(TestAdminDeleteAuthorizationV1.Continue::class.java, authorized).work)
                 }
@@ -416,8 +432,12 @@ internal class TestRunVerifiedOwnerDeleteFixture(
             assertEquals(grant.grantId, work.consumedGrantId)
             if (verified) {
                 val proof = adminPhases.verify(publishers.reserve().use { it.publish(work) })
-                if (applied) assertEquals(grant.grantId,
-                    assertInstanceOf(ComplaintAdminDeleteReceipt.Applied::class.java, adminPhases.apply(work, proof)).consumedGrantId)
+                if (applied) {
+                    val receipt = adminPhases.apply(work, proof)
+                    assertEquals(grant.grantId, receipt.consumedGrantId)
+                    if (batchTargets == null) assertInstanceOf(ComplaintAdminDeleteReceipt.Applied::class.java, receipt)
+                    else assertEquals(selectedTargets, assertInstanceOf(ComplaintAdminDeleteReceipt.BatchApplied::class.java, receipt).ids)
+                }
                 if (recoverMissingOwner) {
                     // Synthetic old-snapshot domain loss, not fabricated recovery bookkeeping or
                     // success. The native reader and lower reducer reconstruct only paid identities.
