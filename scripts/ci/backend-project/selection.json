@@ -1,0 +1,102 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 26,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "First recurrent prerequisite; capture actual bind/body failure before descendant reruns.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineOwnerDeleteRequiresArchivedPredecessorTwoPaidNativePassesApplyAndPhysicalRefund",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "de342ff11a83053e705238133d29c55a194fbb62",
+      "source_sha256": "eef1441fcffb6e623a4861cfcb35ce60de29d2867a6bc5274a26ca6eb2b7233b",
+      "xml_names": [
+        "genuineOwnerDeleteRequiresArchivedPredecessorTwoPaidNativePassesApplyAndPhysicalRefund()"
+      ]
+    },
+    {
+      "annotation_line": 219,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "Queue security/history prerequisite; new fixed phase code/outcome/cleanup diagnostic for actual setup failure.",
+      "expected_invocations_from_annotation": 1,
+      "method": "allAuthenticatedProtocolHistoryWithWrongTargetsOrAnotherVersionAtTheSameKeyRemainsUnacked",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "de342ff11a83053e705238133d29c55a194fbb62",
+      "source_sha256": "a4c5caa78b40ed00d69db866700ec844ea1e6fede773291ed8290a85b5f9c048",
+      "xml_names": [
+        "allAuthenticatedProtocolHistoryWithWrongTargetsOrAnotherVersionAtTheSameKeyRemainsUnacked()"
+      ]
+    },
+    {
+      "annotation_line": 39,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "No-A terminal prerequisite; capture actual bind/body failure without assuming cascade.",
+      "expected_invocations_from_annotation": 1,
+      "method": "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "de342ff11a83053e705238133d29c55a194fbb62",
+      "source_sha256": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+      "xml_names": [
+        "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging()"
+      ]
+    },
+    {
+      "annotation_line": 91,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "Retained-D PREPARED prerequisite affected by child cleanup; capture actual bind/body PhaseException if unresolved.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "de342ff11a83053e705238133d29c55a194fbb62",
+      "source_sha256": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+      "xml_names": [
+        "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain()"
+      ]
+    },
+    {
+      "annotation_line": 92,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "Actual34 failed native-order baseline corrected with exact immutable prior order and borrowed-owner child teardown.",
+      "expected_invocations_from_annotation": 1,
+      "method": "retainedDSelectedPrimaryRefusesStolenLeaseBeforeReloadingItsReceipt",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "de342ff11a83053e705238133d29c55a194fbb62",
+      "source_sha256": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+      "xml_names": [
+        "retainedDSelectedPrimaryRefusesStolenLeaseBeforeReloadingItsReceipt()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 5,
+  "expected_total": 5,
+  "selection_basis": {
+    "cohorts": {
+      "Actual34 failed native-order baseline corrected with exact immutable prior order and borrowed-owner child teardown.": 1,
+      "First recurrent prerequisite; capture actual bind/body failure before descendant reruns.": 1,
+      "No-A terminal prerequisite; capture actual bind/body failure without assuming cascade.": 1,
+      "Queue security/history prerequisite; new fixed phase code/outcome/cleanup diagnostic for actual setup failure.": 1,
+      "Retained-D PREPARED prerequisite affected by child cleanup; capture actual bind/body PhaseException if unresolved.": 1
+    },
+    "previous_run": "35596889679",
+    "scope": "Five affected failed prerequisites only: sole-reviewed TEST2 original-owner/baseline correction plus TEST3 bounded phase diagnostics. Do not replay16 passing tests or13 blocked failed descendants unchanged. All18 actual34 failures and component teardown remain unresolved until actual outcomes; no shared cause inferred."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt": "a4c5caa78b40ed00d69db866700ec844ea1e6fede773291ed8290a85b5f9c048",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "eef1441fcffb6e623a4861cfcb35ce60de29d2867a6bc5274a26ca6eb2b7233b"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 3,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuineOwnerDeleteRequiresArchivedPredecessorTwoPaidNativePassesApplyAndPhysicalRefund",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.allAuthenticatedProtocolHistoryWithWrongTargetsOrAnotherVersionAtTheSameKeyRemainsUnacked",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.retainedDSelectedPrimaryRefusesStolenLeaseBeforeReloadingItsReceipt"
+  ]
+}
