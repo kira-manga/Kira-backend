@@ -283,6 +283,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             profile = when {
                 activeFirstCutInput != null -> ComplaintTestDeploymentInputsV1.ACTIVE_FIRST_CUT_PROFILE
                 ordinaryDrain == null -> template.profile
+                journal.registeredAdminBatchDelete -> ComplaintTestDeploymentInputsV1.ADMIN_BATCH_ERASURE_DRAIN_PROFILE
                 journal.registeredAdminDelete -> ComplaintTestDeploymentInputsV1.ADMIN_ERASURE_DRAIN_PROFILE
                 journal.ownerDeleteAll -> ComplaintTestDeploymentInputsV1.OWNER_ERASURE_DRAIN_PROFILE
                 else -> ComplaintTestDeploymentInputsV1.DRAIN_PROFILE
