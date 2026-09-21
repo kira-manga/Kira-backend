@@ -1,0 +1,134 @@
+{
+  "branch": "refs/heads/remediation/backend-app29-logical-native3-20260921-04",
+  "compile_only_init_sha256": "e6bab697a25bf6de7600b57a1056dbfd6cca261b3e7eacf029006a7d11515d02",
+  "control_sha256": {
+    "app29_linux_owned_processes.py": "ac6fb4b61186c09ab06f9b4a543cb58e65dcbcdfe6ba405f6afbe1814b7fc455",
+    "normal-runtime.init.gradle": "07bf7e5722990c345a685d80d6d821f3ac7435501750a9a061d21f292319d6ce",
+    "reconstruct-runtime.py": "0ce007f94f506e707dfe3dd9fd5a0a9552009093f034ea7b2ffe2202eaf3d6d5",
+    "runtime-binding.json": "840022fcbb32d6f73275ccca179dc22e44c2f936952b132528362dc6720b4838",
+    "runtime-publication.init.gradle": "bbb1c7f0def614d5dacf57a267c02b5d67c289dc4d74f76f4726479089852974",
+    "runtime-repositories.init.gradle": "b401e5c96d07b4781300f9b2f102ecfc87b3b4de1c793b503c02db14503582b6"
+  },
+  "database": "kira_qcap_it_hosted_native3",
+  "evidence": {
+    "raw_capture_artifacts": false,
+    "raw_logs": false,
+    "synthetic_capture_disposal": "ONLY_AFTER_OWNED_WRITERS_ENDED",
+    "vm_disposal_is_product_cleanup": false
+  },
+  "host": {
+    "architecture": "x86_64",
+    "image_os": "ubuntu24",
+    "jdk_environment": "JAVA_HOME_21_X64",
+    "libraries": [
+      "/usr/lib/x86_64-linux-gnu/libssl.so.3",
+      "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+      "/usr/lib/x86_64-linux-gnu/libz.so.1",
+      "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "/usr/lib/x86_64-linux-gnu/libc.so.6"
+    ],
+    "os_id": "ubuntu",
+    "os_version": "24.04",
+    "packages": [
+      "gcc-13",
+      "binutils",
+      "make",
+      "m4",
+      "bison",
+      "flex",
+      "libc6",
+      "libc6-dev",
+      "libssl3t64",
+      "libssl-dev",
+      "zlib1g",
+      "zlib1g-dev",
+      "python3.12",
+      "libpython3.12-stdlib",
+      "openssl",
+      "curl",
+      "ubuntu-keyring"
+    ],
+    "tools": {
+      "ar": "/usr/bin/ar",
+      "bison": "/usr/bin/bison",
+      "cc": "/usr/bin/gcc-13",
+      "curl": "/usr/bin/curl",
+      "dpkg-query": "/usr/bin/dpkg-query",
+      "flex": "/usr/bin/flex",
+      "git": "/usr/bin/git",
+      "m4": "/usr/bin/m4",
+      "make": "/usr/bin/make",
+      "openssl": "/usr/bin/openssl",
+      "python": "/usr/bin/python3.12",
+      "ranlib": "/usr/bin/ranlib"
+    }
+  },
+  "limits": {
+    "admission_disk_bytes": 8589934592,
+    "admission_memory_bytes": 8589934592,
+    "cleanup_reserve_seconds": 180,
+    "compile_seconds": 1200,
+    "floor_disk_bytes": 3221225472,
+    "floor_memory_bytes": 2147483648,
+    "gradle_log_bytes": 33554432,
+    "native_seconds": 480,
+    "pg_installed_bytes": 268435456,
+    "pg_installed_paths": 5000,
+    "pg_stage_seconds": 600,
+    "work_seconds": 2280
+  },
+  "pg_source": {
+    "archive_entries": 7633,
+    "archive_files": 7009,
+    "archive_pax_headers": {
+      "comment": "7885b94dd81b98bbab9ed878680d156df7bf857f"
+    },
+    "archive_uncompressed_bytes": 134745739,
+    "bytes": 21623975,
+    "configure": [
+      "--without-readline",
+      "--without-icu",
+      "--with-openssl"
+    ],
+    "make_jobs": 2,
+    "pg_dump_c_sha256": "492bf92268986d0764664fd5f6edb606d111fcbe9b73af2787bd776cfd3c7f47",
+    "sha256": "e0630a3600aea27511715563259ec2111cd5f4353a4b040e0be827f94cd7a8b0",
+    "top_directory": "postgresql-17.6",
+    "url": "https://ftp.postgresql.org/pub/source/v17.6/postgresql-17.6.tar.bz2"
+  },
+  "port": 55476,
+  "primary_authority": "ADMITTED_BY_PRIMARY",
+  "primary_dispatch_authority": "ADMITTED_BY_PRIMARY",
+  "producer_inputs": {
+    "controls": {
+      "app29_linux_owned_processes.py": "ac6fb4b61186c09ab06f9b4a543cb58e65dcbcdfe6ba405f6afbe1814b7fc455",
+      "normal-runtime.init.gradle": "07bf7e5722990c345a685d80d6d821f3ac7435501750a9a061d21f292319d6ce",
+      "reconstruct-runtime.py": "0ce007f94f506e707dfe3dd9fd5a0a9552009093f034ea7b2ffe2202eaf3d6d5",
+      "runtime-binding.json": "840022fcbb32d6f73275ccca179dc22e44c2f936952b132528362dc6720b4838",
+      "runtime-publication.init.gradle": "bbb1c7f0def614d5dacf57a267c02b5d67c289dc4d74f76f4726479089852974",
+      "runtime-repositories.init.gradle": "b401e5c96d07b4781300f9b2f102ecfc87b3b4de1c793b503c02db14503582b6"
+    },
+    "jdk": {
+      "bin/java": "2a207f5e7d075afa01d97f8048389a64432a44c4a5af0f5e77d6e286ec5f401d",
+      "lib/modules": "70c5465dabf8e1bec2860631ea3ffd342f0ec23a5e2efd3a389d2abe32448f98",
+      "lib/server/libjvm.so": "462fa559157ee8a862e7e4b8a4a74f8abbf5e1a9deb64f22ee23c7e8c43f698b",
+      "release": "ebbd70bf00bab6d39addf51969c5ff244030b86b29de400b9fb10612ebd3ceec"
+    }
+  },
+  "profile": "HOSTED_NATIVE_CLASS3_SUPPLIER_DIAGNOSTIC_UNQUALIFIED",
+  "runner_sha256": "dfc180dde51726cd1a0f7db929b3507e086e374df2f48d2bdffb385757f0ccad",
+  "runtime_reuse_sha256": "c9996b4a5e13f599b2cbcda6d4dcc7beada3b50489e01aac94db29edbd111647",
+  "schema": 1,
+  "source": {
+    "bundle_helper_sha256": "a5a85576b144e3b57cf98e25f24ecbe6a195d47ccfa793c638c3023b30e553fa",
+    "canonical_files_sha256": "be697bb96efd4d141daaa52efc64acdfbb89249d00668c8f3e93b68587fad705",
+    "file_count": 2448,
+    "inventory_sha256": "ffa95ca0c2166246fd17320da407a9d1a510c08d76c58a7033b9c7c137e92d20",
+    "native_test_sha256": "1c854106e7f6f1754b5e8d00dee039801a4361eff7fd7e262e0d87a29c166e84",
+    "sha": "a16ec218e5134881236e7fecff6584ef584026ba",
+    "status": "ROOT_TEST1_REVIEWED_NOT_RUN",
+    "tree": "a938d0b63fffb678c7a6eb0f544093d76c7ee627"
+  },
+  "status": "BOUND",
+  "username": "kira_qcap_fixture"
+}

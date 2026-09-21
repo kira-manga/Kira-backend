@@ -1,0 +1,9 @@
+// Private preparation only: ordinary full sources compile, but no Test worker is started.
+// NOT a native test invocation or a passing/skipped-test qualification receipt.
+import org.gradle.api.GradleException
+gradle.projectsEvaluated {
+    if (System.getenv('KIRA_QCAP_COMPILE_ONLY') != 'true') {
+        throw new GradleException('Compile preparation must be explicitly selected')
+    }
+    gradle.rootProject.tasks.named('test').get().onlyIf('Local compile preparation; native execution is separate') { false }
+}
