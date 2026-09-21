@@ -52,6 +52,26 @@ internal class TestActiveSealRecoveryColdInputsV1Test {
             "No silent change in full-D pools/provider inventories, quotas, timeout/capacity/price or old absent bytes.")
     }
 
+    @Test fun `current PUT floor is an explicit subrecipe and changes only its policy in full D`() {
+        val old = activeDocument().copy(profile = ComplaintTestDeploymentInputsV1.ACTIVE_SEAL_RECOVERY_PROFILE,
+            activeOrdinarySealRecovery = TestActiveSealRecoveryInputFixtureV1.input())
+        val current = old.copy(activeOrdinarySealRecovery = TestActiveSealRecoveryInputFixtureV1.currentPutFloorInput())
+        val oldBytes = assembled(old)
+        val currentBytes = assembled(current)
+        assertFalse(oldBytes.contentEquals(currentBytes), "The new retention policy must be born into a different full D.")
+        val oldD = Json.parseToJsonElement(oldBytes.decodeToString()).jsonObject
+        val currentD = Json.parseToJsonElement(currentBytes.decodeToString()).jsonObject
+        assertEquals(oldD.getValue("profile"), currentD.getValue("profile"), "No new top-level profile or default.")
+        val oldPolicy = oldD.getValue("activeOrdinarySealRecovery").jsonObject
+        val currentPolicy = currentD.getValue("activeOrdinarySealRecovery").jsonObject
+        assertEquals(VersionBoundTestActiveOrdinarySealRecoveryV1.CURRENT_PUT_FLOOR_PROFILE, currentPolicy.getValue("profile").jsonPrimitive.content)
+        assertEquals("IMMUTABLE_FROZEN_M_ONE_PUT_L_MAX_M_CURRENT_FLOOR_ACK_A_GE_L_ADOPTION_ACTUAL_FLOORS", currentPolicy.getValue("retention").jsonPrimitive.content)
+        val withoutOnlyNewPolicy = JsonObject(currentD + ("activeOrdinarySealRecovery" to JsonObject(currentPolicy +
+            mapOf("profile" to oldPolicy.getValue("profile"), "retention" to oldPolicy.getValue("retention")))))
+        assertArrayEquals(oldBytes, CanonicalJson.canonicalize(withoutOnlyNewPolicy).toByteArray(),
+            "The old recipe, resource/price, provider, timing and capacity inventories remain byte-identical.")
+    }
+
     @Test fun `old defaults omit recovery and malformed profile partial recipe unknown field or schema refuses before secrets`() {
         val old = activeDocument()
         val bytes = TestDeploymentInputFixture.bytes(old)

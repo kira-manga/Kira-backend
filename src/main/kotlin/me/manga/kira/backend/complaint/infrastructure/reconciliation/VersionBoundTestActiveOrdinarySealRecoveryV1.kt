@@ -12,8 +12,10 @@ import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
 internal class VersionBoundTestActiveOrdinarySealRecoveryV1 private constructor(
     private val pools: VersionBoundPersistencePools, private val routing: TestOwnerDeleteJournalRoutingV1,
     private val firstCut: VersionBoundTestActiveFirstCutV1, private val seal: VersionBoundTestOrdinarySealV1,
+    private val profile: String,
 ) {
     init { requireRetained(pools, routing, firstCut, seal) }
+    internal val usesCurrentPutFloor get() = profile == CURRENT_PUT_FLOOR_PROFILE
     internal fun requireRetained(selectedPools: VersionBoundPersistencePools, selectedRouting: TestOwnerDeleteJournalRoutingV1,
         selectedFirstCut: VersionBoundTestActiveFirstCutV1?, selectedSeal: VersionBoundTestOrdinarySealV1?) {
         requireActiveSealRecovery(pools === selectedPools && routing === selectedRouting && firstCut === selectedFirstCut && seal === selectedSeal &&
@@ -22,7 +24,7 @@ internal class VersionBoundTestActiveOrdinarySealRecoveryV1 private constructor(
     }
     internal fun inventory() = buildJsonObject {
         requireConnectionFree(); requireRetained(pools, routing, firstCut, seal)
-        put("schemaVersion", 1); put("profile", PROFILE)
+        put("schemaVersion", 1); put("profile", profile)
         put("journalConfigurationSha256", routing.journalConfiguration.sha256)
         put("states", "CAPTURED_FIRST_RANGE_SEAL_PREPARED_CANONICAL_OR_WIRE_FROZEN")
         put("closure", "EMPTY_ONLY_UNFILTERED_LOCAL_PASSES_NO_RESOLVER")
@@ -30,7 +32,8 @@ internal class VersionBoundTestActiveOrdinarySealRecoveryV1 private constructor(
         put("historical", "IMMUTABLE_PREPARING_TOKEN_CANONICAL_RETAINED_ROUTE_AND_FROZEN_WINNER")
         put("wire", "GENERATE_ONLY_IF_CANONICAL_THEN_CAS_RELOAD_KNOWN_RELEASE")
         put("native", "EXISTING_EXACT_LIST_OPTIONAL_ONE_PUT_GET_AEAD_ACTUAL_CLOSE_BEFORE_VERIFY")
-        put("retention", "IMMUTABLE_FROZEN_REQUEST_MISSING_OBJECT_MAY_REFUSE_NO_REPAIR")
+        put("retention", if (usesCurrentPutFloor) "IMMUTABLE_FROZEN_M_ONE_PUT_L_MAX_M_CURRENT_FLOOR_ACK_A_GE_L_ADOPTION_ACTUAL_FLOORS"
+            else "IMMUTABLE_FROZEN_REQUEST_MISSING_OBJECT_MAY_REFUSE_NO_REPAIR")
         put("totalAttemptMillis", routing.journalConfiguration.declaration().limits.deadlines.epochSealMillis)
         put("phaseMillis", 2_000); put("leaseMillis", 30_000); put("renewalWindowMillis", 10_000)
         put("newCharge", 0); put("success", "HISTORICAL_ONLY_NO_A_RESULT_CHECKPOINT_HEALTH_OR_TERMINAL")
@@ -38,12 +41,13 @@ internal class VersionBoundTestActiveOrdinarySealRecoveryV1 private constructor(
     override fun toString(): String = "VersionBoundTestActiveOrdinarySealRecoveryV1(pre-D-empty-only,redacted)"
     companion object {
         const val PROFILE = "TEST_ACTIVE_INITIAL_EMPTY_PREVERIFY_SEAL_RECOVERY_V1"
+        const val CURRENT_PUT_FLOOR_PROFILE = "TEST_ACTIVE_INITIAL_EMPTY_PREVERIFY_SEAL_RECOVERY_CURRENT_PUT_FLOOR_V1"
         internal fun requireInput(input: TestActiveOrdinarySealRecoveryInputV1) =
-            requireActiveSealRecovery(input.schemaVersion == 1 && input.profile == PROFILE)
+            requireActiveSealRecovery(input.schemaVersion == 1 && input.profile in setOf(PROFILE, CURRENT_PUT_FLOOR_PROFILE))
         internal fun fromRetained(input: TestActiveOrdinarySealRecoveryInputV1, pools: VersionBoundPersistencePools,
             routing: TestOwnerDeleteJournalRoutingV1, firstCut: VersionBoundTestActiveFirstCutV1, seal: VersionBoundTestOrdinarySealV1): VersionBoundTestActiveOrdinarySealRecoveryV1 {
             requireConnectionFree(); requireInput(input)
-            return VersionBoundTestActiveOrdinarySealRecoveryV1(pools, routing, firstCut, seal)
+            return VersionBoundTestActiveOrdinarySealRecoveryV1(pools, routing, firstCut, seal, input.profile)
         }
     }
 }

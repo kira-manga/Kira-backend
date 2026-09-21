@@ -6,4 +6,5 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoun
 /** Literal test selector supplied before protected parsing/D, not a restored owner or phase result. */
 internal object TestActiveSealRecoveryInputFixtureV1 {
     fun input() = TestActiveOrdinarySealRecoveryInputV1(1, VersionBoundTestActiveOrdinarySealRecoveryV1.PROFILE)
+    fun currentPutFloorInput() = TestActiveOrdinarySealRecoveryInputV1(1, VersionBoundTestActiveOrdinarySealRecoveryV1.CURRENT_PUT_FLOOR_PROFILE)
 }

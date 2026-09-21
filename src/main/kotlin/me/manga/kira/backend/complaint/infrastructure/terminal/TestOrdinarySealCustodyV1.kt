@@ -74,16 +74,21 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
         requirePublication()
         original.requireUnverifiedSeal()
         val row = frozen()
-        if (original !is Original.TerminalEpoch) {
+        if (!original.usesCurrentPutFloor) {
             requireOrdinarySeal(!checkNotNull(row.retainUntil).isBefore(acquisition.newRetention(attempt, row.binding.createdAt)))
+        } else if (original is Original.Recovery) {
+            // Shape retains M>=createdAt+10y. Keep the old horizon/current-M guards without moving M.
+            val minimum = checkNotNull(row.retainUntil)
+            requireOrdinarySeal(minimum.isAfter(acquisition.sampleUtc()) &&
+                !minimum.isBefore(acquisition.retention.lastPreRunRestoreHorizon.plusSeconds(31 * 86_400L)))
         }
     }
-    /** TERMINAL uses frozen metadata M unchanged and one captured current PUT lock max(M,new floor). */
+    /** Only TERMINAL epoch or the explicit recovery recipe may strengthen one PUT lock; frozen M never changes. */
     internal fun putRetention(): Instant {
         requirePutRetention()
         val row = frozen()
         val frozen = checkNotNull(row.retainUntil)
-        return if (original is Original.TerminalEpoch) maxOf(frozen, acquisition.newRetention(attempt, row.binding.createdAt)) else frozen
+        return if (original.usesCurrentPutFloor) maxOf(frozen, acquisition.newRetention(attempt, row.binding.createdAt)) else frozen
     }
     internal fun requireListedVersion(version: String?) { requirePublication(); original.requireListedSealVersion(version) }
     internal fun requireReleasedProof(candidate: TestRunOrdinarySealV1, proof: TestOrdinarySealProofV1) {
@@ -176,6 +181,7 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
         val routing get() = when (this) { is Terminal -> value.routing; is TerminalEpoch -> value.routing; is Active -> value.routing; is Recovery -> value.routing }
         val codecAttempt get() = when (this) { is Terminal -> value.codecAttempt; is TerminalEpoch -> value.codecAttempt; is Active -> value.codecAttempt; is Recovery -> value.codecAttempt }
         val codec get() = when (this) { is Terminal -> value.codec; is TerminalEpoch -> value.codec; is Active -> value.codec; is Recovery -> value.codec }
+        val usesCurrentPutFloor get() = when (this) { is TerminalEpoch -> true; is Recovery -> value.usesCurrentPutFloor; is Terminal, is Active -> false }
         fun requireProvider(custody: TestOrdinarySealCustodyV1, publication: Boolean) = when (this) {
             is Terminal -> value.requireProvider(custody, publication); is TerminalEpoch -> value.requireProvider(custody, publication)
             is Active -> value.requireProvider(custody, publication)

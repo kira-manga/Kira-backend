@@ -162,12 +162,13 @@ internal class CatalogTestRunActivationEvidenceFixture(
         require(!activeFirstCutSuccessor || activeFirstCut)
         require(ordinaryRawHttp?.initialCheckpoint == null || (activeFirstCut && ordinarySealHttp?.protectedIntake == true))
         require(!activeSealRecovery || activeFirstCut)
+        require(ordinaryRawHttp?.activeSealRecovery == null || activeSealRecovery)
         require(!activeFirstCut || (ordinarySealHttp?.protectedIntake == true && intakeTls != null &&
             ordinaryDrain != null && journal.registeredAdminBatchDelete && pools.epochRotation != null))
     }
     val activeFirstCutInput = if (activeFirstCut) TestActiveFirstCutInputFixtureV1.input() else null
     val activeFirstCutSuccessorInput = if (activeFirstCutSuccessor) TestActiveFirstCutSuccessorInputFixtureV1.input() else null
-    val activeSealRecoveryInput = if (activeSealRecovery) TestActiveSealRecoveryInputFixtureV1.input() else null
+    val activeSealRecoveryInput = if (activeSealRecovery) ordinaryRawHttp?.activeSealRecovery ?: TestActiveSealRecoveryInputFixtureV1.input() else null
     val initial = OfflineTrustBundleFixture.bytes(rotations.initial)
     val current = OfflineTrustBundleFixture.bytes(rotations.current)
     val policy = OfflineCatalogRotationFixture.policy()

@@ -28,6 +28,12 @@ class TestActiveOrdinarySealRecoveryIT {
     @Test fun livePriorLeaseIsNotStolenOrWaitedOut() = withFixture { TestActiveSealRecoveryCasesV1.livePriorLeaseRefusesWithoutStealOrWaiting(it) }
     @Test fun verifiedHistoryIsRefusedAndBelongsToIndependentCheckpointRestart() = withFixture { TestActiveSealRecoveryCasesV1.verifiedHistoryBelongsToCheckpointNotThisOriginal(it) }
     @Test fun staleMissingFrozenObjectRetainsExplicitUnresolvedRecoveryLimitation() = withFixture { TestActiveSealRecoveryCasesV1.staleAbsentFrozenRetentionRefusesWithoutRegeneration(it) }
+    @Test fun bornWithCurrentPutFloorPublishesStaleMissingFrozenBytesWithoutRepair() = withFixture {
+        TestActiveSealRecoveryCasesV1.currentPutFloorForStaleMissingFrozen(it, shortenAcknowledgedGet = false)
+    }
+    @Test fun bornWithCurrentPutFloorRejectsKnownAckGetBelowCapturedLockDespiteCoveringFrozenMinimum() = withFixture {
+        TestActiveSealRecoveryCasesV1.currentPutFloorForStaleMissingFrozen(it, shortenAcknowledgedGet = true)
+    }
 
     @Test fun scopedForeignWriterAliasAndHigherEpochRowsCannotHideBehindEmptyFilter() {
         ActiveSealRecoveryRowCutV1.entries.forEach { cut -> withFixture { TestActiveSealRecoveryRefusalCasesV1.localClosure(it, cut) } }

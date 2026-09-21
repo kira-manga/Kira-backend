@@ -3,7 +3,9 @@ package me.manga.kira.backend.complaint.infrastructure.reconciliation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
+import me.manga.kira.backend.complaint.catalog.TestActiveOrdinaryRawHttpV1
 import me.manga.kira.backend.complaint.catalog.withTestActiveFirstCut
+import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOrdinarySealRecoveryInputV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -23,8 +25,9 @@ internal fun withActiveSealRecoveryHistory(
     cut: ActiveSealRecoveryHistoryCutV1,
     enrolled: Boolean = false,
     horizon: Instant? = null,
+    recoveryInput: TestActiveOrdinarySealRecoveryInputV1? = null,
     action: (TestActiveOrdinarySealFixtureV1) -> Unit,
-) = withActiveSealRecoveryOrigin(tls, enrolled, horizon) { history ->
+) = withActiveSealRecoveryOrigin(tls, enrolled, horizon, recoveryInput) { history ->
     TestActiveSealRecoveryHistoryV1.cut(history, cut)
     action(history)
 }
@@ -33,10 +36,13 @@ internal fun withActiveSealRecoveryOrigin(
     tls: VersionBoundPersistenceConnectedFixture,
     enrolled: Boolean = false,
     horizon: Instant? = null,
+    recoveryInput: TestActiveOrdinarySealRecoveryInputV1? = null,
     action: (TestActiveOrdinarySealFixtureV1) -> Unit,
 ) {
     val ordinary = TestActiveOrdinaryRawFixtureV1()
-    withTestActiveFirstCut(tls, ordinaryRawHttp = ordinary.factories, activeSealRecovery = true, sealRecoveryHorizon = horizon) { first ->
+    val raw = ordinary.factories
+    val selected = if (recoveryInput == null) raw else TestActiveOrdinaryRawHttpV1(raw.sts, raw.kms, raw.s3, activeSealRecovery = recoveryInput)
+    withTestActiveFirstCut(tls, ordinaryRawHttp = selected, activeSealRecovery = true, sealRecoveryHorizon = horizon) { first ->
         if (enrolled) first.initial.withExchange { exchange ->
             exchange.enroll(first.initial.candidate()); exchange.assertReleased()
             assertEquals(1L, first.observer.queryForObject("SELECT enrolled_count FROM complaint_test_runs WHERE data_scope_id = ?", Long::class.java, first.scope))

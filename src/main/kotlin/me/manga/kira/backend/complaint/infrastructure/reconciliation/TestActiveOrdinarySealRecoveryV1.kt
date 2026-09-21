@@ -61,6 +61,7 @@ internal class TestActiveOrdinarySealRecoveryV1 private constructor(
     internal val routing = process.consumers.journalRouting
     internal val acquisition = checkNotNull(process.ordinarySeal)
     private val recipe = checkNotNull(process.activeOrdinarySealRecovery)
+    internal val usesCurrentPutFloor get() = recipe.usesCurrentPutFloor
     internal val scope = identity.scope
     internal val writer = identity.writer.toString()
     internal val cutoff = 1L
@@ -157,7 +158,7 @@ internal class TestActiveOrdinarySealRecoveryV1 private constructor(
                 requireReleased(frozen)
             }
             renew()
-            proof = native.publish() // Frozen missing-object retention may refuse; no repair/retry/extension.
+            proof = native.publish() // Retained pre-D recipe selects only the PUT lock; no frozen-byte repair or PUT retry.
             native.close()
             checkNotNull(proof).requireOriginal(this)
             renew()
