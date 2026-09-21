@@ -19,6 +19,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintPlatform
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerEditStore
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.config.ComplaintTestBootstrapHttpCompositionV1
+import me.manga.kira.backend.security.ComplaintAdmissionRejected
 import me.manga.kira.backend.security.ComplaintInstallationRoutes
 import me.manga.kira.backend.security.ownerCreateTestIngress
 import me.manga.kira.backend.security.ownerEditTestIngress
@@ -391,6 +392,7 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
         val loserPid = AtomicInteger()
         val loserEntering = CountDownLatch(1)
         val changedAfterClaim = AtomicBoolean()
+        val loserFailure = AtomicReference<String?>()
         f.raw { observer ->
             OwnedCallerTestScope().use { callers ->
                 val completedWinner = callers.gate()
@@ -414,8 +416,23 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
                 val winner = callers.launch { f.create(attempt) }
                 completedWinner.awaitEntered()
                 try {
-                    val loser = callers.launch { f.create(attempt) }
-                    assertTrue(loserEntering.await(1, TimeUnit.SECONDS))
+                    val loser = callers.launch {
+                        try { f.create(attempt) } catch (failure: Throwable) {
+                            loserFailure.set(when (failure) {
+                                is ComplaintOwnerOperationRejected -> "OWNER_${failure.failure.name}"
+                                is ComplaintAdmissionRejected -> "INGRESS_${failure.code.name}"
+                                is PersistencePhaseException -> "PERSISTENCE_${failure.code.name}"
+                                else -> "OTHER_FAILURE"
+                            })
+                            throw failure
+                        }
+                    }
+                    assertTrue(loserEntering.await(1, TimeUnit.SECONDS)) {
+                        // Nonblocking failure-only sample. Shared SQL history does not identify this loser.
+                        val outcome = if (loser.thread.isAlive) "RUNNING" else loserFailure.get() ?: "RETURNED"
+                        "Loser receipt INSERT hook absent after original 1s; loser=$outcome; " +
+                            "shared_last_phase=${f.jdbc.calls.lastOrNull()?.first?.name ?: "NONE"}"
+                    }
                     awaitActualLockWait(observer, loserPid.get())
                     completedWinner.release()
                     f.assertApplied(winner.value(), attempt)
