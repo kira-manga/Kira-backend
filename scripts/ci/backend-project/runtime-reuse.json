@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "mode": "PINNED_ARTIFACT",
+  "producer": {
+    "repository": "kira-manga/Kira-backend",
+    "run_id": 35591558415,
+    "run_attempt": 1,
+    "head_sha": "d97738d310188aef31f70578f25c5d4a53f13560",
+    "artifact_id": 10634349173,
+    "artifact_name": "verification-runtime-35591558415-1",
+    "maven_bytes": 1608395,
+    "manifest": {
+      "sha256": "da1da20ec927c7493cafe935cc52d09c81386edaa0903da0b0683432d7565473",
+      "bytes": 14542
+    },
+    "payload": {
+      "sha256": "e1414c10b712fc92e011c75226275764e8e251ae29d9a20e1ae1b347b28910dd",
+      "bytes": 1638400
+    },
+    "provenance": {
+      "sha256": "c4eba32fc33deb9ae1b4b6a05581ea49193924bca53354b6b9b37fe49b8dab1e",
+      "bytes": 489335
+    }
+  }
+}
