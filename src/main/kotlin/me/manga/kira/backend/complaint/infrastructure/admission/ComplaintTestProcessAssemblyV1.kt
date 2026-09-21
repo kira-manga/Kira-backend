@@ -10,6 +10,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePublic
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.SystemPersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConfiguration
+import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePools
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.config.ComplaintTestRegisteredHttpStartupV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundTestActivationConfigurationV1
@@ -43,6 +44,7 @@ import java.time.Clock
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.util.concurrent.CancellationException
+import java.util.concurrent.locks.LockSupport
 
 /**
  * Retained BEFORE file/provider construction. One protected TEST recipe becomes the actual cold
@@ -430,6 +432,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
                     retained.observeShutdown(originalBudget) === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED,
                     ComplaintTestDeploymentFailureV1.CLEANUP_UNPROVEN,
                 )
+                retained.versionBoundPools?.let { awaitPoolCustody(it, originalBudget) }
                 // Never delete trust on a merely requested/expired/ambiguous root, pool or shared Timer shutdown.
                 requireTestDeployment(
                     retained.releasePublicTrustAfterShutdown() === PersistencePublicTrustRelease.RELEASED,
@@ -448,6 +451,23 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         }
         if (Thread.currentThread().isInterrupted) {
             throw ComplaintTestDeploymentExceptionV1(ComplaintTestDeploymentFailureV1.INTERRUPTED).also { closeFailure = it }
+        }
+    }
+
+    /** Hikari close/native drain can precede owned Worker exit. Observe only, on the original close allowance. */
+    private fun awaitPoolCustody(pools: VersionBoundPersistencePools, budget: PersistenceTimeBudget) {
+        var interrupted = false
+        try {
+            while (true) {
+                if (Thread.interrupted()) interrupted = true
+                budget.remainingMillis(1)
+                val ended = pools.poolsEndedForTrust()
+                val remaining = budget.remainingMillis(10)
+                if (ended) return
+                LockSupport.parkNanos(remaining * 1_000_000L)
+            }
+        } finally {
+            if (interrupted) caller.interrupt() // Owed cleanup may finish; closeOwned still rejects the preserved signal.
         }
     }
 
