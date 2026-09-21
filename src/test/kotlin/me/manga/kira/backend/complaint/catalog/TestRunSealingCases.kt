@@ -7,6 +7,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseP
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityEncoding
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityChargesV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingExceptionV1
@@ -78,9 +79,12 @@ internal object TestRunSealingCases {
         val paths = probe.calls.groupBy { it.path }
         assertEquals(listOf("test-run-sealing-authenticate", "test-run-sealing-run-lock", "test-run-seal"),
             paths.getValue(PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL).map { it.step })
-        assertEquals(listOf("test-run-sealing-authenticate", "test-run-sealed-global-lock", "test-run-sealed-control-lock", "counters",
+        assertEquals(listOf("test-run-sealing-authenticate", "test-run-sealed-gate-lock", "test-run-sealed-gate-lock",
+            "test-run-sealed-active-history-read", "test-run-sealed-global-lock", "test-run-sealed-control-lock", "counters",
             "test-run-sealing-run-lock", "test-run-sealed-audit-lock", "charge:audit_rows", "charge:storage_bytes", "test-run-sealed-reserve", "test-run-sealed-audit"),
             paths.getValue(PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT).map { it.step })
+        assertEquals(listOf(listOf(ComplaintDataScope.LIVE.id), listOf(p.scope)),
+            probe.calls.filter { it.step == "test-run-sealed-gate-lock" }.map { it.arguments }, "Global gate locks before the registered scope.")
         val after = p.image()
         assertEquals(before.filterKeys { it !in changedTables }, after.filterKeys { it !in changedTables }, "No gate, epoch, catalog, notice or resource writes.")
         assertEquals(reads, p.f.http.read.requests.size, "Sealing performs no provider work or renewed registration readback.")

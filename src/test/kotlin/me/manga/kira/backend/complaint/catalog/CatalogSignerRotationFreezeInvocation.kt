@@ -26,6 +26,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotat
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationHistoryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationProjectionSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationSqlV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainActiveHistoryV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.INSERT_SIGNER_ROTATION_PREPARED
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_COORDINATOR_LEASE_CONTROL
@@ -313,6 +314,11 @@ internal class CatalogSignerRotationProbeJdbc(
     var beforeSql: (String) -> Unit = {}
     var afterSql: (String) -> Unit = {}
     private val assertion = AtomicReference<AssertionError?>()
+    private val sealingActiveHistorySql: String by lazy {
+        // Exact private read query, observed even for no-A; never accept a prefix/substring.
+        TestOrdinaryDrainActiveHistoryV1::class.java.getDeclaredField("current")
+            .apply { check(trySetAccessible()) }.get(null) as String
+    }
 
     init {
         exceptionTranslator = SQLExceptionSubclassTranslator()
@@ -519,6 +525,8 @@ internal class CatalogSignerRotationProbeJdbc(
         TestRunSealingSqlV1.lockAudit -> "test-run-sealed-audit-lock"
         TestRunSealingSqlV1.spendRun -> "test-run-sealed-reserve"
         TestRunSealingSqlV1.insertAudit -> "test-run-sealed-audit"
+        TestRunSealingSqlV1.lockGateState -> "test-run-sealed-gate-lock"
+        sealingActiveHistorySql -> "test-run-sealed-active-history-read"
         else -> null
     }
 
