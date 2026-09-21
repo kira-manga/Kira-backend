@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotati
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_EPOCH_ROTATION_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_EPOCH_ROTATION_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutCaptureOperationV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutStateV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSqlV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSuccessorCaptureOperationV1
@@ -358,6 +359,32 @@ internal class PersistenceEpochRotationSession private constructor(
         }
         requireWork()
         stage = Stage.RELEASED
+    }
+
+    /**
+     * Failed TEST first-cut cleanup only, before its sticky original close. The real terminal/scanner
+     * still own every close and the exact reclamation receipt. This spends the existing work/total
+     * allowance, never a new emergency budget, and never clears failure or issues RELEASED/success.
+     */
+    internal fun awaitFailedFirstCutRetirement(original: TestActiveFirstCutV1) {
+        check(caller.isCurrent() && attempt.owns(original) && retired.get() && problem.get() != null)
+        val originalCleanup = work ?: total // Exactly the existing native CLEANUP dispatch allowance.
+        val observation = originalCleanup.systemCleanupSnapshot(EpochRotationLimits.REQUEST_PHASE_MILLIS)
+        while (true) {
+            if (caller.sampleOutsideLocks() != null) {
+                throw PersistencePhaseException(PersistencePhaseFailureCode.INTERRUPTED, context.transaction.databaseOutcome(), false)
+            }
+            originalCleanup.remainingMillis(1)
+            observation.remainingMillis(1)
+            if (entry.jdbc.terminalCompletion().reclaimed()) {
+                // Both the native proof and its return must fit the same already-running allowances.
+                originalCleanup.remainingMillis(1)
+                observation.remainingMillis(1)
+                return
+            }
+            val waitMillis = minOf(originalCleanup.remainingMillis(10), observation.remainingMillis(10))
+            LockSupport.parkNanos(waitMillis * 1_000_000)
+        }
     }
 
     /** Early/between-commit-and-release probes refuse without upgrading or poisoning an otherwise active operation. */

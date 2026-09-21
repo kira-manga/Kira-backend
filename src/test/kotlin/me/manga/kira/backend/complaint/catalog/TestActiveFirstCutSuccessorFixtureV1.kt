@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.springframework.jdbc.core.JdbcTemplate
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 internal val FIRST_CUT_SUCCESSOR_READ = PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_READ
@@ -101,12 +102,31 @@ internal class TestActiveFirstCutSuccessorFixtureV1(val first: TestActiveFirstCu
     }
 
     /** Genuine failed original native E wait: actual paid REQUEST survives, not a SQL-built request/capture. */
-    fun requestedAfterRealTimeout() {
+    fun requestedAfterRealTimeout(requireSameProcessCleanup: Boolean = false) {
         val counters = first.counters()
-        val result = first.captureWhileShared { _, entry ->
-            awaitLifecycleFact(3_000) { entry.jdbc.terminalCompletion().reclaimed() }
+        val before = first.afterFailedCapture
+        val settledAtReturn = AtomicBoolean()
+        if (requireSameProcessCleanup) first.afterFailedCapture = { original, problem ->
+            before(original, problem)
+            try {
+                original.requireActualCleanup()
+                assertTrue(checkNotNull(first.observedNative.get()).failure().cleanupProven)
+                assertNull(SignedActivationObservation.active(first.runtime.pools.catalogCoordinator))
+                settledAtReturn.set(true)
+            } catch (failure: Throwable) {
+                TestActiveFirstCutSuccessorDiagnosticsV1.report("ORIGINAL_FAILED_RETURN", this, failure)
+                throw failure
+            }
         }
+        val result = try {
+            first.captureWhileShared { _, entry ->
+                awaitLifecycleFact(3_000) { entry.jdbc.terminalCompletion().reclaimed() }
+            }
+        } finally { first.afterFailedCapture = before }
         assertTrue(result.isFailure)
+        if (requireSameProcessCleanup) assertTrue(settledAtReturn.get(),
+            "Same-process successor requires original native settlement before sticky close, not a later fixture wait. " +
+                TestActiveFirstCutSuccessorDiagnosticsV1.snapshot(this, result.exceptionOrNull()))
         first.assertCharge(counters)
         assertEquals("REQUESTED", first.control()["rotation_state"])
         assertEquals("RESERVED", first.paid()["state"])

@@ -53,6 +53,7 @@ import me.manga.kira.backend.complaint.catalog.TestRegistrationProjectCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationProviderCut
 import me.manga.kira.backend.complaint.catalog.TestRunSealingCases
 import me.manga.kira.backend.complaint.catalog.TestActiveFirstCutCasesV1
+import me.manga.kira.backend.complaint.catalog.TestActiveFirstCutFailureSettlementCasesV1
 import me.manga.kira.backend.complaint.catalog.TestActiveFirstCutSuccessorCasesV1
 import me.manga.kira.backend.complaint.catalog.TestActiveFirstCutColdSuccessorProcessCasesV1
 import me.manga.kira.backend.complaint.catalog.TestFirstCutSuccessorDriftV1
@@ -1482,6 +1483,16 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun testActiveFirstCutRealNativeEpochTimeoutKeepsPaidRequestAndLease() = withFixture(testActivation = true, activeFirstCut = true) {
         TestActiveFirstCutCasesV1.realNativeEpochWaitTimeoutKeepsPaidRequestAndLease(it)
+    }
+
+    @Test
+    fun testActiveFirstCutFailedNativeRetirementSettlesBeforeOriginalCloseWithoutRevival() = withFixture(testActivation = true, activeFirstCut = true) {
+        TestActiveFirstCutFailureSettlementCasesV1.heldReclamation(it, exhaustWork = false)
+    }
+
+    @Test
+    fun testActiveFirstCutFailedNativeRetirementPastWorkAllowanceStaysStickyAfterReclamation() = withFixture(testActivation = true, activeFirstCut = true) {
+        TestActiveFirstCutFailureSettlementCasesV1.heldReclamation(it, exhaustWork = true)
     }
 
     @Test

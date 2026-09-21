@@ -305,6 +305,13 @@ internal class TestActiveFirstCutV1 private constructor(
 
     internal fun abort() { aborted.set(true) }
 
+    /** Poison only, before the first close; later native reclamation cannot repair a missed cleanup cut. */
+    internal fun observeUnsettledNativeCleanup(resource: EpochRotationPersistence) {
+        requireFirstCut(caller === Thread.currentThread() && resource === policy.resource &&
+            stage === Stage.CAPTURING && aborted.get() && !closed)
+        cleanupUncertain = true
+    }
+
     internal fun observeFailure(problem: Throwable) {
         val retained = when {
             problem is Error -> problem

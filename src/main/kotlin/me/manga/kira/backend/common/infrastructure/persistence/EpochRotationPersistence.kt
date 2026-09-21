@@ -151,6 +151,15 @@ internal class EpochRotationPersistence private constructor(
                 try {
                     retained.session?.finish()
                     retained.request?.requestRetirement()
+                    if (failure != null && retained.session != null) {
+                        try {
+                            checkNotNull(retained.session).awaitFailedFirstCutRetirement(attempt)
+                        } catch (problem: Throwable) {
+                            // A late receipt must not repair this original's first cleanup decision.
+                            attempt.observeUnsettledNativeCleanup(this)
+                            failure = recordFailure(binding, retained, problem, failure)
+                        }
+                    }
                 } finally {
                     try {
                         retained.session?.restoreAfterFailure()

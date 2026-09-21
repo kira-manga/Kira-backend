@@ -100,6 +100,8 @@ internal class TestActiveFirstCutFixtureV1(val initial: InitialAdmissionFixture)
     val observedNative = AtomicReference<PersistenceEpochRotationSession?>()
     private val observedOriginal = AtomicReference<TestActiveFirstCutV1?>()
     var beforeNativeSample: (PersistenceEpochRotationSession) -> Unit = {}
+    /** Observe the original failure return BEFORE this fixture's later native-reclamation wait. */
+    var afterFailedCapture: (TestActiveFirstCutV1, Throwable) -> Unit = { _, _ -> }
 
     fun prepare() {
         assertTrue(process.consumers.journalConfiguration.registeredAdminBatchDelete)
@@ -127,7 +129,13 @@ internal class TestActiveFirstCutFixtureV1(val initial: InitialAdmissionFixture)
             }
         }
         try {
-            return original.capture(S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials).also {
+            val captured = try {
+                original.capture(S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials)
+            } catch (problem: Throwable) {
+                afterFailedCapture(original, problem)
+                throw problem
+            }
+            return captured.also {
                 original.requireActualCleanup()
                 assertSqlReleased()
                 assertNull(SignedActivationObservation.active(runtime.pools.catalogCoordinator))

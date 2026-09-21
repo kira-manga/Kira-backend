@@ -77,7 +77,7 @@ internal object TestActiveFirstCutSuccessorCasesV1 {
     fun requestedNaturalExpiryUsesDistinctNativeLineageWithoutRecharge(tls: VersionBoundPersistenceConnectedFixture) =
         withTestActiveFirstCutSuccessor(tls) { f ->
             val c = f.first
-            f.requestedAfterRealTimeout()
+            f.requestedAfterRealTimeout(requireSameProcessCleanup = true)
             val request = c.control(); val slot = c.paid(); val counters = c.counters(); val outside = c.outsideCut(); val global = c.globalImage()
             f.waitForNaturalExpiry() // No successor owner/deadline exists during this actual30s wait.
             c.probe.resetObservations()
@@ -249,7 +249,7 @@ internal object TestActiveFirstCutSuccessorCasesV1 {
     fun nativeRechecksAfterRealEWait(tls: VersionBoundPersistenceConnectedFixture, cut: TestFirstCutSuccessorNativeDriftV1) =
         withTestActiveFirstCutSuccessor(tls) { f ->
             val c = f.first
-            f.requestedAfterRealTimeout(); f.waitForNaturalExpiry(); c.probe.resetObservations()
+            f.requestedAfterRealTimeout(requireSameProcessCleanup = true); f.waitForNaturalExpiry(); c.probe.resetObservations()
             var negative = ""; var paid = emptyList<String>(); var counters = c.counters()
             val result = f.recoverWhileShared {
                 when (cut) {
@@ -271,7 +271,7 @@ internal object TestActiveFirstCutSuccessorCasesV1 {
     fun nativeCommitFailureOrLateReturnCannotIssueRecovered(tls: VersionBoundPersistenceConnectedFixture, cut: TestFirstCutNativeCutV1) =
         withTestActiveFirstCutSuccessor(tls) { f ->
             val c = f.first
-            f.requestedAfterRealTimeout(); f.waitForNaturalExpiry(); c.probe.resetObservations()
+            f.requestedAfterRealTimeout(requireSameProcessCleanup = true); f.waitForNaturalExpiry(); c.probe.resetObservations()
             val counters = c.counters(); val original = f.resume(); var installed = false
             f.beforeNativeSample = { session ->
                 if (!installed && ((cut === TestFirstCutNativeCutV1.DEFERRED_COMMIT_UNKNOWN && ownedCutField(session, "stage").toString() == "REREAD") ||
