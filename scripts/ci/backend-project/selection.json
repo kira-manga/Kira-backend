@@ -1,0 +1,137 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 75,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "RECURRENT_D_E_PREREQUISITE_AND_N0_N1_REGRESSION",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineInitialEmptyAAndRegisteredCreateReachSchema4WithAllThreeSealsAndNoSecondACharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "a0cb6f47046323a4c245cd7862a91787684ebc21",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineInitialEmptyAAndRegisteredCreateReachSchema4WithAllThreeSealsAndNoSecondACharge()"
+      ]
+    },
+    {
+      "annotation_line": 86,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "RECURRENT_D_E_PREREQUISITE_AND_N0_N1_REGRESSION",
+      "expected_invocations_from_annotation": 1,
+      "method": "oldNoANoBTwoSealPreconditionAndCustodyFramingStayByteCompatible",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "a0cb6f47046323a4c245cd7862a91787684ebc21",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "oldNoANoBTwoSealPreconditionAndCustodyFramingStayByteCompatible()"
+      ]
+    },
+    {
+      "annotation_line": 95,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "RECURRENT_D_E_PREREQUISITE_AND_N0_N1_REGRESSION",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRecurrentTwoActiveSealsReachFourSealTerminalWithFullHistoricalAndTailRootsAndOnlyTwoNewV21Charges",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "a0cb6f47046323a4c245cd7862a91787684ebc21",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineRecurrentTwoActiveSealsReachFourSealTerminalWithFullHistoricalAndTailRootsAndOnlyTwoNewV21Charges()"
+      ]
+    },
+    {
+      "annotation_line": 96,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "RECURRENT_D_E_PREREQUISITE_AND_N0_N1_REGRESSION",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRecurrentPreparedColdContinuationAndProjectedReplayRecheckEveryOriginalAndKeepExactBytesCustodyAndSinglePayment",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "a0cb6f47046323a4c245cd7862a91787684ebc21",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineRecurrentPreparedColdContinuationAndProjectedReplayRecheckEveryOriginalAndKeepExactBytesCustodyAndSinglePayment()"
+      ]
+    },
+    {
+      "annotation_line": 115,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "KNOWN_FAILED_RETAINED_PRIMARY_TARGET_ORACLE_AND_LIVE_GUARDS",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "a0cb6f47046323a4c245cd7862a91787684ebc21",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain()"
+      ]
+    },
+    {
+      "annotation_line": 117,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "KNOWN_FAILED_RETAINED_PRIMARY_TARGET_ORACLE_AND_LIVE_GUARDS",
+      "expected_invocations_from_annotation": 1,
+      "method": "retainedDPreparedPrimaryFinalLeaseExpiryRollsBackItsActualVerification",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "a0cb6f47046323a4c245cd7862a91787684ebc21",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "retainedDPreparedPrimaryFinalLeaseExpiryRollsBackItsActualVerification()"
+      ]
+    },
+    {
+      "annotation_line": 118,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "KNOWN_FAILED_RETAINED_PRIMARY_TARGET_ORACLE_AND_LIVE_GUARDS",
+      "expected_invocations_from_annotation": 1,
+      "method": "retainedDVerifiedPrimaryFinalLeaseExpiryRollsBackActualApplyAndRefund",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "a0cb6f47046323a4c245cd7862a91787684ebc21",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "retainedDVerifiedPrimaryFinalLeaseExpiryRollsBackActualApplyAndRefund()"
+      ]
+    },
+    {
+      "annotation_line": 119,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "KNOWN_FAILED_RETAINED_PRIMARY_TARGET_ORACLE_AND_LIVE_GUARDS",
+      "expected_invocations_from_annotation": 1,
+      "method": "retainedDPrimaryFinalFullDDriftRollsBackItsActualApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "a0cb6f47046323a4c245cd7862a91787684ebc21",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "retainedDPrimaryFinalFullDDriftRollsBackItsActualApply()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 8,
+  "expected_total": 8,
+  "selection_basis": {
+    "cohorts": {
+      "KNOWN_FAILED_RETAINED_PRIMARY_TARGET_ORACLE_AND_LIVE_GUARDS": 4,
+      "RECURRENT_D_E_PREREQUISITE_AND_N0_N1_REGRESSION": 4
+    },
+    "previous_run": "35633745744",
+    "scope": "D/E N2 positive+cold replay and N0/N1 regressions4 chains, plus corrected genuineA and three prior failed retained-primary guards4 chains; two additional fresh cold-E runtimes. Carry stolen-lease PASS20 without unchanged replay. Remaining17 new D/E selectors held pending prerequisite."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 8
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineRecurrentTwoActiveSealsReachFourSealTerminalWithFullHistoricalAndTailRootsAndOnlyTwoNewV21Charges",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.oldNoANoBTwoSealPreconditionAndCustodyFramingStayByteCompatible",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineInitialEmptyAAndRegisteredCreateReachSchema4WithAllThreeSealsAndNoSecondACharge",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineRecurrentPreparedColdContinuationAndProjectedReplayRecheckEveryOriginalAndKeepExactBytesCustodyAndSinglePayment",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.retainedDPreparedPrimaryFinalLeaseExpiryRollsBackItsActualVerification",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.retainedDVerifiedPrimaryFinalLeaseExpiryRollsBackActualApplyAndRefund",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.retainedDPrimaryFinalFullDDriftRollsBackItsActualApply"
+  ]
+}
