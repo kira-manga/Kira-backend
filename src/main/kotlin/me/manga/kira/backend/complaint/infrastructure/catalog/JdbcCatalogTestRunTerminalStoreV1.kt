@@ -170,11 +170,13 @@ internal class CatalogTestRunTerminalOperationV1 private constructor(
             { value, _ -> checkNotNull(value.getTimestamp("sampled_at")).toInstant() }, Timestamp.from(checkNotNull(row.completed).completedAt)).single()
         val timestamp = Timestamp.from(checkNotNull(projectedAt)); val record = frozen.manifest().terminalRecord
         val purge = record.purge; val installations = record.installationManifest.summary
+        val erasureHistory = snapshot.activeHistory.recurrent?.erasureCommitment(frozen.token, frozen.generation, signed.envelopeSha256)
         requireTestTerminalCatalog(jdbc.update(CatalogTestRunTerminalProjectionSqlV1.projectRun, *input.runArguments(snapshot.activation),
             timestamp, OwnerDeleteRows.array(snapshot.run.unused - charge), purge.document.preTerminalInventory.count, terminalCatalogHex(purge.document.preTerminalInventory.sha256),
             installations.installationCount, terminalCatalogHex(installations.installationsSha256), installations.chunkCount, installations.retiredCount, installations.deletedCount,
             purge.document.eventId, purge.objectRef.objectKey, purge.objectRef.objectVersion, terminalCatalogHex(purge.objectRef.ciphertextSha256),
-            frozen.generation, signed.envelopeHash(), OwnerDeleteRows.array(snapshot.run.unused), frozen.progressBytes(), frozen.sealSetBytes()) == 1)
+            frozen.generation, signed.envelopeHash(), erasureHistory?.let(::terminalCatalogHex),
+            OwnerDeleteRows.array(snapshot.run.unused), frozen.progressBytes(), frozen.sealSetBytes()) == 1)
         at(Stage.WRITING); stage = Stage.AUDIT
         val inserted = ComplaintTestRunTerminalCatalogAuditInsertionV1.insert(this)
         at(Stage.AUDIT); requireTestTerminalCatalog(inserted === audit && inserted.completedFor(this)); stage = Stage.WRITING

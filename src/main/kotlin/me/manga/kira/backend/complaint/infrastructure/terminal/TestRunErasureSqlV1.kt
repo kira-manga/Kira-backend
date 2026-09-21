@@ -52,7 +52,7 @@ internal object TestRunErasureSqlV1 {
             r.purging_at, r.purged_at, r.installation_limit, r.enrolled_count, r.final_ordinary_epoch, r.terminal_seal_epoch, r.generation_seal_count,
             r.event_manifest_count, r.installation_manifest_count, r.installation_chunk_count, r.retired_count, r.deleted_count,
             ${capped(listOf("r.configuration_hash", "r.activation_catalog_hash", "r.terminal_catalog_hash", "r.generation_seal_root", "r.seal_set_hash",
-                "r.event_manifest_root", "r.installation_manifest_root", "r.terminal_ciphertext_hash").map { it to 32 } + listOf(
+                "r.event_manifest_root", "r.installation_manifest_root", "r.terminal_ciphertext_hash", "r.recurrent_erasure_history_hash").map { it to 32 } + listOf(
                 "r.seal_set_bytes" to 65536, "r.terminal_event_id" to 43, "r.terminal_object_key" to 1024, "r.terminal_object_version" to 1024))},
             CASE WHEN complaint_vector_valid(r.original_reserve) THEN r.original_reserve END AS original_reserve,
             CASE WHEN complaint_vector_valid(r.unused_reserve) THEN r.unused_reserve END AS unused_reserve,
@@ -66,7 +66,9 @@ internal object TestRunErasureSqlV1 {
                 AND complaint_finite_times(r.created_at, r.sealed_at, r.purging_at, r.purged_at)
                 AND ((r.state = 'PURGING' AND r.purged_at IS NULL) OR (r.state = 'PURGED' AND r.purged_at >= r.purging_at AND r.purged_at <= clock_timestamp()
                     AND r.unused_reserve = array_fill(0::bigint, ARRAY[22])))
-                AND r.final_ordinary_epoch > 0 AND r.terminal_seal_epoch = r.final_ordinary_epoch + 1 AND r.generation_seal_count BETWEEN 2 AND 3
+                AND r.final_ordinary_epoch > 0 AND r.terminal_seal_epoch = r.final_ordinary_epoch + 1 AND r.generation_seal_count BETWEEN 2 AND 16
+                AND ((r.generation_seal_count <= 3 AND r.recurrent_erasure_history_hash IS NULL)
+                    OR (r.generation_seal_count >= 4 AND complaint_digest_valid(r.recurrent_erasure_history_hash)))
                 AND complaint_bytes_match(r.seal_set_bytes, r.seal_set_hash, 65536) AND r.event_manifest_count > 0
                 AND r.installation_manifest_count = r.enrolled_count AND r.installation_chunk_count BETWEEN 0 AND 4096
                 AND r.retired_count >= 0 AND r.deleted_count >= 0 AND r.retired_count + r.deleted_count = r.enrolled_count
@@ -238,6 +240,14 @@ internal object TestRunErasureSqlV1 {
     val deleteSidecar = "DELETE FROM complaint_test_terminal_intents i WHERE operation_token = ?::uuid AND data_scope_id = ?::uuid AND test_only AND state = 'WIRE_FROZEN' AND ${physical("i", 524288)} = ?::bytea"
     val deleteActive = """DELETE FROM complaint_test_active_seal_intents i WHERE operation_token = ?::uuid AND data_scope_id = ?::uuid AND test_only AND state = 'WIRE_FROZEN'
         AND sha256(convert_to((to_jsonb(i) || jsonb_build_object('row_xmin', i.xmin::text))::text,'UTF8')) = ?::bytea"""
+    val deleteActiveHistory = """DELETE FROM complaint_test_active_checkpoint_history h
+        WHERE operation_token = ?::uuid AND data_scope_id = ?::uuid AND ordinal = ?::integer AND test_only
+            AND schema_version = 1 AND charged_storage_bytes = 2097152 AND checkpoint_bytes IS NOT NULL
+            AND sha256(convert_to((to_jsonb(h) || jsonb_build_object('row_xmin', h.xmin::text))::text,'UTF8')) = ?::bytea"""
+    val deleteRecurrentActive = """DELETE FROM complaint_test_active_recurrent_seal_intents i
+        WHERE operation_token = ?::uuid AND data_scope_id = ?::uuid AND rotation_sequence = ?::bigint AND test_only
+            AND schema_version = 1 AND charged_storage_bytes = 2097152 AND state = 'WIRE_FROZEN'
+            AND sha256(convert_to((to_jsonb(i) || jsonb_build_object('row_xmin', i.xmin::text))::text,'UTF8')) = ?::bytea"""
     val deleteControl = """DELETE FROM complaint_journal_control c WHERE data_scope_id = ?::uuid AND test_only AND maintenance_closed AND creation_closed
         AND lease_owner = ?::uuid AND lease_token = ?::bigint AND lease_expires_at = ?::timestamptz AND lease_expires_at > clock_timestamp()
         AND pending_projection_token IS NULL AND sha256(convert_to($CONTROL_CORE,'UTF8')) = ?::bytea"""
@@ -260,6 +270,8 @@ internal object TestRunErasureSqlV1 {
             (SELECT count(*) FROM complaint_recovery_capacity_reservations i WHERE i.data_scope_id = e.scope) AS reservations,
             (SELECT count(*) FROM complaint_test_terminal_intents i WHERE i.data_scope_id = e.scope) AS sidecars,
             (SELECT count(*) FROM complaint_test_active_seal_intents i WHERE i.data_scope_id = e.scope) AS active_seals,
+            (SELECT count(*) FROM complaint_test_active_recurrent_seal_intents i WHERE i.data_scope_id = e.scope) AS recurrent_seals,
+            (SELECT count(*) FROM complaint_test_active_checkpoint_history i WHERE i.data_scope_id = e.scope) AS checkpoint_archives,
             (SELECT count(*) FROM complaint_test_active_queue_observations i WHERE i.data_scope_id = e.scope) AS queue_observations,
             (SELECT count(*) FROM complaint_catalog_mutations i WHERE i.data_scope_id = e.scope) AS catalogs,
             (SELECT count(*) FROM complaint_journal_control i WHERE i.data_scope_id = e.scope) AS controls,

@@ -9,6 +9,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
+import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentStorageV1
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.InstallationCredentialSnapshot
 import me.manga.kira.backend.complaint.domain.InstallationIdentityState
@@ -219,7 +220,9 @@ internal class TestRunErasureOperationV1 private constructor(
             activation.generation, original.process.catalogReadback.chainPolicy.limits.maximumGenerations) }, activation.token, original.scope,
             activation.generation, hex(activation.head.envelopeSha256), activation.generation,
             original.process.catalogReadback.chainPolicy.limits.maximumGenerations + 1L))
-        val active = jdbc.query(Sql.active, { row, _ -> Rows.Active(row, original, run) }, *activeArguments(run), original.routing.journalConfiguration.sealTerminalPrefix + "%").singleOrNull()
+        val recurrent = TestOrdinaryDrainActiveHistoryV1.readRecurrentForErasure(jdbc, this, run)
+        val active = if (recurrent != null) null else jdbc.query(Sql.active, { row, _ -> Rows.Active(row, original, run) },
+            *activeArguments(run), original.routing.journalConfiguration.sealTerminalPrefix + "%").singleOrNull()
         val queue = jdbc.query(Sql.queue, { row, _ -> requireErasure(Rows.boolean(row, "valid")); Rows.hash(row, "physical_hash") },
             *controlArguments(), hex(original.routing.journalConfiguration.sha256), hex(original.routing.journalConfiguration.sha256)).singleOrNull()
         val g = checkNotNull(readControl(UUID(0, 0), lock = false))
@@ -228,8 +231,9 @@ internal class TestRunErasureOperationV1 private constructor(
         if (lockRun) {
             requireErasure((scoped == null) == (s == null)); scoped?.requireSame(checkNotNull(s))
         }
-        return Rows.Snapshot(g, s, activation, history, terminal, run, active, queue).also { it.requireHead() }
+        return Rows.Snapshot(g, s, activation, history, terminal, run, active, recurrent, queue).also { it.requireHead() }
     }
+    internal fun requireHistoryRead(selected: JdbcTemplate) { retained(Stage.BODY, selected) }
     private fun controlArguments(): Array<Any?> = arrayOf(original.scope, original.process.desiredGeneration, original.process.implementationSchema,
         original.process.configurationHashBytes(), original.process.databaseIdentity, original.process.restoreIdentity,
         UUID.fromString(original.writer), UUID.fromString(original.process.catalogActivation.catalogWriterGenerationId), hex(original.process.catalogReadback.currentTrustBundleSha256))
@@ -446,6 +450,15 @@ internal class TestRunErasureOperationV1 private constructor(
         sidecars.forEach { value -> mutate(Sql.deleteSidecar, value.token, original.scope, hex(value.physicalHash)); removed += TestTerminalCapacityChargesV1.SIDECAR }
         pairs.values.filter { it.first.kind == "INSTALLATION_MANIFEST" }.sortedBy { it.first.key }.forEach { removePair(it.first.id, terminal = true) }
         removePair(pairs.values.single { it.first.kind == "TEST_RUN_PURGE" }.first.id, terminal = true)
+        before.recurrent?.records?.asReversed()?.forEach { value ->
+            val ordinal = value.binding.objectOrdinal + 1
+            // The immediate FK chain is Hn -> In -> H(n-1) ... -> H1 -> V26 -> control.
+            mutate(Sql.deleteActiveHistory, value.operationToken, original.scope, ordinal, hex(checkNotNull(value.archiveFingerprint)))
+            removed += TestActiveRecurrentStorageV1.HISTORY
+            if (ordinal == 1) mutate(Sql.deleteActive, value.operationToken, original.scope, hex(value.slotFingerprint))
+            else mutate(Sql.deleteRecurrentActive, value.operationToken, original.scope, ordinal.toLong(), hex(value.slotFingerprint))
+            removed += TestActiveRecurrentStorageV1.INTENT
+        }
         before.active?.let { value ->
             mutate(Sql.deleteActive, value.token, original.scope, hex(value.physicalHash))
             removed += ComplaintCapacityVector.units(me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter.STORAGE_BYTES, 2097152L)

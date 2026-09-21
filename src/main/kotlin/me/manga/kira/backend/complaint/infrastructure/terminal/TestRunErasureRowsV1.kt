@@ -16,6 +16,7 @@ import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
 import me.manga.kira.backend.complaint.domain.InstallationCredentialState
 import me.manga.kira.backend.complaint.domain.InstallationIdentityState
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveInitialCheckpointDocumentV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentStorageV1
 import me.manga.kira.backend.complaint.domain.catalog.CatalogLocalHead
 import me.manga.kira.backend.complaint.domain.catalog.CatalogObjectMetadata
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackProtocol
@@ -57,7 +58,7 @@ import java.util.UUID
 internal object TestRunErasureRowsV1 {
     class Snapshot(
         val global: Control, val scoped: Control?, val activation: Mutation, val history: CatalogTestRunActivationHistoryV1,
-        val terminal: Mutation, val run: Run, val active: Active?, val queueHash: String?,
+        val terminal: Mutation, val run: Run, val active: Active?, val recurrent: TestOrdinaryDrainActiveHistoryV1?, val queueHash: String?,
     ) {
         fun requireHead() {
             requireErasure(global.scope == UUID(0, 0) && global.head == terminal.head &&
@@ -66,8 +67,14 @@ internal object TestRunErasureRowsV1 {
                 terminal.predecessor == activation.head && run.context.activationCatalogGeneration == activation.generation &&
                 run.context.activationCatalogSha256 == activation.head.envelopeSha256 && run.terminalHead == terminal.head &&
                 activation.projectedAt == run.createdAt && terminal.projectedAt == run.purgingAt &&
-                (if (run.purged) scoped == null && active == null else scoped != null && scoped.scope == run.scope && scoped.head == activation.head &&
-                    (active != null) == (run.sealCount == 3L)))
+                (active == null || recurrent == null) &&
+                (if (run.purged) scoped == null && active == null && recurrent == null
+                    else scoped != null && scoped.scope == run.scope && scoped.head == activation.head &&
+                        (recurrent?.count ?: if (active == null) 0 else 1).toLong() == run.sealCount - 2L))
+            // The first fresh CAPTURE must match E's durable source/archive+xmin commitment,
+            // not adopt surviving rows as new custody. PURGED retains it without inventing rows.
+            if (!run.purged) requireErasure(run.recurrentErasureHistoryHash == recurrent?.erasureCommitment(
+                terminal.token, terminal.generation, terminal.head.envelopeSha256))
         }
 
         /** Only already committed eraser effects may differ; global/catalog/history are immutable. */
@@ -79,7 +86,9 @@ internal object TestRunErasureRowsV1 {
             if (!other.run.purged) {
                 requireErasure((active == null) == (other.active == null))
                 active?.requireSame(checkNotNull(other.active))
-            } else requireErasure(other.active == null)
+                requireErasure((recurrent == null) == (other.recurrent == null))
+                recurrent?.requireSame(other.recurrent)
+            } else requireErasure(other.active == null && other.recurrent == null)
             if (scoped == null) requireErasure(other.scoped == null)
             else if (other.scoped == null) requireErasure(other.run.purged)
             else scoped.requireCore(other.scoped)
@@ -114,6 +123,7 @@ internal object TestRunErasureRowsV1 {
             try { terminal.requireEnvelope(wire) } finally { wire.fill(0) }
             run.requireRecord(original, proof.chain.manifest.terminalRecord)
             active?.requireReference(proof.chain.manifest.terminalRecord)
+            recurrent?.let { requireErasure(it.records.map { value -> value.reference } == proof.chain.manifest.terminalRecord.sealSet.records().dropLast(2)) }
         }
         override fun toString(): String = "TestRunErasureSnapshotV1(bounded-local-comparison,redacted)"
     }
@@ -231,6 +241,9 @@ internal object TestRunErasureRowsV1 {
         val ordinaryEpoch = long(row, "final_ordinary_epoch")
         val terminalEpoch = long(row, "terminal_seal_epoch")
         val sealCount = long(row, "generation_seal_count")
+        val recurrentErasureHistoryHash = row.getBytes("recurrent_erasure_history_hash")?.let {
+            try { requireErasure(it.size == 32); HexFormat.of().formatHex(it) } finally { it.fill(0) }
+        }
         private val sealRoot = hash(row, "generation_seal_root")
         private val progress = bytes(row, "progress_bytes", 51291)
         private val seals = bytes(row, "seal_set_bytes", 65536)
@@ -247,11 +260,13 @@ internal object TestRunErasureRowsV1 {
                 context.configurationSha256 == HexFormat.of().formatHex(original.process.configurationHashBytes()) &&
                 reserve == TestTerminalAccountingPlanV1(installationLimit, original.routing.journalConfiguration.declaration().limits.capacity.maximumRetainedVersions).originalUnusedReserve &&
                 unused.fitsWithin(reserve) && sealedAt >= createdAt && purgingAt >= sealedAt && terminalEpoch == Math.addExact(ordinaryEpoch, 1L) &&
-                sealCount in 2..3 && Sha256.hex(progress) == hash(row, "progress_hash") && Sha256.hex(seals) == hash(row, "seal_set_hash") &&
+                sealCount in 2..16 && Sha256.hex(progress) == hash(row, "progress_hash") && Sha256.hex(seals) == hash(row, "seal_set_hash") &&
+                (recurrentErasureHistoryHash != null) == (sealCount >= 4L) &&
                 purged == (purgedAt != null) && (!purged || unused.isZero()))
         }
         fun requireImmutable(other: Run) = requireErasure(scope == other.scope && immutable == other.immutable && reserve == other.reserve &&
-            context == other.context && terminalHead == other.terminalHead && progress.contentEquals(other.progress) && seals.contentEquals(other.seals))
+            context == other.context && terminalHead == other.terminalHead && progress.contentEquals(other.progress) && seals.contentEquals(other.seals) &&
+            recurrentErasureHistoryHash == other.recurrentErasureHistoryHash)
         fun requireSame(other: Run) { requireImmutable(other); requireErasure(physicalHash == other.physicalHash && purged == other.purged && unused == other.unused && purgedAt == other.purgedAt) }
         fun requireRecord(original: TestRunErasureV1, record: CatalogTestRunTerminalRecordV1) {
             requireConnectionFree()
@@ -567,6 +582,8 @@ internal object TestRunErasureRowsV1 {
         val reservations = long(row, "reservations")
         val sidecars = long(row, "sidecars")
         val activeSeals = long(row, "active_seals")
+        val recurrentSeals = long(row, "recurrent_seals")
+        val checkpointArchives = long(row, "checkpoint_archives")
         val queueObservations = long(row, "queue_observations")
         val catalogs = long(row, "catalogs")
         val controls = long(row, "controls")
@@ -579,11 +596,15 @@ internal object TestRunErasureRowsV1 {
             OwnerDeleteAllCapacityCharges.APPLIED.scaled(applied) + OwnerDeleteAllCapacityCharges.PUBLICATION.scaled(publications) +
             OwnerDeleteAllCapacityCharges.RESERVATION.scaled(reservations) + TestTerminalCapacityChargesV1.SIDECAR.scaled(sidecars) +
             ComplaintCapacityVector.units(ComplaintCapacityCounter.STORAGE_BYTES, Math.addExact(Math.multiplyExact(activeSeals, 2097152L), Math.multiplyExact(queueObservations, 8192L))) +
+            TestActiveRecurrentStorageV1.INTENT.scaled(recurrentSeals) + TestActiveRecurrentStorageV1.HISTORY.scaled(checkpointArchives) +
             TestTerminalCapacityChargesV1.SCOPED_CATALOG.scaled(catalogs) + TestTerminalCapacityChargesV1.CONTROL.scaled(controls) +
             TestTerminalCapacityChargesV1.ACTIVE_RUN + TestTerminalCapacityChargesV1.TERMINAL_RUN_DELTA + ComplaintCapacityCharges.AUDIT.scaled(audits)
         fun requireShape(snapshot: Snapshot) {
             requireErasure(installations == snapshot.run.enrolled && catalogs == 2L && reservations == publications &&
-                controls == (if (snapshot.run.purged) 0L else 1L) && activeSeals == (if (snapshot.active == null) 0L else 1L) &&
+                controls == (if (snapshot.run.purged) 0L else 1L) &&
+                activeSeals == (if (snapshot.active == null && snapshot.recurrent == null) 0L else 1L) &&
+                recurrentSeals == (snapshot.recurrent?.count?.minus(1)?.toLong() ?: 0L) &&
+                checkpointArchives == (snapshot.recurrent?.count?.toLong() ?: 0L) &&
                 queueObservations == (if (snapshot.queueHash == null) 0L else 1L))
             if (snapshot.run.purged) requireErasure(!remaining && sidecars == 0L && publications == 0L)
         }

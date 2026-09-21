@@ -180,6 +180,13 @@ internal class CatalogTestRunTerminalSnapshotV1(
         val final = terminal
         if (final == null || final.completed == null) requireTestTerminalCatalog(global.head == activation.head && global.pendingToken == null)
         else requireTestTerminalCatalog(global.head == final.head && global.pendingToken == if (final.projectedAt == null) final.token else null)
+        // A projection effect, excluded from the old SEALED core/custody preimage but compared
+        // against the original complete physical history on every projected E reload/recovery.
+        if (run.state == "PURGING") {
+            val terminal = checkNotNull(final)
+            requireTestTerminalCatalog(run.recurrentErasureHistoryHash == activeHistory.recurrent?.erasureCommitment(
+                terminal.token, terminal.generation, checkNotNull(terminal.head).envelopeSha256))
+        } else requireTestTerminalCatalog(run.recurrentErasureHistoryHash == null)
     }
     fun requireCore(other: CatalogTestRunTerminalSnapshotV1) {
         global.requireCore(other.global); scoped.requireSame(other.scoped); activation.requireSame(other.activation); history.requireSame(other.history)
@@ -212,6 +219,7 @@ internal class CatalogTestRunTerminalRunV1(row: ResultSet, maximumVersions: Long
     private val terminalEpoch = row.requiredTestActivationLong("terminal_seal_epoch")
     private val sealRoot = HexFormat.of().formatHex(bytes(row, "generation_seal_root", 32))
     val sealCount = row.requiredTestActivationLong("generation_seal_count")
+    val recurrentErasureHistoryHash = hexOrNull(row, "recurrent_erasure_history_hash")
     private val core = checkNotNull(row.getString("core_preimage"))
     private val effect: List<Any?> = listOf(
         nullableLong(row, "event_manifest_count"), hexOrNull(row, "event_manifest_root"),
@@ -257,7 +265,8 @@ internal class CatalogTestRunTerminalRunV1(row: ResultSet, maximumVersions: Long
     fun coreSha256(): String = me.manga.kira.backend.common.Sha256.hexUtf8(core)
     fun requireSame(other: CatalogTestRunTerminalRunV1) {
         requireCore(other)
-        requireTestTerminalCatalog(state == other.state && unused == other.unused && purgingAt == other.purgingAt && effect == other.effect)
+        requireTestTerminalCatalog(state == other.state && unused == other.unused && purgingAt == other.purgingAt && effect == other.effect &&
+            recurrentErasureHistoryHash == other.recurrentErasureHistoryHash)
     }
     override fun toString(): String = "CatalogTestRunTerminalRunV1(exact-bounded-run,no-denial-authority)"
     private fun nullableLong(row: ResultSet, name: String): Long? = row.getLong(name).let { if (row.wasNull()) null else it }

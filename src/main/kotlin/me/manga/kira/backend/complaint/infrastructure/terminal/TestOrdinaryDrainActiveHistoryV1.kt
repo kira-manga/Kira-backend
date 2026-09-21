@@ -34,10 +34,12 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.recurrentDo
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.recurrentHistoryIdentity
 import me.manga.kira.backend.security.EpochSealFramesV1
 import me.manga.kira.backend.security.TestTerminalJsonV1
+import me.manga.kira.backend.security.TestTerminalFramesV1
 import me.manga.kira.backend.security.TestPostTerminalInventoryEntryV1
 import me.manga.kira.backend.security.TestTerminalCodecKindV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
+import java.security.MessageDigest
 import java.time.Instant
 import java.util.Collections
 import java.util.HexFormat
@@ -101,6 +103,18 @@ internal class TestOrdinaryDrainActiveHistoryV1 private constructor(
         return records.map { listOf(it.source.name, it.binding.objectOrdinal.toString(), it.slotFingerprint,
             checkNotNull(it.archiveFingerprint), checkNotNull(it.entry).sha256, it.verificationSha256) } +
             listOf(listOf("V31_HISTORY", checkNotNull(commitment).rootSha256, historyFingerprint))
+    }
+    /** E persists this bounded comparison at its actual projection; F never authors or repairs it. */
+    fun erasureCommitment(terminalToken: UUID, terminalGeneration: Long, terminalSha256: String): String {
+        val identity = checkNotNull(commitment).first.identity
+        requireDrain(count in 2..TestActiveRecurrentStorageV1.MAX_ACTIVE_SEALS && terminalToken.version() == 4 &&
+            terminalGeneration == identity.activationCatalogGeneration + 1L && terminalSha256.matches(Regex("[0-9a-f]{64}")))
+        val digest = MessageDigest.getInstance("SHA-256")
+        TestTerminalFramesV1.update(digest, listOf("kira-test-recurrent-erasure-history-v1", identity.scope, identity.runCreatedAt.toString(),
+            identity.configurationSha256, identity.activationCatalogGeneration.toString(), identity.activationCatalogSha256,
+            terminalToken.toString(), terminalGeneration.toString(), terminalSha256, count.toString()))
+        commitments().forEach { TestTerminalFramesV1.update(digest, it) }
+        return TestTerminalFramesV1.finish(digest)
     }
     fun requirePhysical(jdbc: JdbcTemplate, original: CatalogTestRunTerminalV1) {
         original.requireHistoryRead(jdbc)
@@ -285,6 +299,34 @@ internal class TestOrdinaryDrainActiveHistoryV1 private constructor(
             requireNoRecurrentSources(jdbc, original.scope, journal.sealTerminalPrefix)
             requireDrain(shape(jdbc, original.scope, journal.sealTerminalPrefix).second.isEmpty())
         }
+
+        /** F compares the complete source/archive history under its own fixed current SQL holder. */
+        fun readRecurrentForErasure(jdbc: JdbcTemplate, operation: TestRunErasureOperationV1,
+            run: TestRunErasureRowsV1.Run): TestOrdinaryDrainActiveHistoryV1? {
+            operation.requireHistoryRead(jdbc)
+            val original = operation.original
+            val journal = original.routing.journalConfiguration
+            val shape = shape(jdbc, original.scope, journal.sealTerminalPrefix)
+            if (run.purged) {
+                requireDrain(shape.first.isEmpty() && shape.second.isEmpty())
+                return null
+            }
+            if (shape.first.size <= 1 && shape.second.isEmpty()) {
+                requireNoRecurrentSources(jdbc, original.scope, journal.sealTerminalPrefix)
+                return null // N0 or the unchanged unarchived V26 N1; F separately authenticates it.
+            }
+            val process = original.process
+            val identity = TestActiveCheckpointHistoryV1.Identity(original.scope.toString(), run.createdAt,
+                process.implementationSchema, process.desiredGeneration, HexFormat.of().formatHex(process.configurationHashBytes()),
+                journal.sha256, process.databaseIdentity.toString(), process.restoreIdentity.toString(), original.writer,
+                run.context.activationCatalogGeneration, run.context.activationCatalogSha256,
+                run.context.activationCatalogGeneration, run.context.activationCatalogSha256,
+                process.catalogReadback.currentTrustBundleSha256, process.catalogActivation.catalogWriterGenerationId)
+            val value = materializeArchived(jdbc, identity, journal, original.acquisition, shape)
+            try { operation.requireHistoryRead(jdbc); return value.history }
+            finally { value.rows.forEach { it.close() } }
+        }
+
         private fun materializeRecurrentForCatalog(jdbc: JdbcTemplate, original: CatalogTestRunTerminalV1,
             activation: CatalogTestRunTerminalMutationV1): Materialized? {
             val journal = original.routing.journalConfiguration
