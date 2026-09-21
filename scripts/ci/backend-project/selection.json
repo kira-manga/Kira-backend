@@ -1,0 +1,176 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 49,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_DELETION_INITIAL_PROFILE_FAIL_CLOSED",
+      "expected_invocations_from_annotation": 1,
+      "method": "oldInitialDeletionProfileStillRefusesNewWorkAfterGenuineRecurrentSuccess",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "oldInitialDeletionProfileStillRefusesNewWorkAfterGenuineRecurrentSuccess()"
+      ]
+    },
+    {
+      "annotation_line": 52,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_DELETION_IDENTITY_PRIVACY_CHECKPOINT_DRIFT",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentDeletionRejectsIdentityPrivacyAndCheckpointDriftBeforeCounters",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "recurrentDeletionRejectsIdentityPrivacyAndCheckpointDriftBeforeCounters()"
+      ]
+    },
+    {
+      "annotation_line": 55,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_DELETION_EXACT_PRIOR_PNL_AND_NATIVE_APPLY",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentDeletionRequiresExactPriorPublicationReceiptReservationAndNativeApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "recurrentDeletionRequiresExactPriorPublicationReceiptReservationAndNativeApply()"
+      ]
+    },
+    {
+      "annotation_line": 58,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_DELETION_PROVISIONAL_CLAIM_OWNS_ITS_PNL",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentDeletionOwnClaimCannotBorrowAnyPreviousPNL",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "recurrentDeletionOwnClaimCannotBorrowAnyPreviousPNL()"
+      ]
+    },
+    {
+      "annotation_line": 61,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_DELETION_PENDING_HISTORY_EXACT_CONTINUATION",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentDeletionPendingPriorAndDamagedHistoryRefuseNewWorkButNotExactContinuation",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "recurrentDeletionPendingPriorAndDamagedHistoryRefuseNewWorkButNotExactContinuation()"
+      ]
+    },
+    {
+      "annotation_line": 64,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_DELETION_CLAIM_LOSER_SINGLE_CHARGE",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentDeletionClaimLoserReplaysBeforeClosedControlsWithoutDoubleCharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "recurrentDeletionClaimLoserReplaysBeforeClosedControlsWithoutDoubleCharge()"
+      ]
+    },
+    {
+      "annotation_line": 67,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_DELETION_WAITED_CREDENTIAL_RECHECK",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentDeletionWaitedCredentialChangeCannotAuthorizeTheOriginalClaim",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "recurrentDeletionWaitedCredentialChangeCannotAuthorizeTheOriginalClaim()"
+      ]
+    },
+    {
+      "annotation_line": 70,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_DELETION_NATURAL_FRESHNESS_RECHECK",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentDeletionRechecksDatabaseFreshnessAfterCredentialBoundary",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "recurrentDeletionRechecksDatabaseFreshnessAfterCredentialBoundary()"
+      ]
+    },
+    {
+      "annotation_line": 73,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_DELETION_EXACT_OWNERS_TEMPLATE_INGRESS_LANE",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentDeletionRetainsExactOwnersTemplatesIngressAndNativeLane",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "recurrentDeletionRetainsExactOwnersTemplatesIngressAndNativeLane()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 9,
+  "expected_total": 9,
+  "inspected_source": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+  "inspected_tree": "5c9fcdbfb3d5e7a166fc52d22de891bb28e5c365",
+  "selection_basis": {
+    "additional_cold_E_runtimes": 0,
+    "cohorts": {
+      "REMAINING_DELETION_CLAIM_LOSER_SINGLE_CHARGE": 1,
+      "REMAINING_DELETION_EXACT_OWNERS_TEMPLATE_INGRESS_LANE": 1,
+      "REMAINING_DELETION_EXACT_PRIOR_PNL_AND_NATIVE_APPLY": 1,
+      "REMAINING_DELETION_IDENTITY_PRIVACY_CHECKPOINT_DRIFT": 1,
+      "REMAINING_DELETION_INITIAL_PROFILE_FAIL_CLOSED": 1,
+      "REMAINING_DELETION_NATURAL_FRESHNESS_RECHECK": 1,
+      "REMAINING_DELETION_PENDING_HISTORY_EXACT_CONTINUATION": 1,
+      "REMAINING_DELETION_PROVISIONAL_CLAIM_OWNS_ITS_PNL": 1,
+      "REMAINING_DELETION_WAITED_CREDENTIAL_RECHECK": 1
+    },
+    "cold_methods": 0,
+    "genuine_fixtures": 9,
+    "planning_chain_seconds": 1350,
+    "planning_compile_start_slack_seconds": 360,
+    "planning_cut_and_row_wait_seconds": 180,
+    "planning_full_freshness_seconds": 35,
+    "planning_only_not_runtime_guarantee": true,
+    "planning_remaining_to_gate_seconds": 475,
+    "planning_total_seconds": 1925,
+    "post_success_creates": 9,
+    "prerequisite_admission": "ADMITTED_BY_PRIMARY_BEFORE_PREPARATION",
+    "prerequisite_gate": "42",
+    "prerequisite_run": "35643584837",
+    "required_source": "689f9d1985e449b9a3e0a22cb1343c185ce6a5f6",
+    "scope": "Exact9 unrun deletion negatives from42 carryforward/BATCHES;9 full recurrent chains and9 post-SUCCESS CREATEs, no cold runtime or passed-method replay. Covers old profile refusal, identity/privacy/checkpoint drift, exact prior PNL/native APPLY, own provisional PNL, pending/damaged-history continuation, claim loser, credential wait, natural freshness, and exact ownership/ingress/lane. Root must first admit42 relevant genuine positive prerequisites;42 outcomes are not inferred. Remaining D/E, sealing,41/42/native and G1/manual/service/cutover holds are not discharged.",
+    "unchanged_cleanup_reserve_seconds": 180,
+    "unchanged_gradle_seconds": 2400
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 9
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.oldInitialDeletionProfileStillRefusesNewWorkAfterGenuineRecurrentSuccess",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRejectsIdentityPrivacyAndCheckpointDriftBeforeCounters",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRequiresExactPriorPublicationReceiptReservationAndNativeApply",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionOwnClaimCannotBorrowAnyPreviousPNL",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionPendingPriorAndDamagedHistoryRefuseNewWorkButNotExactContinuation",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionClaimLoserReplaysBeforeClosedControlsWithoutDoubleCharge",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionWaitedCredentialChangeCannotAuthorizeTheOriginalClaim",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRechecksDatabaseFreshnessAfterCredentialBoundary",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRetainsExactOwnersTemplatesIngressAndNativeLane"
+  ]
+}
