@@ -11,6 +11,8 @@ import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
@@ -169,19 +171,32 @@ class TestRunErasureRecoveryIT {
         VersionBoundPersistenceConnectedFixture(database.value, testActivation = true).use { it.bind(); action(it) }
 }
 
-/** Separately retained runtime/process, not E's pre-erasure PREPARED recovery or a copied result. */
+/** Same-current-DB cold continuation, not older-restore authority or E's PREPARED recovery. */
 internal fun withFreshTestRunErasure(catalog: CatalogTestRunTerminalFixtureV1, action: (TestRunErasureFixtureV1) -> Unit) {
-    val runtime = VersionBoundPersistenceConnectedFixture(catalog.f.runtime.database, endpointPort = catalog.f.runtime.endpointPort,
-        testIntake = catalog.evidence.intakeAssembly, testRegistrationPredecessor = catalog.f.runtime)
-    var failed: Throwable? = null
-    try {
-        runtime.bind(); runtime.start()
-        assertEquals(PersistenceLifecycleObservation.READY, runtime.pools.catalogCoordinator.prepare())
-        TestRunErasureFixtureV1(catalog, runtime).use(action)
-    } catch (problem: Throwable) { failed = problem; throw problem }
-    finally {
-        try { runtime.closeWith(catalog.f.runtime) }
-        catch (cleanup: Throwable) { val body = failed; if (body == null) throw cleanup; if (body !== cleanup) body.addSuppressed(cleanup) }
+    catalog.released()
+    val coldIntake = catalog.evidence.intakeAssembly?.let {
+        catalog.f.registration.close()
+        catalog.f.runtime.closeRegisteredRuntimeForRecovery()
+        catalog.evidence.reassembleRecoveryIntake(catalog.f.sealHttp)
+    }
+    coldIntake.use { assembly ->
+        val runtime = VersionBoundPersistenceConnectedFixture(catalog.f.runtime.database,
+            endpointPort = catalog.f.runtime.endpointPort, testIntake = assembly)
+        var failed: Throwable? = null
+        try {
+            assertNotSame(catalog.f.runtime.owner, runtime.owner)
+            runtime.bind(); runtime.start()
+            assertNotSame(catalog.f.runtime.pools, runtime.pools)
+            assertEquals(PersistenceLifecycleObservation.READY, runtime.pools.catalogCoordinator.prepare())
+            val process = assembly?.target ?: catalog.evidence.processOn(runtime.pools)
+            assertNotSame(catalog.process, process)
+            assertSame(runtime.pools, process.pools)
+            TestRunErasureFixtureV1(catalog, runtime, process).use(action)
+        } catch (problem: Throwable) { failed = problem; throw problem }
+        finally {
+            try { runtime.closeWith(catalog.f.runtime) }
+            catch (cleanup: Throwable) { val body = failed; if (body == null) throw cleanup; if (body !== cleanup) body.addSuppressed(cleanup) }
+        }
     }
 }
 

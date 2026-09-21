@@ -8,6 +8,7 @@ import me.manga.kira.backend.complaint.catalog.withNonemptyActiveHistoryTerminal
 import me.manga.kira.backend.complaint.catalog.withTerminalCatalogRun
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
+import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalResultV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunErasureRequestV1
@@ -105,13 +106,14 @@ class TestRunErasureIT {
 internal class TestRunErasureFixtureV1(
     val catalog: CatalogTestRunTerminalFixtureV1,
     val runtime: VersionBoundPersistenceConnectedFixture = catalog.f.runtime,
+    private val recoveryProcess: VersionBoundTestNamespaceProcessV1? = null,
 ) : AutoCloseable {
     val admission = DeletionPersistenceAdmission()
     val ownership = PersistencePhaseOwnership.deletion(admission, GuardedJdbcTransactionManager(runtime.pools.deletion))
     val jdbc = TestRunErasureSqlProbeV1(this)
     val observer = catalog.observer
     val scope = catalog.scope
-    private val freshProcess by lazy { catalog.evidence.processOn(runtime.pools) }
+    private val freshProcess by lazy { recoveryProcess ?: catalog.evidence.processOn(runtime.pools) }
     private val originals = arrayListOf<TestRunErasureV1>()
     private val emptyRequests = arrayListOf<JournalPublisherHttpRequest>()
     private var emptyCreated = 0
@@ -154,6 +156,8 @@ internal class TestRunErasureFixtureV1(
 
     fun successful(active: Boolean, queue: Boolean, nonempty: Boolean) {
         val e = projectE()
+        assertTrue(observer.queryForObject("SELECT recurrent_erasure_history_hash IS NULL FROM complaint_test_runs WHERE data_scope_id = ?",
+            Boolean::class.java, scope) == true, "N0 and unarchived N1 acquire no invented recurrent erasure commitment.")
         assertEquals(if (active) 1L else 0L, count("complaint_test_active_seal_intents"))
         assertEquals(if (queue) 1L else 0L, count("complaint_test_active_queue_observations"))
         assertEquals(if (nonempty) 1L else 0L, count("complaint_journal_publications", "event_kind = 'OWNER_DELETE'"))
@@ -190,6 +194,12 @@ internal class TestRunErasureFixtureV1(
     fun image(): Map<String, List<String>> = TABLES.associateWith(::rows) + mapOf(
         "audit" to auditRows(), "counters" to counters().values.map { it.full }, "outside" to outsideRows())
 
+    /** One comparison query on an actual FINAL holder, avoiding many observer round trips inside its bound. */
+    fun allPhysicalRows(jdbc: JdbcTemplate = observer): List<String> = jdbc.queryForList(
+        (TABLES + listOf("audit_log", "complaint_capacity_counters", "users", "admin_step_up_grants")).joinToString(" UNION ALL ") { table ->
+            "SELECT '$table:' || encode(sha256(convert_to(jsonb_build_array(to_jsonb(t),t.xmin::text)::text,'UTF8')),'hex') AS physical FROM $table t"
+        } + " ORDER BY physical", String::class.java)
+
     private fun outsideRows(): List<String> = TABLES.flatMap { table -> observer.queryForList(
         "SELECT encode(sha256(convert_to(jsonb_build_array(to_jsonb(t), t.xmin::text)::text,'UTF8')),'hex') FROM $table t " +
             "WHERE data_scope_id IS DISTINCT FROM ? ORDER BY to_jsonb(t)::text", String::class.java, scope) } +
@@ -216,7 +226,7 @@ internal class TestRunErasureFixtureV1(
                 row.getLong("free_units"), row.getLong("actual_units"), row.getLong("recovery_reserved_units"), row.getLong("test_reserved_units"),
                 row.getString("metadata"), row.getString("full_hash")) }).toMap()
 
-    /** Independent literal V14/V21/V26 logical prices; no call to the eraser's count/price implementation. */
+    /** Independent literal V14/V21/V26/V31 logical prices; no call to the eraser's count/price implementation. */
     fun removablePrice(): ComplaintCapacityVector {
         var total = ComplaintCapacityVector.ZERO
         fun add(table: String, counter: ComplaintCapacityCounter, bytes: Long, extra: String = "TRUE") {
@@ -234,7 +244,9 @@ internal class TestRunErasureFixtureV1(
         add("complaint_recovery_capacity_reservations", ComplaintCapacityCounter.RECOVERY_RESERVATIONS, 16384)
         add("complaint_journal_control", ComplaintCapacityCounter.JOURNAL_CONTROL, 1599808)
         return total + ComplaintCapacityVector.units(ComplaintCapacityCounter.STORAGE_BYTES,
-            count("complaint_test_terminal_intents") * 1340736L + count("complaint_test_active_seal_intents") * 2097152L)
+            count("complaint_test_terminal_intents") * 1340736L +
+                (count("complaint_test_active_seal_intents") + count("complaint_test_active_recurrent_seal_intents") +
+                    count("complaint_test_active_checkpoint_history")) * 2097152L)
     }
     private fun ordinaryPreviouslyReleased(): ComplaintCapacityVector = observer.query(
         "SELECT l.reserved_amounts, l.converted_amounts FROM complaint_recovery_capacity_reservations l " +
@@ -315,6 +327,7 @@ internal class TestRunErasureFixtureV1(
             "app_installations", "complaint_resource_ids", "complaints", "complaint_idempotency_receipts", "installation_deletion_receipts",
             "complaint_deletion_journal_applied", "complaint_recovery_capacity_reservations", "complaint_journal_publications",
             "complaint_test_terminal_intents", "complaint_test_active_seal_intents", "complaint_test_active_queue_observations",
+            "complaint_test_active_recurrent_seal_intents", "complaint_test_active_checkpoint_history",
             "complaint_journal_scan_runs", "complaint_journal_scan_entries", "complaint_deletion_journal_retirements")
     }
 }
