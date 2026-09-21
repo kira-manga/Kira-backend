@@ -151,7 +151,11 @@ internal object TestRegisteredRecurrentCheckpointDeletionSqlV1 {
                         target_ids = ARRAY(SELECT id FROM unnest(target_ids) id ORDER BY id::text COLLATE "C")
                         AND NOT EXISTS (SELECT 1 FROM unnest(target_ids) id WHERE NOT complaint_is_v4(id)) ELSE false END)) AS rejections,
             NOT EXISTS (SELECT 1 FROM complaint_deletion_journal_retirements t,b
-                WHERE t.data_scope_id = b.scope OR starts_with(t.object_key,b.prefix) OR t.event_id IN (SELECT event_id FROM p)) AS no_retirements
+                WHERE t.data_scope_id = b.scope OR starts_with(t.object_key,b.prefix)
+                    OR EXISTS (SELECT 1 FROM complaint_deletion_journal_applied a
+                        WHERE a.object_key = t.object_key AND a.object_version = t.object_version
+                            AND a.data_scope_id = t.data_scope_id AND a.event_kind = t.event_kind
+                            AND a.event_id IN (SELECT event_id FROM p))) AS no_retirements
     """.trimIndent()
 
     /** No state/family filter can hide pending, malformed or foreign-prefix work. */
@@ -194,7 +198,10 @@ internal object TestRegisteredRecurrentCheckpointDeletionSqlV1 {
             (SELECT count(*) FROM (SELECT 1 FROM complaint_recovery_capacity_reservations l,b
                 WHERE l.event_id = ANY(b.ids) OR l.publication_ref = ANY(b.ids) LIMIT 2) x) AS reservations,
             NOT EXISTS (SELECT 1 FROM complaint_deletion_journal_retirements t,b
-                WHERE t.event_id = ANY(b.ids) OR t.object_key = ANY(b.keys)) AS no_retirements
+                WHERE EXISTS (SELECT 1 FROM complaint_deletion_journal_applied a
+                    WHERE a.object_key = t.object_key AND a.object_version = t.object_version
+                        AND a.data_scope_id = t.data_scope_id AND a.event_kind = t.event_kind
+                        AND a.event_id = ANY(b.ids)) OR t.object_key = ANY(b.keys)) AS no_retirements
     """.trimIndent()
     val appliedFamily = """
         SELECT data_scope_id,test_only,writer_generation,journal_epoch,target_count,applied_at,
