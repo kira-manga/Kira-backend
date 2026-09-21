@@ -290,6 +290,8 @@ internal class ComplaintDesiredInstallationFixture(val tls: VersionBoundPersiste
             assertTrue(invocations.all { it.cleanupVerified }, "An original installer invocation has not completed fixture retirement.")
             assertTrue(firstDInvocations.all { it.cleanupVerified }, "An original first-D invocation has not completed fixture retirement.")
         }
+        var parentDeletionAttempted = false
+        var parentDeletionReturned = false
         // A preserved test assertion must not strand owned fixture rows; actual unproven retirement still forbids restoration.
         val restored = listOf(
             afterRetirement(restorationReady) { originalControl?.let(::restoreControl) },
@@ -309,11 +311,22 @@ internal class ComplaintDesiredInstallationFixture(val tls: VersionBoundPersiste
                 if (roleCreated) observer.execute("GRANT UPDATE ON public.complaint_journal_control TO ${PgLifecycleDatabaseSettings.CANDIDATE}")
             },
             afterRetirement(restorationReady) {
-                if (parentCreated) Files.delete(trustParent) // Never recursively remove a retained trust directory.
+                if (parentCreated) {
+                    parentDeletionAttempted = true
+                    Files.delete(trustParent) // Never recursively remove a retained trust directory.
+                    parentDeletionReturned = true
+                }
             },
             runCatching { requireConnectionFree() },
         )
-        rethrowDesiredFixtureFailures(listOf(stopped) + retired + listOf(restorationReady) + restored)
+        val results = listOf(stopped) + retired + listOf(restorationReady) + restored
+        try {
+            if (results.any { it.isFailure }) println("PG_TLS_DESIRED_FIXTURE_CLOSE_FAILED stopReturned=${stopped.isSuccess} " +
+                "retirementFailures=${retired.count { it.isFailure }} restorationReady=${restorationReady.isSuccess} " +
+                "restorationFailures=${restored.count { it.isFailure }} parentCreated=$parentCreated " +
+                "parentDeletionAttempted=$parentDeletionAttempted parentDeletionReturned=$parentDeletionReturned")
+        } catch (_: Throwable) { /* Diagnostics cannot replace an original fixture failure. */ }
+        rethrowDesiredFixtureFailures(results)
     }
 
     private fun afterRetirement(ready: Result<Unit>, action: () -> Unit): Result<Unit> = runCatching {

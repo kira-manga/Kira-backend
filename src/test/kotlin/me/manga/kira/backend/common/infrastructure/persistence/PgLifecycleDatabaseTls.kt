@@ -2,9 +2,11 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.utility.MountableFile
+import java.nio.file.DirectoryNotEmptyException
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
 import java.sql.Statement
@@ -96,8 +98,40 @@ internal class PgLifecycleDatabaseTls private constructor(val root: Path, privat
             Files.deleteIfExists(exported.resolve("server.key"))
             Files.deleteIfExists(exported.resolve("server.crt"))
         }
-        createdDirectories.asReversed().forEach { Files.delete(it) } // Nonrecursive: retain unknown or unreleased client-trust material.
+        createdDirectories.asReversed().forEach { path ->
+            try { Files.delete(path) } // Nonrecursive: retain unknown or unreleased client-trust material.
+            catch (failure: DirectoryNotEmptyException) {
+                try { if (path == root) observeRootDeletionFailure() } catch (_: Throwable) { /* Preserve original failure. */ }
+                throw failure
+            }
+        }
         closed = true
+    }
+
+    /** Failure-only bounded metadata, never names/content, ownership authority, retry or cleanup. */
+    private fun observeRootDeletionFailure() {
+        val counts = IntArray(4) // directory, regular, symlink, other; direct children only.
+        var observed = 0
+        var truncated = false
+        var observationFailed = false
+        try {
+            check(Files.readAttributes(root, BasicFileAttributes::class.java, NOFOLLOW_LINKS).isDirectory)
+            Files.newDirectoryStream(root).use { children ->
+                val iterator = children.iterator()
+                while (observed < 32 && iterator.hasNext()) {
+                    val child = iterator.next()
+                    val attributes = Files.readAttributes(child, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+                    counts[when { attributes.isDirectory -> 0; attributes.isRegularFile -> 1; attributes.isSymbolicLink -> 2; else -> 3 }]++
+                    observed++
+                }
+                truncated = iterator.hasNext()
+            }
+        } catch (_: Throwable) { observationFailed = true }
+        try {
+            println("PG_TLS_COMPONENT_ROOT_DELETE_FAILED observed=$observed directories=${counts[0]} regular=${counts[1]} " +
+                "symlinks=${counts[2]} other=${counts[3]} truncated=$truncated observationFailed=$observationFailed " +
+                "generatorCloseReturned=true knownChildDeletesReturned=true")
+        } catch (_: Throwable) { /* Diagnostics cannot replace the original deletion failure. */ }
     }
 
     private fun createDirectory(path: Path) {
