@@ -14,6 +14,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.aws.journalMetadat
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.journalS3UrlConnectionClient
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.requireJournalVersion
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentScanV1
 import me.manga.kira.backend.security.TestOwnerDeleteCodecAttemptV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
@@ -48,15 +49,16 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
     private val nanoTime: () -> Long,
     private val catalog: CatalogTestRunTerminalV1? = null,
     private val erasure: TestRunErasureV1? = null,
+    private val active: TestActiveRecurrentScanV1? = null,
 ) : AutoCloseable {
-    init { requireJournalPublication(listOf(original, catalog, erasure).count { it != null } == 1) }
-    internal val routing = original?.routing ?: catalog?.routing ?: checkNotNull(erasure).routing
-    private val writer = original?.writer ?: catalog?.writer ?: checkNotNull(erasure).writer
-    private val scope = original?.scope ?: catalog?.scope ?: checkNotNull(erasure).scope
-    private val cutoff = original?.cutoff ?: catalog?.cutoff ?: checkNotNull(erasure).cutoff
+    init { requireJournalPublication(listOfNotNull(original, catalog, erasure, active).size == 1) }
+    internal val routing = original?.routing ?: catalog?.routing ?: erasure?.routing ?: checkNotNull(active).routing
+    private val writer = original?.writer ?: catalog?.writer ?: erasure?.writer ?: checkNotNull(active).writer
+    private val scope = original?.scope ?: catalog?.scope ?: erasure?.scope ?: checkNotNull(active).scope
+    private val cutoff = original?.cutoff ?: catalog?.cutoff ?: erasure?.cutoff ?: checkNotNull(active).cutoff
     internal val ordinaryPrefix = routing.journalConfiguration.ordinaryPrefix
     private val declaration = routing.journalConfiguration.declaration()
-    private val budget = original?.budget ?: catalog?.budget ?: checkNotNull(erasure).budget
+    private val budget = original?.budget ?: catalog?.budget ?: erasure?.budget ?: checkNotNull(active).budget
     private val retainedKeys = declaration.routing.keys.map { it.keyId }.toSet()
     private val routePrefix = "${ordinaryPrefix}writer/${writer}/epoch/"
     private val maximumVersions = declaration.limits.capacity.maximumRetainedVersions
@@ -87,19 +89,22 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
     }
 
     fun scanPass(pass: Int) = owned {
-        requireJournalPublication(stage == Stage.READY && pass in 1..2 && pass == completedPasses + 1)
+        requireJournalPublication((stage == Stage.READY || active != null && stage == Stage.RECOVERY_RELEASED) && pass in 1..2 && pass == completedPasses + 1)
         currentReadback = null
         stage = Stage.BEGIN_PASS
         val startedAt = now()
         if (original != null) original.beginInventoryPass(this, pass, startedAt) // No native graph has been opened.
         else if (catalog != null) catalog.beginOrdinaryInventoryPass(this, pass, startedAt)
-        else checkNotNull(erasure).beginOrdinaryInventoryPass(this, pass, startedAt)
+        else if (erasure != null) erasure.beginOrdinaryInventoryPass(this, pass, startedAt)
+        else checkNotNull(active).beginInventoryPass(this, pass, startedAt)
         requireReader()
         stage = Stage.INVENTORY
         var versionCount = 0L
         var ciphertextBytes = 0L
-        val observed = if (original != null) null else ArrayList<CatalogOrdinaryInventoryEntryV1>()
-        val seen = if (original != null) null else HashSet<Pair<String, String>>()
+        var inspectedVersions = 0L
+        var inspectedCiphertextBytes = 0L
+        val observed = if (catalog == null && erasure == null) null else ArrayList<CatalogOrdinaryInventoryEntryV1>()
+        val seen = if (catalog == null && erasure == null) null else HashSet<Pair<String, String>>()
         var catalogFramedBytes = 0L
         withJournalPublicationCleanup(
             {
@@ -107,15 +112,21 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
                 var cursor: TestOrdinaryInventoryS3ClientV1.Cursor? = null
                 var pages = 0L
                 while (true) {
+                    active?.betweenNativeCalls(this)
                     requireNativeRead()
                     requireJournalPublication(pages < maximumPages, JournalPublicationFailureV1.LIMIT_EXCEEDED)
                     pages++
                     val page = native.s3().listPage(cursor)
-                    requireJournalPublication(page.entries.size.toLong() <= maximumVersions - versionCount, JournalPublicationFailureV1.LIMIT_EXCEEDED)
+                    requireJournalPublication(page.entries.size.toLong() <= maximumVersions - inspectedVersions, JournalPublicationFailureV1.LIMIT_EXCEEDED)
                     page.entries.forEach { listed ->
-                        requireJournalPublication(listed.size <= maximumCiphertextBytes - ciphertextBytes, JournalPublicationFailureV1.LIMIT_EXCEEDED)
+                        active?.betweenNativeCalls(this)
+                        requireJournalPublication(listed.size <= maximumCiphertextBytes - inspectedCiphertextBytes, JournalPublicationFailureV1.LIMIT_EXCEEDED)
                         val readback = readVersion(native, listed.key, listed.version, listed)
-                        requireJournalPublication(readback.ciphertextByteCount <= maximumCiphertextBytes - ciphertextBytes, JournalPublicationFailureV1.LIMIT_EXCEEDED)
+                        requireJournalPublication(readback.ciphertextByteCount <= maximumCiphertextBytes - inspectedCiphertextBytes, JournalPublicationFailureV1.LIMIT_EXCEEDED)
+                        inspectedVersions++; inspectedCiphertextBytes += readback.ciphertextByteCount
+                        // ACTIVE writers continue in cutoff+1. Those versions are fully authenticated,
+                        // counted against the same native limits and deliberately not staged/sealed.
+                        if (active != null && readback.event.comparison.epoch > cutoff) return@forEach
                         versionCount++
                         ciphertextBytes += readback.ciphertextByteCount
                         // getVersion finished native S3 cleanup; open finished KMS lease cleanup;
@@ -124,6 +135,7 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
                         stage = Stage.STAGING
                         try {
                             if (original != null) original.stageInventoryVersion(this, pass, readback)
+                            else if (active != null) active.stageInventoryVersion(this, pass, readback)
                             else {
                                 // No paid staging PK exists in the read-only catalog recheck. Reject
                                 // nonadjacent opaque-version cycles explicitly, without filtering.
@@ -156,6 +168,7 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
         stage = Stage.PASS_RELEASED
         completedPasses = pass
         if (original != null) original.completeInventoryPass(this, pass, completedAt, versionCount, ciphertextBytes)
+        else if (active != null) active.completeInventoryPass(this, pass, completedAt, versionCount, ciphertextBytes)
         else {
             val sorted = checkNotNull(observed).sortedWith { a, b -> TestOrdinaryDrainRowsV1.compare(a.locator, b.locator) }
             requireJournalPublication(sorted.size.toLong() == versionCount && (pass == 1 || sorted == catalogEntries[0]), JournalPublicationFailureV1.INVALID_READBACK)
@@ -169,15 +182,15 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
     }
 
     fun readForRecovery(key: String, version: String): TestOrdinaryInventoryReadbackV1 = owned {
-        requireJournalPublication(original != null && catalog == null && stage in setOf(Stage.READY, Stage.RECOVERY_RELEASED))
-        val drain = checkNotNull(original)
+        requireJournalPublication((original != null || active != null) && catalog == null && stage in setOf(Stage.READY, Stage.RECOVERY_RELEASED))
         currentReadback = null // An earlier observation cannot be reused as the current native read.
         stage = Stage.RECOVERY_LOCATOR
         val exactKey = checkedKey(key)
         val exactVersion = requireJournalVersion(version)
         // The original may have re-admitted its paid durable cut. That never sets this reader's
         // native pass-completion flags: only a new exact GET/decrypt can issue a recovery observation.
-        drain.requireRecoveryLocator(this, exactKey, exactVersion) // SQL locator/comparison only; no native owner yet.
+        if (original != null) original.requireRecoveryLocator(this, exactKey, exactVersion)
+        else checkNotNull(active).requireRecoveryLocator(this, exactKey, exactVersion)
         requireReader()
         stage = Stage.RECOVERY
         val readback = withJournalPublicationCleanup(
@@ -187,7 +200,7 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
         requireReader()
         stage = Stage.RECOVERY_RELEASED
         currentReadback = readback
-        requireReleasedReadback(drain, readback)
+        if (original != null) requireReleasedReadback(original, readback) else requireReleasedReadback(checkNotNull(active), readback)
         readback
     }
 
@@ -200,6 +213,21 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
     internal fun requireReleasedReadback(original: TestRunOrdinaryDrainV1, readback: TestOrdinaryInventoryReadbackV1) {
         requireObserved(original, readback)
         requireJournalPublication(stage == Stage.RECOVERY_RELEASED && graph.get() == null)
+    }
+
+    internal fun requireCompletedPass(owner: TestActiveRecurrentScanV1, pass: Int) {
+        requireReader()
+        requireJournalPublication(active === owner && original == null && catalog == null && pass in 1..2 && completedPasses >= pass && graph.get() == null &&
+            stage in setOf(Stage.PASS_RELEASED, Stage.READY, Stage.RECOVERY_RELEASED))
+    }
+    internal fun requireReleasedReadback(owner: TestActiveRecurrentScanV1, readback: TestOrdinaryInventoryReadbackV1) {
+        requireActiveObserved(owner, readback)
+        requireJournalPublication(stage == Stage.RECOVERY_RELEASED && graph.get() == null)
+    }
+    /** Actual construction/graph retirement, not a deadline or supplied cleanup bit. No SQL is invoked. */
+    internal fun requireRetiredActive(owner: TestActiveRecurrentScanV1, requirePair: Boolean) {
+        requireJournalPublication(active === owner && original == null && catalog == null && closed.get() && !busy.get() && graph.get() == null && stage == Stage.CLOSED)
+        if (requirePair) requireJournalPublication(completedPasses == 2 && failure.get() == null)
     }
 
     /** The private wire/client alternative must still belong to the active original reader. */
@@ -227,7 +255,8 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
         val epochText = fields[0]
         requireJournalPublication(epochText.length == 19 && epochText.all { it in '0'..'9' }, JournalPublicationFailureV1.INVALID_LISTING)
         val epoch = epochText.toLongOrNull()
-        requireJournalPublication(epoch != null && epoch in 1..cutoff && epochText == epoch.toString().padStart(19, '0'), JournalPublicationFailureV1.INVALID_LISTING)
+        val maximumEpoch = if (active == null) cutoff else Math.addExact(cutoff, 1)
+        requireJournalPublication(epoch != null && epoch in 1..maximumEpoch && epochText == epoch.toString().padStart(19, '0'), JournalPublicationFailureV1.INVALID_LISTING)
         requireJournalPublication(fields[1] in retainedKeys, JournalPublicationFailureV1.INVALID_LISTING)
         ComplaintIdentifiers.fingerprint(fields[2]).fill(0)
         return key
@@ -255,7 +284,8 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
                 )
                 if (original != null) original.requireInventoryEvent(decoded.event)
                 else if (catalog != null) catalog.requireOrdinaryInventoryEvent(decoded.event)
-                else checkNotNull(erasure).requireOrdinaryInventoryEvent(decoded.event)
+                else if (erasure != null) erasure.requireOrdinaryInventoryEvent(decoded.event)
+                else checkNotNull(active).requireInventoryEvent(decoded.event)
                 attempt.remainingMillis(1)
                 val verifiedAt = retention.verify(facts.lastModified, facts.retainUntil, facts.requestedRetention)
                 requireNativeRead()
@@ -350,7 +380,8 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
         requireJournalPublication(!closed.get())
         if (original != null) original.requireInventoryReader(this)
         else if (catalog != null) catalog.requireOrdinaryInventoryReader(this)
-        else checkNotNull(erasure).requireOrdinaryInventoryReader(this)
+        else if (erasure != null) erasure.requireOrdinaryInventoryReader(this)
+        else checkNotNull(active).requireInventoryReader(this)
         remainingTotalMillis(1)
     }
 
@@ -408,6 +439,12 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
         requireJournalPublication(stage == Stage.STAGING || (stage == Stage.RECOVERY_RELEASED && graph.get() == null))
     }
 
+    private fun requireActiveObserved(owner: TestActiveRecurrentScanV1, readback: TestOrdinaryInventoryReadbackV1) {
+        requireReader()
+        requireJournalPublication(active === owner && original == null && catalog == null && currentReadback === readback &&
+            (stage == Stage.STAGING || stage == Stage.RECOVERY_RELEASED && graph.get() == null))
+    }
+
     @Synchronized
     private fun remainingTotalMillis(ceilingMillis: Int): Int {
         if (Thread.currentThread().isInterrupted) throw InterruptedException()
@@ -421,7 +458,8 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
         lastElapsed = elapsed
         val total = runCatching { budget.remainingMillis(minOf(remaining, ceilingMillis.toLong())) }
         if (total.isFailure) expired = true
-        return total.getOrThrow().toInt()
+        val allowed = total.getOrThrow().toInt()
+        return active?.remainingNativeMillis(allowed) ?: allowed
     }
 
     private fun now(): Instant = clock.instant().also {
@@ -501,6 +539,7 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
         override fun requireOriginal(original: TestRunOrdinaryDrainV1) = reader.requireObserved(original, this)
         override fun requireCatalog(original: CatalogTestRunTerminalV1) = reader.requireCatalogObserved(original, this)
         override fun requireErasure(original: TestRunErasureV1) = reader.requireErasureObserved(original, this)
+        override fun requireActive(original: TestActiveRecurrentScanV1) = reader.requireActiveObserved(original, this)
         override fun toString(): String = "TestOrdinaryInventoryReadbackV1(current-native-observation,redacted,no-apply-authority)"
     }
 
@@ -563,6 +602,12 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
     private enum class Stage { READY, BEGIN_PASS, INVENTORY, STAGING, PASS_RELEASED, RECOVERY_LOCATOR, RECOVERY, RECOVERY_RELEASED, FAILED, CLOSED }
 
     companion object {
+        internal fun beginActive(original: TestActiveRecurrentScanV1, credentials: AwsSessionCredentials,
+            s3: (remainingMillis: () -> Int) -> SdkHttpClient, kms: (remainingMillis: () -> Int) -> SdkHttpClient,
+            clock: Clock, nanoTime: () -> Long): TestOrdinaryInventoryReaderV1 = journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
+            requireConnectionFree(); original.requireInventoryStart()
+            TestOrdinaryInventoryReaderV1(null, credentials, s3, kms, clock, nanoTime, active = original)
+        }
         internal fun beginCatalog(
             original: CatalogTestRunTerminalV1, credentials: AwsSessionCredentials,
             s3: (() -> SdkHttpClient)? = null, kms: (() -> SdkHttpClient)? = null,
@@ -611,6 +656,7 @@ internal sealed interface TestOrdinaryInventoryReadbackV1 : TestOwnerDeleteJourn
     fun requireOriginal(original: TestRunOrdinaryDrainV1)
     fun requireCatalog(original: CatalogTestRunTerminalV1)
     fun requireErasure(original: TestRunErasureV1)
+    fun requireActive(original: TestActiveRecurrentScanV1)
 }
 
 /** Bounded scalar native comparison only; no event/plaintext/credentials or portable proof is retained. */

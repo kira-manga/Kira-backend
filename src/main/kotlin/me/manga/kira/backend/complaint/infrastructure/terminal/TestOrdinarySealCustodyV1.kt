@@ -5,6 +5,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublication
 import me.manga.kira.backend.complaint.infrastructure.journal.withJournalPublicationCleanup
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentNativeSealV1
 import me.manga.kira.backend.security.TestTerminalAttemptV1
 import me.manga.kira.backend.security.TestTerminalEnvelopeV1
 import me.manga.kira.backend.security.aws.AwsTestOrdinarySealStsV1
@@ -65,7 +66,7 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
     internal fun remainingProviderMillis(ceilingMillis: Int): Int { requireReady(false); return original.remainingProviderMillis(ceilingMillis) }
     internal fun requireAcquisition(selected: VersionBoundTestOrdinarySealV1) { requireReady(false); requireOrdinarySeal(acquisition === selected) }
     internal fun requirePublication() { requireReady(true) }
-    internal fun requireOrdinaryPublication() { requirePublication(); requireOrdinarySeal(original is Original.Terminal || original is Original.Active || original is Original.Recovery || original is Original.History) }
+    internal fun requireOrdinaryPublication() { requirePublication(); requireOrdinarySeal(original is Original.Terminal || original is Original.Active || original is Original.Recovery || original is Original.History || original is Original.Recurrent) }
     internal fun requireTerminalEpochPublication() { requirePublication(); requireOrdinarySeal(original is Original.TerminalEpoch) }
     internal fun canonical() = original.preparedRow()
     internal fun frozen() = original.frozenRow()
@@ -76,7 +77,7 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
         val row = frozen()
         if (!original.usesCurrentPutFloor) {
             requireOrdinarySeal(!checkNotNull(row.retainUntil).isBefore(acquisition.newRetention(attempt, row.binding.createdAt)))
-        } else if (original is Original.Recovery) {
+        } else if (original is Original.Recovery || original is Original.Recurrent) {
             // Shape retains M>=createdAt+10y. Keep the old horizon/current-M guards without moving M.
             val minimum = checkNotNull(row.retainUntil)
             requireOrdinarySeal(minimum.isAfter(acquisition.sampleUtc()) &&
@@ -109,6 +110,13 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
     }
     internal fun requireReleasedProof(candidate: TestActiveHistorySealReadbackV1, proof: TestOrdinarySealProofV1) {
         synchronized(lifecycle) { requireOrdinarySeal(original is Original.History && candidate === original.value && proof === observed && closed && !cleaning && closeFailure == null && !reserved) }
+    }
+    internal fun requireReleasedProof(candidate: TestActiveRecurrentNativeSealV1, proof: TestOrdinarySealProofV1) {
+        synchronized(lifecycle) { requireOrdinarySeal(original is Original.Recurrent && candidate === original.value && proof === observed && closed && !cleaning && !active && closeFailure == null && !reserved) }
+    }
+    internal fun requireRetired(candidate: TestActiveRecurrentNativeSealV1) = synchronized(lifecycle) {
+        requireOrdinarySeal(original is Original.Recurrent && candidate === original.value && caller === Thread.currentThread() &&
+            closed && !cleaning && !active && closeFailure == null && !reserved)
     }
     // Called under the registry bookkeeping lock: fixed identity/atomic values only, no callbacks or clocks.
     internal fun requireLane(selected: JournalPublicationLanesV1) { requireOrdinarySeal(lanes === selected) }
@@ -143,6 +151,13 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
     }
     override fun toString(): String = "TestOrdinarySealCustodyV1(concrete-shared-J-owner,redacted)"
     companion object {
+        internal fun reserve(original: TestActiveRecurrentNativeSealV1): TestOrdinarySealCustodyV1 {
+            original.requireReservation()
+            val custody = TestOrdinarySealCustodyV1(Original.Recurrent(original))
+            requireOrdinarySeal(original.registration.process.publicationLanes.tryTestOrdinarySeal(custody))
+            custody.reserved = true
+            return custody
+        }
         internal fun reserve(original: TestActiveHistorySealReadbackV1): TestOrdinarySealCustodyV1 {
             original.requireReservation()
             val custody = TestOrdinarySealCustodyV1(Original.History(original))
@@ -187,32 +202,36 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
         class Active(val value: TestActiveOrdinarySealV1) : Original()
         class Recovery(val value: TestActiveOrdinarySealRecoveryV1) : Original()
         class History(val value: TestActiveHistorySealReadbackV1) : Original()
-        val registration get() = when (this) { is Terminal -> value.registration; is TerminalEpoch -> value.registration; is Active -> value.registration; is Recovery -> value.registration; is History -> value.registration }
-        val acquisition get() = when (this) { is Terminal -> value.acquisition; is TerminalEpoch -> value.acquisition; is Active -> value.acquisition; is Recovery -> value.acquisition; is History -> value.acquisition }
-        val routing get() = when (this) { is Terminal -> value.routing; is TerminalEpoch -> value.routing; is Active -> value.routing; is Recovery -> value.routing; is History -> value.routing }
-        val codecAttempt get() = when (this) { is Terminal -> value.codecAttempt; is TerminalEpoch -> value.codecAttempt; is Active -> value.codecAttempt; is Recovery -> value.codecAttempt; is History -> value.codecAttempt }
-        val codec get() = when (this) { is Terminal -> value.codec; is TerminalEpoch -> value.codec; is Active -> value.codec; is Recovery -> value.codec; is History -> value.codec }
-        val usesCurrentPutFloor get() = when (this) { is TerminalEpoch -> true; is Recovery -> value.usesCurrentPutFloor; is Terminal, is Active, is History -> false }
+        class Recurrent(val value: TestActiveRecurrentNativeSealV1) : Original()
+        val registration get() = when (this) { is Terminal -> value.registration; is TerminalEpoch -> value.registration; is Active -> value.registration; is Recovery -> value.registration; is History -> value.registration; is Recurrent -> value.registration }
+        val acquisition get() = when (this) { is Terminal -> value.acquisition; is TerminalEpoch -> value.acquisition; is Active -> value.acquisition; is Recovery -> value.acquisition; is History -> value.acquisition; is Recurrent -> value.acquisition }
+        val routing get() = when (this) { is Terminal -> value.routing; is TerminalEpoch -> value.routing; is Active -> value.routing; is Recovery -> value.routing; is History -> value.routing; is Recurrent -> value.routing }
+        val codecAttempt get() = when (this) { is Terminal -> value.codecAttempt; is TerminalEpoch -> value.codecAttempt; is Active -> value.codecAttempt; is Recovery -> value.codecAttempt; is History -> value.codecAttempt; is Recurrent -> value.codecAttempt }
+        val codec get() = when (this) { is Terminal -> value.codec; is TerminalEpoch -> value.codec; is Active -> value.codec; is Recovery -> value.codec; is History -> value.codec; is Recurrent -> value.codec }
+        val usesCurrentPutFloor get() = when (this) { is TerminalEpoch -> true; is Recovery -> value.usesCurrentPutFloor; is Recurrent -> value.usesCurrentPutFloor; is Terminal, is Active, is History -> false }
         fun requireProvider(custody: TestOrdinarySealCustodyV1, publication: Boolean) = when (this) {
             is Terminal -> value.requireProvider(custody, publication); is TerminalEpoch -> value.requireProvider(custody, publication)
             is Active -> value.requireProvider(custody, publication)
             is Recovery -> value.requireProvider(custody, publication)
             is History -> value.requireProvider(custody, publication)
+            is Recurrent -> value.requireProvider(custody, publication)
         }
-        fun preparedRow() = when (this) { is Terminal -> value.preparedRow(); is TerminalEpoch -> value.preparedRow(); is Active -> value.preparedRow(); is Recovery -> value.preparedRow(); is History -> value.preparedRow() }
-        fun frozenRow() = when (this) { is Terminal -> value.frozenRow(); is TerminalEpoch -> value.frozenRow(); is Active -> value.frozenRow(); is Recovery -> value.frozenRow(); is History -> value.frozenRow() }
-        fun content() = when (this) { is Terminal -> value.content(); is TerminalEpoch -> value.content(); is Active -> value.content(); is Recovery -> value.content(); is History -> value.content() }
-        fun requireUnverifiedSeal() = when (this) { is Terminal -> value.requireUnverifiedSeal(); is TerminalEpoch -> value.requireUnverifiedSeal(); is Active -> value.requireUnverifiedSeal(); is Recovery -> value.requireUnverifiedSeal(); is History -> value.requireUnverifiedSeal() }
+        fun preparedRow() = when (this) { is Terminal -> value.preparedRow(); is TerminalEpoch -> value.preparedRow(); is Active -> value.preparedRow(); is Recovery -> value.preparedRow(); is History -> value.preparedRow(); is Recurrent -> value.preparedRow() }
+        fun frozenRow() = when (this) { is Terminal -> value.frozenRow(); is TerminalEpoch -> value.frozenRow(); is Active -> value.frozenRow(); is Recovery -> value.frozenRow(); is History -> value.frozenRow(); is Recurrent -> value.frozenRow() }
+        fun content() = when (this) { is Terminal -> value.content(); is TerminalEpoch -> value.content(); is Active -> value.content(); is Recovery -> value.content(); is History -> value.content(); is Recurrent -> value.content() }
+        fun requireUnverifiedSeal() = when (this) { is Terminal -> value.requireUnverifiedSeal(); is TerminalEpoch -> value.requireUnverifiedSeal(); is Active -> value.requireUnverifiedSeal(); is Recovery -> value.requireUnverifiedSeal(); is History -> value.requireUnverifiedSeal(); is Recurrent -> value.requireUnverifiedSeal() }
         fun requireListedSealVersion(version: String?) = when (this) {
             is Terminal -> value.requireListedSealVersion(version); is TerminalEpoch -> value.requireListedSealVersion(version)
             is Active -> value.requireListedSealVersion(version)
             is Recovery -> value.requireListedSealVersion(version)
             is History -> value.requireListedSealVersion(version)
+            is Recurrent -> value.requireListedSealVersion(version)
         }
         fun remainingProviderMillis(ceilingMillis: Int) = when (this) {
             is Terminal -> ceilingMillis; is TerminalEpoch -> ceilingMillis; is History -> ceilingMillis
             is Active -> value.remainingNativeContinuationMillis(ceilingMillis)
             is Recovery -> value.remainingNativeContinuationMillis(ceilingMillis)
+            is Recurrent -> value.remainingNativeContinuationMillis(ceilingMillis)
         }
     }
 }

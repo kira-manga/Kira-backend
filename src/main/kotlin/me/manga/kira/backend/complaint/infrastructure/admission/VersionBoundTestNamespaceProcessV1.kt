@@ -45,6 +45,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     val activeCutoffPublication: VersionBoundTestActiveCutoffPublicationV1?,
     val activeFirstCutSuccessor: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1?,
     val initialCheckpoint: VersionBoundTestActiveInitialCheckpointV1?,
+    val activeRecurrent: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveRecurrentV1?,
     val activeOrdinarySealRecovery: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1?,
     val terminalDenial: TestTerminalDenialAuthorityPolicyV1?,
     val initialCheckpointCreate: VersionBoundTestInitialCheckpointCreateV1?,
@@ -195,6 +196,8 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         activeCutoffPublication?.requireRetained(consumers.journalRouting, publicationLanes)
         require(initialCheckpoint == null || activeFirstCut != null && activeCutoffPublication != null) { INVALID_TEST_PROCESS_CONFIGURATION }
         initialCheckpoint?.requireRetained(consumers.journalRouting, pools, ordinarySeal)
+        require(activeRecurrent == null || initialCheckpoint != null && activeFirstCut != null && activeCutoffPublication != null) { INVALID_TEST_PROCESS_CONFIGURATION }
+        activeRecurrent?.requireRetained(consumers.journalRouting, pools, ordinarySeal)
         initialCheckpointCreate?.requireRetained(pools, consumers.journalRouting, initialCheckpoint)
         initialCheckpointDeletion?.requireRetained(pools, consumers.journalRouting, initialCheckpoint, activeCutoffPublication)
         require(activeOwnerDeleteQueue == null || initialCheckpoint != null && activeFirstCut != null) { INVALID_TEST_PROCESS_CONFIGURATION }
@@ -233,6 +236,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             activeCutoffPublication: VersionBoundTestActiveCutoffPublicationV1? = null,
             activeFirstCutSuccessor: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1? = null,
             initialCheckpoint: VersionBoundTestActiveInitialCheckpointV1? = null,
+            activeRecurrent: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveRecurrentV1? = null,
             activeOrdinarySealRecovery: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1? = null,
             terminalDenial: TestTerminalDenialAuthorityPolicyV1? = null,
             initialCheckpointCreate: VersionBoundTestInitialCheckpointCreateV1? = null,
@@ -242,7 +246,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             requireConnectionFree()
             return VersionBoundTestNamespaceProcessV1(
                 consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
-                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication, activeFirstCutSuccessor, initialCheckpoint, activeOrdinarySealRecovery, terminalDenial = terminalDenial,
+                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication, activeFirstCutSuccessor, initialCheckpoint, activeRecurrent, activeOrdinarySealRecovery, terminalDenial = terminalDenial,
                 initialCheckpointCreate = initialCheckpointCreate,
                 activeOwnerDeleteQueue = activeOwnerDeleteQueue,
                 initialCheckpointDeletion = initialCheckpointDeletion,

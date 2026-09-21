@@ -7,6 +7,10 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_EPOCH_ROTATIO
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_EPOCH_ROTATION_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutCaptureOperationV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentCaptureOperationV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentCurrentV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentSqlV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutStateV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSqlV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSuccessorCaptureOperationV1
@@ -48,6 +52,7 @@ internal class PersistenceEpochRotationSession private constructor(
     @Volatile private var work: PersistenceTimeBudget? = null
     private var retained: CatalogEpochRotationCaptureOperation? = null
     private var retainedTest: TestActiveFirstCutCaptureOperationV1? = null
+    private var retainedRecurrent: TestActiveRecurrentCaptureOperationV1? = null
     private var retainedSuccessor: TestActiveFirstCutSuccessorCaptureOperationV1? = null
     private var stage = Stage.PREPARED
     private var clippingRead = false
@@ -78,7 +83,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     internal fun retain(operation: CatalogEpochRotationCaptureOperation) {
         requireWork()
-        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
+        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && retainedRecurrent == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
         retained = operation
     }
 
@@ -121,7 +126,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     internal fun retain(operation: TestActiveFirstCutCaptureOperationV1) {
         requireWork()
-        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
+        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && retainedRecurrent == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
         retainedTest = operation
     }
 
@@ -179,7 +184,7 @@ internal class PersistenceEpochRotationSession private constructor(
     }
 
     internal fun requireReleased(operation: TestActiveFirstCutCaptureOperationV1) {
-        if (!caller.isCurrent() || retainedTest !== operation || retained != null || retainedSuccessor != null || !attempt.owns(operation) || !operation.completedFor(this)) throw failure()
+        if (!caller.isCurrent() || retainedTest !== operation || retainedRecurrent != null || retained != null || retainedSuccessor != null || !attempt.owns(operation) || !operation.completedFor(this)) throw failure()
         if (stage !== Stage.RELEASED || problem.get() != null || !entry.jdbc.terminalCompletion().reclaimed()) throw failure()
         if (context.transaction.databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) throw failure()
         requireWork()
@@ -187,13 +192,85 @@ internal class PersistenceEpochRotationSession private constructor(
 
     private fun requireOperation(operation: TestActiveFirstCutCaptureOperationV1) {
         requireWork()
-        check(retainedTest === operation && retained == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
+        check(retainedTest === operation && retainedRecurrent == null && retained == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
+        attempt.requireCore(resource)
+    }
+
+    internal fun retain(operation: TestActiveRecurrentCaptureOperationV1) {
+        requireWork()
+        check(stage === Stage.EXCLUSIVE && retained == null && retainedRecurrent == null && retainedTest == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
+        retainedRecurrent = operation
+    }
+
+    /** Fixed ACTIVE authentication/row-lock order; no caller SQL, pooled connection or LIVE dispatch. */
+    internal fun lockControl(operation: TestActiveRecurrentCaptureOperationV1) {
+        requireOperation(operation)
+        check(stage === Stage.EXCLUSIVE)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        connection.prepareStatement(TestActiveRecurrentSqlV1.authenticate).use { statement ->
+            operation.authenticationArguments().forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeQuery().use { row -> check(row.next() && row.getBoolean("valid") && !row.wasNull() && !row.next()) }
+        }
+        lockTestRow(TestActiveRecurrentSqlV1.lockGlobal, emptyArray(), "data_scope_id", UUID(0L, 0L))
+        lockTestRow(TestActiveRecurrentSqlV1.lockScope, operation.scopeArguments(), "data_scope_id", operation.expectedScope())
+        lockTestRow(TestActiveRecurrentSqlV1.lockRun, operation.scopeArguments(), "data_scope_id", operation.expectedScope())
+        lockTestRow(TestActiveRecurrentSqlV1.lockSlot, operation.slotArguments(), "operation_token", operation.expectedSlot())
+        stage = Stage.LOCKED
+    }
+
+    internal fun readControl(operation: TestActiveRecurrentCaptureOperationV1): TestActiveRecurrentCurrentV1 {
+        requireOperation(operation)
+        val initial = stage === Stage.LOCKED
+        check(initial || stage === Stage.WRITTEN)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        val observed = connection.prepareStatement(TestActiveRecurrentSqlV1.read).use { statement ->
+            operation.readArguments().forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeQuery().use { row ->
+                check(row.next())
+                val value = TestActiveRecurrentCurrentV1.copy(row)
+                check(!row.next())
+                value
+            }
+        }
+        requireWork()
+        stage = if (initial) Stage.SAMPLED else Stage.REREAD
+        return observed
+    }
+
+    internal fun captureControl(operation: TestActiveRecurrentCaptureOperationV1) {
+        requireOperation(operation)
+        check(stage === Stage.SAMPLED)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        updateTest(TestActiveRecurrentSqlV1.capture, operation.captureArguments())
+        updateTest(TestActiveRecurrentSqlV1.captureSlot, operation.captureSlotArguments())
+        stage = Stage.WRITTEN
+    }
+
+    internal fun commit(operation: TestActiveRecurrentCaptureOperationV1) {
+        requireOperation(operation)
+        check(stage === Stage.REREAD && operation.completedFor(this))
+        connection.commit()
+        requireWork()
+        check(context.transaction.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED && !context.transaction.uncertain())
+        stage = Stage.COMMITTED
+    }
+
+    internal fun requireReleased(operation: TestActiveRecurrentCaptureOperationV1) {
+        if (!caller.isCurrent() || retainedRecurrent !== operation || retained != null || retainedTest != null || retainedSuccessor != null || !attempt.owns(operation) || !operation.completedFor(this)) throw failure()
+        if (stage !== Stage.RELEASED || problem.get() != null || !entry.jdbc.terminalCompletion().reclaimed()) throw failure()
+        if (context.transaction.databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) throw failure()
+        requireWork()
+    }
+
+    private fun requireOperation(operation: TestActiveRecurrentCaptureOperationV1) {
+        requireWork()
+        check(retainedRecurrent === operation && retained == null && retainedTest == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
         attempt.requireCore(resource)
     }
 
     internal fun retain(operation: TestActiveFirstCutSuccessorCaptureOperationV1) {
         requireWork()
-        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && retainedSuccessor == null &&
+        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && retainedRecurrent == null && retainedSuccessor == null &&
             attempt.owns(operation) && operation.belongsTo(this))
         retainedSuccessor = operation
     }
@@ -314,7 +391,7 @@ internal class PersistenceEpochRotationSession private constructor(
     }
 
     internal fun requireReleased(operation: TestActiveFirstCutSuccessorCaptureOperationV1) {
-        if (!caller.isCurrent() || retainedSuccessor !== operation || retained != null || retainedTest != null ||
+        if (!caller.isCurrent() || retainedSuccessor !== operation || retainedRecurrent != null || retained != null || retainedTest != null ||
             !attempt.owns(operation) || !operation.completedFor(this)) throw failure()
         if (stage !== Stage.RELEASED || problem.get() != null || !entry.jdbc.terminalCompletion().reclaimed()) throw failure()
         if (context.transaction.databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) throw failure()
@@ -323,7 +400,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     private fun requireOperation(operation: TestActiveFirstCutSuccessorCaptureOperationV1) {
         requireWork()
-        check(retainedSuccessor === operation && retained == null && retainedTest == null && attempt.owns(operation) && operation.belongsTo(this))
+        check(retainedSuccessor === operation && retained == null && retainedTest == null && retainedRecurrent == null && attempt.owns(operation) && operation.belongsTo(this))
         attempt.requireCore(resource)
     }
 
@@ -367,6 +444,27 @@ internal class PersistenceEpochRotationSession private constructor(
      * allowance, never a new emergency budget, and never clears failure or issues RELEASED/success.
      */
     internal fun awaitFailedFirstCutRetirement(original: TestActiveFirstCutV1) {
+        check(caller.isCurrent() && attempt.owns(original) && retired.get() && problem.get() != null)
+        val originalCleanup = work ?: total // Exactly the existing native CLEANUP dispatch allowance.
+        val observation = originalCleanup.systemCleanupSnapshot(EpochRotationLimits.REQUEST_PHASE_MILLIS)
+        while (true) {
+            if (caller.sampleOutsideLocks() != null) {
+                throw PersistencePhaseException(PersistencePhaseFailureCode.INTERRUPTED, context.transaction.databaseOutcome(), false)
+            }
+            originalCleanup.remainingMillis(1)
+            observation.remainingMillis(1)
+            if (entry.jdbc.terminalCompletion().reclaimed()) {
+                // Both the native proof and its return must fit the same already-running allowances.
+                originalCleanup.remainingMillis(1)
+                observation.remainingMillis(1)
+                return
+            }
+            val waitMillis = minOf(originalCleanup.remainingMillis(10), observation.remainingMillis(10))
+            LockSupport.parkNanos(waitMillis * 1_000_000)
+        }
+    }
+
+    internal fun awaitFailedRecurrentRetirement(original: TestActiveRecurrentV1) {
         check(caller.isCurrent() && attempt.owns(original) && retired.get() && problem.get() != null)
         val originalCleanup = work ?: total // Exactly the existing native CLEANUP dispatch allowance.
         val observation = originalCleanup.systemCleanupSnapshot(EpochRotationLimits.REQUEST_PHASE_MILLIS)
@@ -489,7 +587,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     private fun requireOperation(operation: CatalogEpochRotationCaptureOperation) {
         requireWork()
-        check(retained === operation && retainedTest == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
+        check(retained === operation && retainedTest == null && retainedRecurrent == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
         attempt.requireCore(resource)
     }
 

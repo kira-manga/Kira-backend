@@ -34,7 +34,8 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             put("kind", "kira-complaint-effective-test-configuration")
             put("schemaVersion", 1)
             put("canonicalizerId", "kcj-1")
-            put("profile", if (owner.initialCheckpoint != null && owner.activeOrdinarySealRecovery != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_INITIAL_EMPTY_RECOVERY_CHECKPOINT_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+            put("profile", if (owner.activeRecurrent != null) "PRE_CUTOVER_TEST_ACTIVE_RECURRENT_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+                else if (owner.initialCheckpoint != null && owner.activeOrdinarySealRecovery != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_INITIAL_EMPTY_RECOVERY_CHECKPOINT_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (owner.activeOrdinarySealRecovery != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_INITIAL_EMPTY_SEAL_RECOVERY_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (owner.initialCheckpoint != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_INITIAL_EMPTY_CHECKPOINT_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (owner.activeFirstCutSuccessor != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ACTIVE_FIRST_CUT_RESERVED_RECOVERY_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
@@ -77,6 +78,7 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             }
             // Additive independent read owner; no absence rule excludes a separately retained recovery recipe.
             owner.initialCheckpoint?.let { put("initialCheckpoint", it.inventory()) }
+            owner.activeRecurrent?.let { put("activeRecurrent", it.inventory()) }
             owner.initialCheckpointCreate?.let { put("initialCheckpointCreate", it.inventory()) }
             owner.initialCheckpointDeletion?.let { put("initialCheckpointDeletion", it.inventory()) }
             owner.activeOwnerDeleteQueue?.let { put("activeOwnerDeleteQueue", it.inventory()) }

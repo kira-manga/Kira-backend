@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.infrastructure.terminal
 
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableRowV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentNativeSealV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.TestOrdinarySealS3ClientV1
 import me.manga.kira.backend.security.aws.AwsTestTerminalDataKeyAdapterV1
 import java.time.Instant
@@ -17,6 +18,7 @@ internal class TestOrdinarySealProofV1 private constructor(
     internal fun requireOriginal(original: TestRunOrdinarySealV1) { custody.requireReleasedProof(original, this) }
     internal fun requireOriginal(original: TestActiveOrdinarySealV1) { custody.requireReleasedProof(original, this) }
     internal fun requireOriginal(original: TestActiveHistorySealReadbackV1) { custody.requireReleasedProof(original, this) }
+    internal fun requireOriginal(original: TestActiveRecurrentNativeSealV1) { custody.requireReleasedProof(original, this) }
     internal fun requireOriginal(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryV1) { custody.requireReleasedProof(original, this) }
 
     /** Stored comparison bytes, not a capability. Exact replay preserves its first observed timestamp. */

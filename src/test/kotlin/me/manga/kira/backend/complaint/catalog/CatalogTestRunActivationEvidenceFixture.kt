@@ -188,6 +188,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         require(ordinaryRawHttp?.initialCheckpointDeletion == null || ordinaryRawHttp.initialCheckpoint != null)
         require(ordinaryRawHttp?.shortInitialCheckpointFreshness != true || ordinaryRawHttp.initialCheckpointCreate != null)
         require(ordinaryRawHttp?.activeOwnerDeleteQueue == null || ordinaryRawHttp?.initialCheckpoint != null)
+        require(ordinaryRawHttp?.activeRecurrent == null || ordinaryRawHttp.initialCheckpoint != null && activeFirstCut)
         require(!activeSealRecovery || activeFirstCut)
         require(ordinaryRawHttp?.activeSealRecovery == null || activeSealRecovery)
         require(!activeFirstCut || (ordinarySealHttp?.protectedIntake == true && intakeTls != null &&
@@ -240,6 +241,8 @@ internal class CatalogTestRunActivationEvidenceFixture(
     private val projectedCheckpointGraphs = IdentityHashMap<VersionBoundPersistencePools,
         Pair<VersionBoundTestActiveInitialCheckpointV1, VersionBoundTestInitialCheckpointCreateV1?>>()
     private val projectedActiveQueues = mutableListOf<VersionBoundTestActiveOwnerDeleteQueueV1>()
+    private val projectedRecurrent = IdentityHashMap<VersionBoundPersistencePools,
+        me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveRecurrentV1>()
     private val projectedDeletionPolicies = IdentityHashMap<VersionBoundPersistencePools, VersionBoundTestInitialCheckpointDeletionV1>()
     /** Exact raw fixture inputs only; no acquired secret, target, registration or projection is exported. */
     internal fun coldInputBytes(): ByteArray = checkNotNull(originalIntakeBytes).copyOf()
@@ -326,6 +329,16 @@ internal class CatalogTestRunActivationEvidenceFixture(
             }
             val checkpoint = checkpointGraph?.first
             val initialCheckpointCreate = checkpointGraph?.second
+            val recurrent = native.activeRecurrent?.let { original ->
+                if (pools === native.pools) original else projectedRecurrent.getOrPut(pools) {
+                    val raw = checkNotNull(ordinaryRawHttp?.initialCheckpoint)
+                    val inputs = ComplaintTestDeploymentInputsV1.fromDecoded(checkNotNull(intakeDocument))
+                    me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveRecurrentV1.fromIndependentInputs(
+                        checkNotNull(inputs.activeRecurrent), native.consumers.journalRouting, pools, checkNotNull(native.ordinarySeal),
+                        inputs.sealerMapping, raw.credentials, inputs.sealerLimits, original.clock, original.nanoTime,
+                        raw.sts, raw.kms, raw.s3)
+                }
+            }
             val initialCheckpointDeletion = native.initialCheckpointDeletion?.let { original ->
                 if (pools === native.pools) original else projectedDeletionPolicies.getOrPut(pools) {
                     VersionBoundTestInitialCheckpointDeletionV1.fromIndependentInputs(
@@ -346,7 +359,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             }
             return VersionBoundTestNamespaceProcessV1.fromRetained(native.consumers, pools, 1, desiredGeneration,
                 native.databaseIdentity, native.restoreIdentity, native.publicationLanes, native.catalogReadback, selected,
-                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, activeFirstCutSuccessor = successor, initialCheckpoint = checkpoint, activeOrdinarySealRecovery = sealRecovery, terminalDenial = native.terminalDenial,
+                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, activeFirstCutSuccessor = successor, initialCheckpoint = checkpoint, activeRecurrent = recurrent, activeOrdinarySealRecovery = sealRecovery, terminalDenial = native.terminalDenial,
                 initialCheckpointCreate = initialCheckpointCreate, activeOwnerDeleteQueue = queue, initialCheckpointDeletion = initialCheckpointDeletion)
         }
         val writer = journal.declaration().writer
@@ -420,6 +433,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             activeFirstCutSuccessor = activeFirstCutSuccessorInput,
             ordinaryPublication = activeFirstCutInput?.let { TestActiveFirstCutInputFixtureV1.ordinaryInput() },
             initialCheckpoint = ordinaryRawHttp?.initialCheckpoint?.input,
+            activeRecurrent = ordinaryRawHttp?.activeRecurrent,
             activeOrdinarySealRecovery = activeSealRecoveryInput,
             initialCheckpointCreate = ordinaryRawHttp?.initialCheckpointCreate,
             initialCheckpointDeletion = ordinaryRawHttp?.initialCheckpointDeletion,
@@ -497,6 +511,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         // These extra recipes stay cold and fixture-owned. Each clears only its own read credential
         // reference; the actual runtime reader remains exclusively owned/closed by its assembly.
         val failures = projectedActiveQueues.asReversed().mapNotNull { runCatching(it::close).exceptionOrNull() }.toMutableList()
+        projectedRecurrent.values.toList().asReversed().mapNotNullTo(failures) { runCatching(it::close).exceptionOrNull() }
         projectedInitialCheckpoints.asReversed().mapNotNullTo(failures) { runCatching(it::close).exceptionOrNull() }
         runCatching { intakeAssembly?.close() }.exceptionOrNull()?.let(failures::add)
         failures.firstOrNull()?.let { first ->

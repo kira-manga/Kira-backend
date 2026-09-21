@@ -24,4 +24,5 @@ internal class TestActiveOrdinaryRawHttpV1(
     val shortInitialCheckpointFreshness: Boolean = false,
     val activeOwnerDeleteQueue: TestActiveOwnerDeleteQueueHttpInputV1? = null,
     val initialCheckpointDeletion: TestInitialCheckpointDeletionInputV1? = null,
+    val activeRecurrent: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentInputV1? = null,
 )

@@ -113,6 +113,9 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     val initialCheckpoint = document.initialCheckpoint?.also(
         me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveInitialCheckpointV1::requireInput,
     )
+    val activeRecurrent = document.activeRecurrent?.also(
+        me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveRecurrentV1::requireInput,
+    )
     val initialCheckpointCreate = document.initialCheckpointCreate?.also(
         me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1::requireInput,
     )
@@ -152,6 +155,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         if (!combinedInitialRecovery) valid((document.profile == ACTIVE_FIRST_CUT_SUCCESSOR_PROFILE) == (activeFirstCutSuccessor != null))
         valid((document.profile == INITIAL_CHECKPOINT_PROFILE || combinedInitialRecovery) == (initialCheckpoint != null))
         valid(initialCheckpointCreate == null || initialCheckpoint != null)
+        valid(activeRecurrent == null || initialCheckpoint != null && activeFirstCut != null && ordinaryPublication != null)
         valid(initialCheckpointDeletion == null || initialCheckpoint != null && ordinaryPublication != null &&
             journal.registeredAdminBatchDelete && journal.ownerDeleteAll)
         valid((document.profile == ACTIVE_SEAL_RECOVERY_PROFILE || combinedInitialRecovery) == (activeOrdinarySealRecovery != null))
@@ -203,6 +207,10 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
             sealerMapping.ordinary.principal.callerUserId(it.sessionName)
         }
         initialCheckpoint?.let {
+            sealerMapping.recovery.principal.callerArn(it.recoverySessionName)
+            sealerMapping.recovery.principal.callerUserId(it.recoverySessionName)
+        }
+        activeRecurrent?.let {
             sealerMapping.recovery.principal.callerArn(it.recoverySessionName)
             sealerMapping.recovery.principal.callerUserId(it.recoverySessionName)
         }

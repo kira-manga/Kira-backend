@@ -96,6 +96,13 @@ internal class VersionBoundTestActiveCutoffPublicationV1 private constructor(
         return factory
     }
 
+    internal fun publisher(original: TestActiveRecurrentV1): TestOwnerDeleteJournalPublisherFactoryV1 {
+        requireConnectionFree(); original.requireCutoffRecipe(this); requireRetained(routing, lanes)
+        val factory = TestOwnerDeleteJournalPublisherFactoryV1.recurrentCutoff(original, this, lanes, routing, checkNotNull(material.get()), s3, kms, clock, nanoTime)
+        synchronized(factories) { requireActiveSeal(!stopped.get()); factories.add(factory) }
+        return factory
+    }
+
     /** Only the born-with registered deletion binding can select these privacy-family alternatives. */
     internal fun ownerPublisher(original: TestOwnerDeleteProcessBindingV1, store: JdbcComplaintOwnerDeleteStore): TestOwnerDeleteJournalPublisherFactoryV1 {
         requireConnectionFree(); original.requirePublicationRecipe(this); requireRetained(routing, lanes)

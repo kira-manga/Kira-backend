@@ -87,6 +87,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
     private var seal: VersionBoundTestOrdinarySealV1? = null
     private var activePublication: VersionBoundTestActiveCutoffPublicationV1? = null
     private var initialCheckpoint: VersionBoundTestActiveInitialCheckpointV1? = null
+    private var activeRecurrent: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveRecurrentV1? = null
     private var activeQueue: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1? = null
     private var assembled: VersionBoundTestNamespaceProcessV1? = null
     private var closeFailure: Throwable? = null
@@ -302,6 +303,11 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
                 checkNotNull(scannerCredentials), inputs.sealerLimits, AssemblyClock(wallClock), nanoClock::nanoTime,
                 scannerStsHttpFixture, scannerKmsHttpFixture, scannerS3HttpFixture).also { retained -> initialCheckpoint = retained }
         }
+        val recurrent = inputs.activeRecurrent?.let {
+            me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveRecurrentV1.fromIndependentInputs(it, routing, pools, ordinarySeal, inputs.sealerMapping,
+                checkNotNull(scannerCredentials), inputs.sealerLimits, AssemblyClock(wallClock), nanoClock::nanoTime,
+                scannerStsHttpFixture, scannerKmsHttpFixture, scannerS3HttpFixture).also { retained -> activeRecurrent = retained }
+        }
         val queue = inputs.activeOwnerDeleteQueue?.let {
             me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1.fromIndependentInputs(
                 it, consumers.journalRouting, pools, inputs.sealerMapping, checkNotNull(queueCredentials), inputs.sealerLimits,
@@ -315,7 +321,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         }
         assembled = VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, inputs.implementationSchema, inputs.desiredGeneration, inputs.databaseIdentity, inputs.restoreIdentity,
-            publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial, activeFirstCut, ordinaryPublication, activeFirstCutSuccessor = activeFirstCutSuccessor, initialCheckpoint = scanner, activeOrdinarySealRecovery = activeOrdinarySealRecovery, terminalDenial = inputs.terminalDenial,
+            publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial, activeFirstCut, ordinaryPublication, activeFirstCutSuccessor = activeFirstCutSuccessor, initialCheckpoint = scanner, activeRecurrent = recurrent, activeOrdinarySealRecovery = activeOrdinarySealRecovery, terminalDenial = inputs.terminalDenial,
             initialCheckpointCreate = inputs.initialCheckpointCreate?.let {
                 me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1.fromIndependentInputs(
                     it, pools, routing, checkNotNull(scanner),
@@ -401,6 +407,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         attempt { closeChannel() }
         attempt { closeResolver() }
         attempt { activeQueue?.close() }
+        attempt { activeRecurrent?.close() }
         attempt { initialCheckpoint?.close() }
         attempt { activePublication?.close() }
         attempt { seal?.close() }

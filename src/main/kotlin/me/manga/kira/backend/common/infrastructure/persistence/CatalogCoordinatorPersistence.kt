@@ -22,6 +22,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestN
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestRunSealingPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestActiveOrdinarySealPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestActiveInitialCheckpointPhaseExecutorV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestActiveRecurrentPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestActiveOwnerDeleteQueuePhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestActiveOrdinarySealRecoveryPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestOrdinarySealPhaseExecutorV1
@@ -103,7 +104,9 @@ internal class CatalogCoordinatorPersistence private constructor(
     private var testActiveOrdinarySealRecoveryExecutor: ComplaintTestActiveOrdinarySealRecoveryPhaseExecutorV1? = null
     internal val testActiveOrdinarySeal: ComplaintTestActiveOrdinarySealPhaseExecutorV1 get() = checkNotNull(testActiveOrdinarySealExecutor)
     private var testActiveInitialCheckpointExecutor: ComplaintTestActiveInitialCheckpointPhaseExecutorV1? = null
+    private var testActiveRecurrentExecutor: ComplaintTestActiveRecurrentPhaseExecutorV1? = null
     internal val testActiveInitialCheckpoint: ComplaintTestActiveInitialCheckpointPhaseExecutorV1 get() = checkNotNull(testActiveInitialCheckpointExecutor)
+    internal val testActiveRecurrent: ComplaintTestActiveRecurrentPhaseExecutorV1 get() = checkNotNull(testActiveRecurrentExecutor)
     private var testActiveOwnerDeleteQueueExecutor: ComplaintTestActiveOwnerDeleteQueuePhaseExecutorV1? = null
     internal val testActiveOwnerDeleteQueue: ComplaintTestActiveOwnerDeleteQueuePhaseExecutorV1 get() = checkNotNull(testActiveOwnerDeleteQueueExecutor)
     internal val testActiveOrdinarySealRecovery: ComplaintTestActiveOrdinarySealRecoveryPhaseExecutorV1 get() = checkNotNull(testActiveOrdinarySealRecoveryExecutor)
@@ -185,6 +188,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         testOrdinarySealExecutor = ComplaintTestOrdinarySealPhaseExecutorV1(this)
         testActiveOrdinarySealExecutor = ComplaintTestActiveOrdinarySealPhaseExecutorV1(this)
         testActiveInitialCheckpointExecutor = ComplaintTestActiveInitialCheckpointPhaseExecutorV1(this)
+        testActiveRecurrentExecutor = ComplaintTestActiveRecurrentPhaseExecutorV1(this)
         testActiveOwnerDeleteQueueExecutor = ComplaintTestActiveOwnerDeleteQueuePhaseExecutorV1(this)
         testActiveOrdinarySealRecoveryExecutor = ComplaintTestActiveOrdinarySealRecoveryPhaseExecutorV1(this)
         testInstallationManifestExecutor = ComplaintTestInstallationManifestPhaseExecutorV1(this)

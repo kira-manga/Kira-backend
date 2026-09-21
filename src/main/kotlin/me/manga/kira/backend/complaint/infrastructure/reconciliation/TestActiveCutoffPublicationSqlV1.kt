@@ -46,6 +46,14 @@ internal object TestActiveCutoffPublicationSqlV1 {
         ORDER BY p.journal_epoch, p.event_id LIMIT $PAGE_SIZE
     """.trimIndent()
 
+    // Closed recurrent reader; original first-range statement/argument order is unchanged.
+    val recurrentEpochPage = """
+        SELECT $columns FROM complaint_journal_publications p
+        WHERE p.data_scope_id = ?::uuid AND p.writer_generation = ?::uuid AND p.journal_epoch BETWEEN ? AND ?
+            AND (p.journal_epoch, p.event_id) > (?, ?::text)
+        ORDER BY p.journal_epoch, p.event_id LIMIT $PAGE_SIZE
+    """.trimIndent()
+
     // Global unique key index deliberately includes a foreign-scope alias under the owned range.
     // The complete epoch pass precedes this query, so malformed keys cannot disappear behind bounds.
     val keyPage = """

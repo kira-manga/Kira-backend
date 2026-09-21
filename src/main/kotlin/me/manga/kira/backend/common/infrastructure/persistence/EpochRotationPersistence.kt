@@ -3,6 +3,8 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationCaptureOperation
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentCaptureOperationV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSuccessorV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSuccessorCaptureOperationV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutCaptureOperationV1
@@ -154,6 +156,73 @@ internal class EpochRotationPersistence private constructor(
                     if (failure != null && retained.session != null) {
                         try {
                             checkNotNull(retained.session).awaitFailedFirstCutRetirement(attempt)
+                        } catch (problem: Throwable) {
+                            // A late receipt must not repair this original's first cleanup decision.
+                            attempt.observeUnsettledNativeCleanup(this)
+                            failure = recordFailure(binding, retained, problem, failure)
+                        }
+                    }
+                } finally {
+                    try {
+                        retained.session?.restoreAfterFailure()
+                    } catch (problem: Throwable) {
+                        failure = recordFailure(binding, retained, problem, failure)
+                    } finally {
+                        retained.bodyEnded.set(true)
+                        retained.reconcileCaller()
+                    }
+                }
+            }
+        }
+        // The primary bounded failure wins; failed restoration still aborts and cannot turn a return into success.
+        failure?.let { throw it }
+        return result ?: throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
+    }
+
+    /** Same capacity-one physical role; the closed recurrent TEST original cannot dispatch LIVE SQL. */
+    @Suppress("TooGenericExceptionCaught")
+    internal fun capture(attempt: TestActiveRecurrentV1): TestActiveRecurrentCaptureOperationV1 {
+        val binding = PersistenceEpochRotationAttemptV1.retain(attempt)
+        var call: Capture? = null
+        var result: TestActiveRecurrentCaptureOperationV1? = null
+        var failure: PersistencePhaseException? = null
+        try {
+            requireConnectionFree()
+            requireUnchangedConfiguration()
+            attempt.requireCore(this)
+            reconcile()
+            if (stopped.get() || root.epochRotationPreparationObservation() !== PersistenceLifecycleObservation.READY) refuse()
+            val retained = Capture(binding)
+            if (!active.compareAndSet(null, retained)) refuse()
+            call = retained // Retain before any request/session construction can fail.
+            current.set(retained)
+            val request = participant.prepareEpochRotationRequest(this, binding)
+            retained.request = request
+            val outcome = request.execute()
+            val session = when (outcome) {
+                is PersistenceFactoryResult.Success -> outcome.value
+                else -> throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED, cleanupProven = request.custodyEnded())
+            }
+            retained.session = session
+            session.begin()
+            val operation = TestActiveRecurrentCaptureOperationV1.execute(attempt, session)
+            session.commit(operation)
+            session.finish()
+            session.awaitRelease()
+            attempt.requireCore(this) // The same original local lease/configuration and total deadline still apply.
+            session.requireReleased(operation)
+            result = operation
+        } catch (problem: Throwable) {
+            failure = recordFailure(binding, call, problem)
+        } finally {
+            val retained = call
+            if (retained != null) {
+                try {
+                    retained.session?.finish()
+                    retained.request?.requestRetirement()
+                    if (failure != null && retained.session != null) {
+                        try {
+                            checkNotNull(retained.session).awaitFailedRecurrentRetirement(attempt)
                         } catch (problem: Throwable) {
                             // A late receipt must not repair this original's first cleanup decision.
                             attempt.observeUnsettledNativeCleanup(this)

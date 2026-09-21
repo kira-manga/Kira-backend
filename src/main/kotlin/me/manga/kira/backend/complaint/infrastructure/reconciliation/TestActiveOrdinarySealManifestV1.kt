@@ -7,7 +7,7 @@ import java.util.HexFormat
 
 /** Local expected-set closure only. Immutable content/proof, not four imaginary terminal receipt xmins. */
 internal class TestActiveOrdinarySealManifestV1 private constructor(val count: Long, val sha256: String, val framedBytes: Long, val fingerprint: String) {
-    internal class Builder(private val routing: TestOwnerDeleteJournalRoutingV1, private val cutoff: Long) {
+    internal class Builder(private val routing: TestOwnerDeleteJournalRoutingV1, private val cutoff: Long, private val start: Long = 1) {
         private val limit = routing.journalConfiguration.declaration().limits.capacity
         private val first = MessageDigest.getInstance("SHA-256")
         private val second = MessageDigest.getInstance("SHA-256")
@@ -22,8 +22,10 @@ internal class TestActiveOrdinarySealManifestV1 private constructor(val count: L
         private var pass = 0
         private var poisoned = false
 
+        init { requireActiveSeal(start in 1..cutoff) }
+
         fun entry(row: TestActiveCutoffPublicationRowV1) = guarded {
-            requireActiveSeal(pass in 0..1 && previous?.let { it < row.objectKey } != false)
+            requireActiveSeal(pass in 0..1 && row.epoch in start..cutoff && previous?.let { it < row.objectKey } != false)
             val proof = checkNotNull(row.proof)
             val fields = listOf(row.objectKey, proof.version, proof.ciphertext)
             if (pass == 0) {
@@ -43,7 +45,7 @@ internal class TestActiveOrdinarySealManifestV1 private constructor(val count: L
             fingerprint = HexFormat.of().formatHex(first.digest())
             val journal = routing.journalConfiguration
             total = add(bytes, EpochSealFramesV1.update(manifest, listOf(EpochSealFramesV1.DOMAIN, "1", "manifest", journal.declaration().writer.generationId,
-                journal.ordinaryPrefix, "TEST", journal.scope.id.toString(), "1", cutoff.toString(), count.toString())))
+                journal.ordinaryPrefix, "TEST", journal.scope.id.toString(), start.toString(), cutoff.toString(), count.toString())))
             pass = 1; previous = null
         }
         fun finish(): TestActiveOrdinarySealManifestV1 = guarded {

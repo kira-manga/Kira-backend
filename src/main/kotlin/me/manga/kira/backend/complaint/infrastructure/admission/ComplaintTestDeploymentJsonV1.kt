@@ -88,6 +88,7 @@ internal data class ComplaintTestDeploymentDocumentV1(
     val ordinaryPublication: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOrdinaryPublicationInputV1? = null,
     val activeFirstCutSuccessor: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveFirstCutSuccessorInputV1? = null,
     val initialCheckpoint: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveInitialCheckpointInputV1? = null,
+    val activeRecurrent: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentInputV1? = null,
     val activeOrdinarySealRecovery: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOrdinarySealRecoveryInputV1? = null,
     val terminalDenial: TestTerminalDenialAuthorityInputV1? = null,
     val initialCheckpointCreate: me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointCreateInputV1? = null,

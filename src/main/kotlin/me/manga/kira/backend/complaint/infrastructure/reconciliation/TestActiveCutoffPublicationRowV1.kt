@@ -30,10 +30,21 @@ internal class TestActiveCutoffPublicationRowV1 private constructor(
         requireConnectionFree()
         original.requireCutoffRunning()
         requireActiveSeal(!closed && scope == original.scope && writer.toString() == original.writer && epoch in 1..original.cutoff)
+        return restored(original.routing).also { original.requireCutoffRunning() }
+    }
+
+    fun event(original: TestActiveRecurrentV1): TestOwnerDeleteJournalEventV1 {
+        requireConnectionFree(); original.requireCutoffRunning()
+        requireActiveSeal(!closed && scope == original.scope && writer.toString() == original.writer && epoch in original.epochStart..original.cutoff)
+        return restored(original.routing).also { original.requireCutoffRunning() }
+    }
+
+    /** Pure bounded restoration; only the two closed originals above authenticate its use. */
+    private fun restored(routing: TestOwnerDeleteJournalRoutingV1): TestOwnerDeleteJournalEventV1 {
         val event = when (kind) {
-            "OWNER_DELETE", "OWNER_DELETE_ALL" -> TestOwnerDeleteJournalCodecV1.restoreCanonical(original.routing, canonical, routingKeyId)
-            "ADMIN_DELETE" -> TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(original.routing, canonical, routingKeyId)
-            "ADMIN_BATCH_DELETE" -> TestOwnerDeleteJournalCodecV1.restoreAdminBatchCanonical(original.routing, canonical, routingKeyId)
+            "OWNER_DELETE", "OWNER_DELETE_ALL" -> TestOwnerDeleteJournalCodecV1.restoreCanonical(routing, canonical, routingKeyId)
+            "ADMIN_DELETE" -> TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(routing, canonical, routingKeyId)
+            "ADMIN_BATCH_DELETE" -> TestOwnerDeleteJournalCodecV1.restoreAdminBatchCanonical(routing, canonical, routingKeyId)
             else -> throw TestActiveOrdinarySealExceptionV1()
         }
         val bytes = event.canonicalBytes()
@@ -42,7 +53,6 @@ internal class TestActiveCutoffPublicationRowV1 private constructor(
                 event.route.eventId == eventId && event.route.objectKey == objectKey && event.route.routingKeyId == routingKeyId &&
                 event.complaintIds().size == targets && event.semanticSha256 == hex(semanticHash) && canonical.contentEquals(bytes))
         } finally { bytes.fill(0) }
-        original.requireCutoffRunning()
         return event
     }
 

@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveF
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestInitialAdmissionV1
@@ -45,6 +46,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
     private val testActiveRegistration: ComplaintTestNamespaceActiveRegistrationAttemptV1? = null,
     private val testActiveSeal: TestActiveOrdinarySealV1? = null,
     private val testInitialCheckpoint: TestActiveInitialCheckpointV1? = null,
+    private val testRecurrent: TestActiveRecurrentV1? = null,
     private val testActiveQueue: TestActiveOwnerDeleteQueueV1? = null,
     private val testActiveSealRecovery: TestActiveOrdinarySealRecoveryV1? = null,
     private val testTerminal: CatalogTestRunTerminalV1? = null,
@@ -66,6 +68,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
     internal constructor(owner: ComplaintTestNamespaceActiveRegistrationAttemptV1, budget: PersistenceTimeBudget) : this(null, null, budget, testActiveRegistration = owner)
     internal constructor(owner: TestActiveOrdinarySealV1, budget: PersistenceTimeBudget) : this(null, null, budget, testActiveSeal = owner)
     internal constructor(owner: TestActiveInitialCheckpointV1, budget: PersistenceTimeBudget) : this(null, null, budget, testInitialCheckpoint = owner)
+    internal constructor(owner: TestActiveRecurrentV1, budget: PersistenceTimeBudget) : this(null, null, budget, testRecurrent = owner)
     internal constructor(owner: TestActiveOwnerDeleteQueueV1, budget: PersistenceTimeBudget) : this(null, null, budget, testActiveQueue = owner)
     internal constructor(owner: TestActiveOrdinarySealRecoveryV1, budget: PersistenceTimeBudget) : this(null, null, budget, testActiveSealRecovery = owner)
     private val closed = AtomicBoolean()
@@ -146,6 +149,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
             testActiveSeal != null -> testActiveSeal.requireProviderRunning()
             activeFirstCutSuccessor != null -> activeFirstCutSuccessor.requireProviderRunning()
             testInitialCheckpoint != null -> testInitialCheckpoint.requireProviderRunning()
+            testRecurrent != null -> testRecurrent.requireProviderRunning()
             testActiveQueue != null -> testActiveQueue.requireProviderRunning()
             testActiveSealRecovery != null -> testActiveSealRecovery.requireProviderRunning()
             testRecoveryRegistration != null -> testRecoveryRegistration.requireProviderRunning()
@@ -172,6 +176,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
         testActiveSeal?.observeFailure(failure)
         activeFirstCutSuccessor?.observeFailure(failure)
         testInitialCheckpoint?.observeFailure(failure)
+        testRecurrent?.observeFailure(failure)
         testActiveQueue?.observeFailure(failure)
         testActiveSealRecovery?.observeFailure(failure)
         testRecoveryRegistration?.observeFailure(failure)
@@ -366,6 +371,8 @@ internal class CatalogSignerRotationReadbackHttpPairV1 private constructor(
     internal constructor(owner: TestActiveFirstCutSuccessorV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
     internal constructor(owner: TestActiveInitialCheckpointV1, budget: PersistenceTimeBudget) :
+        this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
+    internal constructor(owner: TestActiveRecurrentV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
     internal constructor(owner: TestActiveOwnerDeleteQueueV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))

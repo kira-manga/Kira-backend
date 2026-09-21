@@ -4,6 +4,7 @@ import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOwnerDele
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueOperationV1
 
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointOperationV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentOperationV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveInitialCheckpointStorageV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutOperationV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveFirstSealStorageV1
@@ -124,6 +125,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForTestRunPurge(operation: TestRunPurgeOperationV1): LockedTestRunPurge = LockedTestRunPurge.lock(this, operation)
     internal fun lockForTestActiveFirstCut(operation: TestActiveFirstCutOperationV1): LockedTestActiveFirstCut = LockedTestActiveFirstCut.lock(this, operation)
     internal fun lockForTestActiveInitialCheckpoint(operation: TestActiveInitialCheckpointOperationV1): LockedTestActiveInitialCheckpoint = LockedTestActiveInitialCheckpoint.lock(this, operation)
+    internal fun lockForTestActiveRecurrent(operation: TestActiveRecurrentOperationV1): LockedTestActiveRecurrent = LockedTestActiveRecurrent.lock(this, operation)
     internal fun lockForTestActiveOwnerDeleteQueue(operation: TestActiveOwnerDeleteQueueOperationV1): LockedTestActiveOwnerDeleteQueue = LockedTestActiveOwnerDeleteQueue.lock(this, operation)
 
     internal fun lockForTestTerminalEpochSeal(operation: TestTerminalEpochSealOperationV1): LockedTestTerminalEpochSeal = LockedTestTerminalEpochSeal.lock(this, operation)
@@ -1975,6 +1977,50 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 try {
                     operation.beginCounterLock(store.jdbc)
                     val locked = LockedTestActiveInitialCheckpoint(store, operation, store.readLockedCounters())
+                    operation.requireCounterRead(store.jdbc)
+                    return locked
+                } catch (problem: Throwable) { operation.failed(problem) }
+            }
+        }
+    }
+
+    /** V31 ordinary hard-headroom privacy continuation. Only this fixed operation derives amounts. */
+    internal class LockedTestActiveRecurrent private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: TestActiveRecurrentOperationV1,
+        private val counters: LockedCounters,
+    ) {
+        private var issued = false
+        private var completed = false
+        internal fun completedFor(candidate: TestActiveRecurrentOperationV1): Boolean = candidate === operation && completed
+        internal fun account(candidate: TestActiveRecurrentOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                val delta = operation.accountingDelta(this, store.jdbc)
+                check(delta.first.isZero() || delta.second.isZero())
+                issued = true
+                val expected = checkNotNull(store.expectedPolicyDigest)
+                val before = counters.ledger.balance
+                val after = counters.ledger.chargePrivacyActual(expected, delta.first).refundActual(expected, delta.second).balance
+                check(after.testReserved == before.testReserved && after.recoveryReserved == before.recoveryReserved &&
+                    after.hardLimit == before.hardLimit && after.creationLimit == before.creationLimit)
+                for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                    if (before.free[counter] == after.free[counter] && before.actual[counter] == after.actual[counter]) continue
+                    check(counter in setOf(ComplaintCapacityCounter.STORAGE_BYTES, ComplaintCapacityCounter.SCAN_RUNS, ComplaintCapacityCounter.SCAN_ENTRIES))
+                    check(store.jdbc.update(INITIAL_CHECKPOINT_COUNTER, after.free[counter], after.actual[counter], counter.storedName, counter.storedOrdinal, expected,
+                        before.hardLimit[counter], before.creationLimit[counter], before.free[counter], before.actual[counter],
+                        before.recoveryReserved[counter], before.testReserved[counter]) == 1)
+                }
+                check(operation.accountingDelta(this, store.jdbc) == delta)
+                completed = true
+            } catch (problem: Throwable) { operation.failed(problem) }
+        }
+        override fun toString(): String = "LockedRecurrent(ordinary-actual-only,exact-physical-staging-refund,no-reserve)"
+        companion object {
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: TestActiveRecurrentOperationV1): LockedTestActiveRecurrent {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    val locked = LockedTestActiveRecurrent(store, operation, store.readLockedCounters())
                     operation.requireCounterRead(store.jdbc)
                     return locked
                 } catch (problem: Throwable) { operation.failed(problem) }
