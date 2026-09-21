@@ -1,6 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
 import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseFixture
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.AfterAll
@@ -123,5 +124,18 @@ class TestActiveRecurrentIT {
     }
 
     private fun withFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =
-        VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, activeFirstCut = true).use { it.bind(); action(it) }
+        VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, activeFirstCut = true).use {
+            var stage = "BIND"
+            try {
+                it.bind()
+                stage = "BODY" // Includes the case's nested setup/finally, not proof feature assertions ran.
+                action(it)
+            } catch (failure: PersistencePhaseException) {
+                try {
+                    println("TEST_ACTIVE_RECURRENT_PHASE_FAILURE stage=$stage code=${failure.code.name} " +
+                        "databaseOutcome=${failure.databaseOutcome.name} cleanupProven=${failure.cleanupProven}")
+                } catch (_: Throwable) { /* Preserve the original failure if diagnostics fail. */ }
+                throw failure
+            }
+        }
 }

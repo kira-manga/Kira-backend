@@ -254,7 +254,10 @@ class TestActiveOwnerDeleteQueueIT {
                 // Last reached boundary only; the final bounded code can reflect cleanup precedence, not the first cause.
                 runCatching {
                     val code = (failure as? ComplaintDesiredInstallationExceptionV1)?.code?.name ?: "NONE"
-                    System.err.println("TEST_ACTIVE_QUEUE_HISTORY_FAILURE variant=$cut stage=$stage class=${failure.javaClass.name} desired_code=$code")
+                    val phase = failure as? PersistencePhaseException
+                    System.err.println("TEST_ACTIVE_QUEUE_HISTORY_FAILURE variant=$cut stage=$stage class=${failure.javaClass.name} desired_code=$code " +
+                        "phase_code=${phase?.code?.name ?: "NONE"} databaseOutcome=${phase?.databaseOutcome?.name ?: "NONE"} " +
+                        "cleanupProven=${phase?.cleanupProven?.toString() ?: "NONE"}")
                 }
                 throw failure
             }

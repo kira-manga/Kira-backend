@@ -119,5 +119,18 @@ class CatalogTestRunTerminalIT {
     private fun historyNative(fault: TerminalCatalogHistoryNativeFaultV1) = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.nativeRefusal(it, fault) }
     private fun primaryRefusal(fault: TerminalCatalogRetainedPrimaryFaultV1) = withFixture { CatalogRetainedDPrimaryCasesV1.refuses(it, fault) }
     private fun withFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =
-        VersionBoundPersistenceConnectedFixture(database.value, testActivation = true).use { it.bind(); action(it) }
+        VersionBoundPersistenceConnectedFixture(database.value, testActivation = true).use {
+            var stage = "BIND"
+            try {
+                it.bind()
+                stage = "BODY" // Includes the case's nested setup/finally, not proof feature assertions ran.
+                action(it)
+            } catch (failure: PersistencePhaseException) {
+                try {
+                    println("TEST_CATALOG_TERMINAL_PHASE_FAILURE stage=$stage code=${failure.code.name} " +
+                        "databaseOutcome=${failure.databaseOutcome.name} cleanupProven=${failure.cleanupProven}")
+                } catch (_: Throwable) { /* Preserve the original failure if diagnostics fail. */ }
+                throw failure
+            }
+        }
 }
