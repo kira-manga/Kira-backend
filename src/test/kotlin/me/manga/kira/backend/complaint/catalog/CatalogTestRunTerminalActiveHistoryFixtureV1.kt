@@ -501,7 +501,8 @@ internal object CatalogRetainedDPrimaryCasesV1 {
                     }
                 }
                 val approval = activeHistoryOrdinaryApproval(f, inputs, drain); val raw = f.rawEvidence
-                try {
+                // Preserve the refusal assertion's original failure if existing native cleanup also fails.
+                AutoCloseable { approval.fill(0); raw.forEach { it.fill(0) }; primary.assertClosed(); inventory.assertClosed() }.use {
                     assertThrows<TestOrdinaryDrainExceptionV1> {
                         drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
                     }
@@ -531,7 +532,7 @@ internal object CatalogRetainedDPrimaryCasesV1 {
                     if (prepared) primary.assertPrimaryReadback() else primary.assertUnused()
                     probe.assertRetainedPrimarySequence(expected) // Consumed original adds no phase/SQL/native attempt.
                     a.assertReleased(); f.assertReleased()
-                } finally { approval.fill(0); raw.forEach { it.fill(0) }; primary.assertClosed(); inventory.assertClosed() }
+                }
             }
         }
     }
