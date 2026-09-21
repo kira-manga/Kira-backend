@@ -118,6 +118,7 @@ internal class PgLifecycleDatabaseTls private constructor(val root: Path, privat
             "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalQuiescenceIT",
             "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainAdminBatchFamiliesIT",
             "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealIT",
+            "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryIT",
             "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalEpochSealIT",
             "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointIT",
             "me.manga.kira.backend.complaint.journal.TestOrdinaryInventoryReaderV1ConnectedIT",
