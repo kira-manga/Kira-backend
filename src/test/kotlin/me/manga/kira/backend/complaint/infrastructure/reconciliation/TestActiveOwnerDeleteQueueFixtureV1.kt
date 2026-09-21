@@ -29,6 +29,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.ResultSetExtractor
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.jdbc.datasource.ConnectionHolder
+import org.springframework.jdbc.datasource.SingleConnectionDataSource
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.Connection
@@ -168,8 +169,18 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
     fun identityImage() = listOf("app_installations", "complaint_installation_ids").associateWith { table -> observer.queryForList(
         "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = ? ORDER BY id", String::class.java, scope) }
     fun credentialIdentity(): List<String> = observer.queryForList(
-        "SELECT (to_jsonb(c) - ARRAY['state','credential_version','version','deleted_at','verifier_expires_at','updated_at'])::text " +
+        "SELECT (to_jsonb(c) - ARRAY['state','credential_version','version','deleted_at','verifier_expires_at','updated_at'," +
+            "'platform','owner_reference','last_authenticated_at'])::text " +
             "FROM app_installations c WHERE data_scope_id = ? ORDER BY id", String::class.java, scope)
+    /** Explicit adversarial SQL input/paid-row setup only; never a recovery/auth/settlement issuer. */
+    fun adversarialTransaction(action: (JdbcTemplate) -> Unit) {
+        requireConnectionFree()
+        precursor.raw { connection ->
+            connection.autoCommit = false
+            try { action(JdbcTemplate(SingleConnectionDataSource(connection, true))); connection.commit() }
+            catch (failure: Throwable) { connection.rollback(); throw failure }
+        }
+    }
     fun grantImage(): List<String> = precursor.proof?.let { proof -> observer.queryForList(
         "SELECT jsonb_build_array(to_jsonb(g), g.xmin::text)::text FROM admin_step_up_grants g WHERE id = ?", String::class.java, proof.grantId) } ?: emptyList()
     private fun authorityImage(): List<String> = observer.queryForList(

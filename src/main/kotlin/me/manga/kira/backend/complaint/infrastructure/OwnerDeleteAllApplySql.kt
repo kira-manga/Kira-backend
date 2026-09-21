@@ -43,6 +43,30 @@ internal class OwnerDeleteAllApplySql private constructor(scope: ComplaintDataSc
         FROM complaint_journal_publications WHERE event_id = ? FOR UPDATE
     """.trimIndent()
 
+    // Queue-only nullable proof grammar. The strict committed-primary reader above is unchanged.
+    // A PREPARED row is not proof; only this original delivery's native GET/decrypt may fill it.
+    val QUEUE_LOCK_PUBLICATION = """
+        SELECT event_id, writer_generation, journal_epoch, target_count, routing_key_id, object_key, state, created_at, applied_at,
+            object_version, ciphertext_hash, object_created_at, retain_until, verified_at, verification_hash, semantic_hash,
+            CASE WHEN complaint_bytes_match(event_bytes, semantic_hash, 65536) THEN event_bytes END AS event_bytes,
+            CASE WHEN complaint_bytes_match(verification_bytes, verification_hash, 65536) THEN verification_bytes END AS verification_bytes,
+            ($LIVE) AS live,
+            (complaint_event_id_valid(event_id) AND complaint_is_v4(writer_generation) AND journal_epoch > 0
+                AND event_kind = 'OWNER_DELETE_ALL' AND target_count BETWEEN 0 AND 100 AND canonicalizer = 'kcj-1'
+                AND complaint_ascii_valid(routing_key_id, 128) AND complaint_ascii_valid(object_key, 1024)
+                AND complaint_bytes_match(event_bytes, semantic_hash, 65536)
+                AND complaint_finite_times(created_at, object_created_at, retain_until, verified_at, applied_at)
+                AND ((state = 'PREPARED' AND applied_at IS NULL AND object_version IS NULL AND ciphertext_hash IS NULL
+                        AND object_created_at IS NULL AND retain_until IS NULL AND verified_at IS NULL
+                        AND verification_bytes IS NULL AND verification_hash IS NULL)
+                    OR (state IN ('VERIFIED', 'APPLIED') AND complaint_bytes_match(verification_bytes, verification_hash, 65536)
+                        AND complaint_opaque_valid(object_version, 1024) AND object_version <> 'null'
+                        AND complaint_digest_valid(ciphertext_hash) AND object_created_at IS NOT NULL
+                        AND retain_until IS NOT NULL AND verified_at IS NOT NULL
+                        AND ((state = 'VERIFIED' AND applied_at IS NULL) OR (state = 'APPLIED' AND applied_at IS NOT NULL))))) AS valid
+        FROM complaint_journal_publications WHERE event_id = ? FOR UPDATE
+    """.trimIndent()
+
     val LOCK_RECOVERY = """
         SELECT event_id, publication_ref, state, converted_at,
             CASE WHEN complaint_vector_valid(reserved_amounts) THEN reserved_amounts END AS reserved_amounts,
@@ -152,7 +176,9 @@ internal class OwnerDeleteAllApplySql private constructor(scope: ComplaintDataSc
     /** Used only by the private ACTIVE queue capture, not a terminal inventory or primary-request grant. */
     val QUEUE_APPLIED_FAMILY = """
         SELECT event_id, object_key, object_version, ciphertext_hash, writer_generation, journal_epoch, target_count, applied_at,
-            ($LIVE) AS live, (event_kind = 'OWNER_DELETE_ALL' AND isfinite(applied_at) AND complaint_digest_valid(ciphertext_hash)) AS valid
+            ($LIVE) AS live, (event_kind = 'OWNER_DELETE_ALL' AND isfinite(applied_at) AND complaint_digest_valid(ciphertext_hash)
+                AND complaint_event_id_valid(event_id) AND complaint_is_v4(writer_generation) AND journal_epoch > 0
+                AND target_count BETWEEN 0 AND 100 AND complaint_opaque_valid(object_version, 1024) AND object_version <> 'null') AS valid
         FROM complaint_deletion_journal_applied WHERE event_id = ANY (?::text[])
         ORDER BY event_id, object_key, object_version LIMIT 5
     """.trimIndent()

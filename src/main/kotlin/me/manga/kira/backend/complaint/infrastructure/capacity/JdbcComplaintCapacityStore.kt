@@ -719,8 +719,9 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal class LockedOwnerDeleteAllApply private constructor(
         private val store: JdbcComplaintCapacityStore,
         private val operation: ComplaintOwnerDeleteAllApplyOperation,
-        private val before: ComplaintCapacityLedger,
+        private var ledger: ComplaintCapacityLedger,
     ) : ComplaintAuditAllocation {
+        private var toppedUp = false
         private var issued = false
         private var settled = false
         private var expectedAudits = 0
@@ -731,10 +732,21 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         internal fun completedFor(candidate: ComplaintOwnerDeleteAllApplyOperation): Boolean = settledFor(candidate) &&
             audits.size == expectedAudits && audits.all { it.completedFor(this) }
 
+        private fun topUp() {
+            check(!toppedUp)
+            operation.missingBookkeeping(this, store.jdbc)?.let { missing ->
+                val expected = checkNotNull(store.expectedPolicyDigest)
+                val after = ledger.chargePrivacyActual(expected, missing.first).reserveRecovery(expected, missing.second)
+                persist(ledger.balance, after.balance)
+                ledger = after
+            }
+            toppedUp = true
+        }
+
         @Suppress("TooGenericExceptionCaught")
         internal fun settle(candidate: ComplaintOwnerDeleteAllApplyOperation) {
             try {
-                check(candidate === operation && !issued)
+                check(candidate === operation && toppedUp && !issued)
                 val counts = operation.materializedCounts(this, store.jdbc)
                 issued = true
                 if (counts != null) {
@@ -742,9 +754,10 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                     val use = counts.use
                     val refund = ComplaintCapacityCharges.INSTALLATION_CONTENT_V1.scaled(counts.removed.toLong())
                     val expected = checkNotNull(store.expectedPolicyDigest)
-                    val after = before.spendRecovery(expected, operation.remainingReserve(this, store.jdbc), use).refundActual(expected, refund)
-                    persist(before.balance, after.balance)
+                    val after = ledger.spendRecovery(expected, operation.remainingReserve(this, store.jdbc), use).refundActual(expected, refund)
+                    persist(ledger.balance, after.balance)
                     operation.recordProgress(this, store.jdbc, use)
+                    ledger = after
                 }
                 operation.requireCapacityWrite(this, store.jdbc)
                 settled = true
@@ -806,7 +819,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                     operation.beginCounterLock(store.jdbc)
                     val ledger = store.readLockedLedger()
                     operation.requireCapacityPolicy(ledger, store.jdbc)
-                    return LockedOwnerDeleteAllApply(store, operation, ledger).also { operation.retainCapacity(it, store.jdbc) }
+                    return LockedOwnerDeleteAllApply(store, operation, ledger).also { operation.retainCapacity(it, store.jdbc); it.topUp() }
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }

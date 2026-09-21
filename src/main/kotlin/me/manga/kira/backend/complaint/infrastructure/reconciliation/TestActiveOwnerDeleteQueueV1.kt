@@ -67,8 +67,9 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Explicit bounded ACTIVE accelerator: primary1 + DLQ1, exact registered ordinary deletion families.
- * ALL requires its retained VERIFIED primary or exact completed replay; missing ALL N/P/L and
- * PREPARED-without-VERIFY remain unfinished recovery requirements, not ackable shortcuts. No loop/scheduler or
+ * ALL uses a separate bounded native N/P/L and domain recovery path, including PREPARED without
+ * SQL VERIFY. Torn pairs/unknown U refuse; an alias with missing primary N still waits for primary
+ * readback and is an unresolved frontier, not completed ALL recovery. No loop/scheduler or
  * completeness/checkpoint/capability issuer. Every receipt is acked ONLY after its native exact
  * recovery APPLY actually commits/releases and a fresh full-D/lease check commits/releases.
  * A later observation failure cannot undo an earlier safe ack and never creates HEALTHY.

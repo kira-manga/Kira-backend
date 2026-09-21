@@ -18,9 +18,11 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.infrastructure.AdminDeletePersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllPersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -38,6 +40,8 @@ import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.io.InterruptedIOException
 import java.security.MessageDigest
+import java.sql.Timestamp
+import java.time.Duration
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.CancellationException
@@ -165,25 +169,232 @@ class TestActiveOwnerDeleteQueueIT {
         } }
     }
 
-    @Test fun allPreparedMissingBookkeepingOrMissingPairRemainExplicitUnackedRecoveryGaps() {
-        listOf("prepared", "missing-npl", "missing-credential").forEach { cut ->
-            withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, verifyPublication = cut != "prepared") { f ->
-                // Adversarial missing-row inputs after genuine AUTH/native PUT; never seed replacement
-                // authority or pretend missing ALL recovery has been implemented. No synthetic refund.
-                if (cut == "missing-npl") {
-                    listOf("installation_deletion_receipts", "complaint_recovery_capacity_reservations", "complaint_journal_publications").forEach {
-                        assertEquals(1, f.observer.update("DELETE FROM $it WHERE data_scope_id = ?", f.scope))
+    @Test fun allPreparedNativePutIsVerifiedOnlyFromTheCurrentReleasedQueueReadback() =
+        withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, verifyPublication = false) { f ->
+            val before = f.counters(); val native = f.precursor.native.counts()
+            assertEquals("PREPARED", f.precursor.publication()["state"])
+            assertNull(f.precursor.publication()["verification_bytes"])
+            assertEquals(1, f.poll().primaryAcknowledged)
+            f.assertReleased(); f.assertNoAuthority(); assertApplied(f); assertAllRecoveryState(f, materialized(f))
+            assertRecoveryCharge(f, before, f.counters())
+            assertEquals(native, f.precursor.native.counts(), "Queue uses the original PUT/key mapping, never another producer call.")
+            val calls = f.calls.filter { it.step === TestActiveOwnerDeleteQueueStepV1.APPLY }.map { it.sql }
+            val counters = calls.indexOfFirst { "FROM complaint_capacity_counters" in it && "FOR UPDATE" in it }
+            val verified = calls.indexOfFirst { it.startsWith("UPDATE complaint_journal_publications SET state = 'VERIFIED'") }
+            val domain = calls.indexOfFirst { "FROM complaint_installation_ids" in it && "FOR UPDATE" in it }
+            assertTrue(counters >= 0 && verified > counters && domain > verified)
+            assertEquals(1, f.raw.order.count { it == "GET" }); assertEquals(1, f.raw.order.count { it == "DECRYPT" })
+            assertAllNoopReplay(f)
+        }
+
+    @Test fun allMissingReceiptReservationOrWholeBookkeepingIsChargedWithoutResettingAnyUnattributedBalance() {
+        listOf("n", "l", "npl").forEach { cut -> withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
+            val originalCounters = f.counters()
+            // Explicit missing-row cuts after real AUTH/native PUT/VERIFY. The old frozen npl
+            // cut did NOT refund counters: neither does this one. It is not a consistent restore.
+            f.adversarialTransaction { jdbc ->
+                if (cut != "l") assertEquals(1, jdbc.update("DELETE FROM installation_deletion_receipts WHERE data_scope_id = ?", f.scope))
+                if (cut != "n") assertEquals(1, jdbc.update("DELETE FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", f.scope))
+                if (cut == "npl") assertEquals(1, jdbc.update("DELETE FROM complaint_journal_publications WHERE data_scope_id = ?", f.scope))
+            }
+            assertEquals(originalCounters, f.counters())
+            val actual = when (cut) { "n" -> allReceipt; "l" -> allReservation; else -> allReceipt + allPublication + allReservation }
+            val reserve = if (cut == "n") ComplaintCapacityVector.ZERO else promise(f)
+            assertEquals(1, f.poll().primaryAcknowledged)
+            f.assertReleased(); f.assertNoAuthority(); assertAllRecoveryState(f, materialized(f))
+            assertTransfer(originalCounters, f.counters(), actual = actual, reserve = reserve, use = materialized(f),
+                refund = OwnerDeleteLiteralCharges.content, observation = true)
+            assertRecoveryAuditDelta(f.auditsBeforeQueue, f.audits(), removed = 1)
+            if (cut != "npl") assertEquals(f.proofBeforeQueue, f.publicationProof())
+            else {
+                val row = f.precursor.publication()
+                assertTrue((row["created_at"] as Timestamp).toInstant() >= (row["verified_at"] as Timestamp).toInstant(),
+                    "Rebuilt P records actual SQL creation after native readback, not a fabricated earlier AUTH time.")
+            }
+            val calls = f.calls.filter { it.step === TestActiveOwnerDeleteQueueStepV1.APPLY }.map { it.sql }
+            val counters = calls.indexOfFirst { "FROM complaint_capacity_counters" in it && "FOR UPDATE" in it }
+            val insert = calls.indexOfFirst { it.startsWith("INSERT INTO installation_deletion_receipts") || it.startsWith("INSERT INTO complaint_recovery_capacity_reservations") }
+            val domain = calls.indexOfFirst { "FROM complaint_installation_ids" in it && "FOR UPDATE" in it }
+            assertTrue(counters >= 0 && insert > counters && domain > insert)
+            assertAllNoopReplay(f)
+        } }
+    }
+
+    @Test fun allValidAbsentReservedOrDeletedPairsNeverSynthesizeCredentials() {
+        listOf("absent", "reserved", "deleted").forEach { cut -> withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
+            // Adversarial domain row cuts, with no counter refund hidden in setup. The existing
+            // authentic N/P/L and original native event remain the only deletion authority.
+            val before = f.counters()
+            f.adversarialTransaction { jdbc ->
+                assertEquals(1, jdbc.update("DELETE FROM complaints WHERE owner_id = ? AND data_scope_id = ?", f.precursor.actor.id, f.scope))
+                assertEquals(1, jdbc.update("DELETE FROM app_installations WHERE id = ? AND data_scope_id = ?", f.precursor.actor.id, f.scope))
+                when (cut) {
+                    "absent" -> {
+                        assertEquals(1, jdbc.update("DELETE FROM installation_deletion_receipts WHERE data_scope_id = ?", f.scope))
+                        assertEquals(1, jdbc.update("DELETE FROM complaint_installation_ids WHERE id = ? AND data_scope_id = ?", f.precursor.actor.id, f.scope))
                     }
+                    "reserved" -> assertEquals(1, jdbc.update("UPDATE complaint_installation_ids SET state = 'RECOVERY_RESERVED' WHERE id = ? AND data_scope_id = ?", f.precursor.actor.id, f.scope))
+                    else -> assertEquals(1, jdbc.update("UPDATE complaint_installation_ids SET state = 'DELETED', terminal_at = clock_timestamp() WHERE id = ? AND data_scope_id = ?", f.precursor.actor.id, f.scope))
                 }
-                if (cut == "missing-credential") assertEquals(1, f.observer.update(
-                    "DELETE FROM app_installations WHERE id = ? AND data_scope_id = ?", f.precursor.actor.id, f.scope))
+            }
+            assertEquals(before, f.counters())
+            val oldTerminal = if (cut == "deleted") f.observer.queryForObject("SELECT terminal_at FROM complaint_installation_ids WHERE id = ?", Timestamp::class.java, f.precursor.actor.id) else null
+            val use = OwnerDeleteLiteralCharges.appliedOnly + OwnerDeleteLiteralCharges.audit +
+                if (cut == "absent") OwnerDeleteLiteralCharges.installation else ComplaintCapacityVector.ZERO
+            assertEquals(1, f.poll().primaryAcknowledged)
+            f.assertReleased(); f.assertNoAuthority(); assertAllRecoveryState(f, use, credentialPresent = false)
+            assertTransfer(before, f.counters(), actual = if (cut == "absent") allReceipt else ComplaintCapacityVector.ZERO, use = use, observation = true)
+            if (oldTerminal != null) assertEquals(oldTerminal, f.observer.queryForObject("SELECT terminal_at FROM complaint_installation_ids WHERE id = ?", Timestamp::class.java, f.precursor.actor.id))
+            assertFalse(f.calls.any { it.sql.startsWith("INSERT INTO app_installations") || it.sql.startsWith("UPDATE app_installations") })
+            assertRecoveryAuditDelta(f.auditsBeforeQueue, f.audits(), removed = 0)
+            assertAllNoopReplay(f)
+        } }
+    }
+
+    @Test fun allExactReplayRepairsValidRestoredActivePaidLaterReportsAndRepliesWithoutASecondAppliedRow() =
+        withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
+            val credential = f.observer.queryForMap("SELECT platform, owner_reference, last_authenticated_at, secret_verifier FROM app_installations WHERE id = ?", f.precursor.actor.id)
+            val originalContent = checkNotNull(f.observer.queryForObject("SELECT to_jsonb(c)::text FROM complaints c WHERE owner_id = ?", String::class.java, f.precursor.actor.id))
+            assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased()
+            val primary = allPrimaryImage(f); val oldAudits = f.audits()
+            val originalTarget = f.record.event.complaintIds().single()
+            val oldTerminal = f.observer.queryForObject("SELECT deleted_at FROM complaint_resource_ids WHERE id = ?", Timestamp::class.java, originalTarget)
+            val report = UUID.randomUUID(); val reply = UUID.randomUUID()
+            f.adversarialTransaction { jdbc ->
+                // A deliberately restored valid ACTIVE pair, not a minted credential: keep its
+                // existing verifier and restore only the genuine pre-erasure public row fields.
+                assertEquals(1, jdbc.update("UPDATE complaint_installation_ids SET state = 'ACTIVE', terminal_at = NULL WHERE id = ? AND state = 'DELETED'", f.precursor.actor.id))
+                assertEquals(1, jdbc.update("UPDATE app_installations SET state = 'ACTIVE', credential_version = ?, platform = ?, owner_reference = ?, " +
+                    "last_authenticated_at = ?, deleted_at = NULL, verifier_expires_at = NULL WHERE id = ? AND state = 'DELETED'",
+                    f.record.event.tuple.credentialVersion, credential["platform"], credential["owner_reference"], credential["last_authenticated_at"], f.precursor.actor.id))
+                chargeAdversarialRows(jdbc, (OwnerDeleteLiteralCharges.resource + OwnerDeleteLiteralCharges.content).scaled(2))
+                listOf(report, reply).forEach { id -> assertEquals(1, jdbc.update(
+                    "INSERT INTO complaint_resource_ids(id,data_scope_id,test_only,state,created_at) VALUES (?, ?, true, 'LIVE', clock_timestamp())", id, f.scope)) }
+                assertEquals(1, jdbc.update("INSERT INTO complaints SELECT r.* FROM jsonb_populate_record(NULL::complaints, ?::jsonb || " +
+                    "jsonb_build_object('id', ?::uuid, 'version', 17)) r", originalContent, report))
+                assertEquals(1, jdbc.update("INSERT INTO complaints SELECT r.* FROM jsonb_populate_record(NULL::complaints, ?::jsonb || " +
+                    "jsonb_build_object('id', ?::uuid, 'kind', 'REPLY', 'parent_resource_id', ?::uuid, 'version', 18)) r", originalContent, reply, report))
+            }
+            val before = f.counters(); val use = OwnerDeleteLiteralCharges.audit.scaled(3)
+            assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased(); f.assertNoAuthority()
+            assertAllRecoveryState(f, materialized(f) + use)
+            assertEquals(primary, allPrimaryImage(f), "Exact replay cannot rewrite N/P/native proof/TTL/E.")
+            assertEquals(0, f.calls.count { it.sql == appliedSql(f) })
+            assertTransfer(before, f.counters(), use = use, refund = OwnerDeleteLiteralCharges.content.scaled(2))
+            assertRecoveryAuditDelta(oldAudits, f.audits(), removed = 2)
+            assertEquals(setOf(17L, 18L), f.observer.queryForList("SELECT (detail->>'version')::bigint FROM audit_log " +
+                "WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_DELETED' AND entity_id IN (?, ?)",
+                Long::class.java, f.scope, report.toString(), reply.toString()).toSet())
+            assertArrayEquals(credential["secret_verifier"] as ByteArray, f.observer.queryForObject("SELECT secret_verifier FROM app_installations WHERE id = ?", ByteArray::class.java, f.precursor.actor.id))
+            assertEquals(oldTerminal, f.observer.queryForObject("SELECT deleted_at FROM complaint_resource_ids WHERE id = ?", Timestamp::class.java, originalTarget))
+            assertEquals(3L, f.observer.queryForObject("SELECT count(*) FROM complaint_resource_ids WHERE data_scope_id = ? AND state = 'DELETED'", Long::class.java, f.scope))
+            assertAllNoopReplay(f)
+        }
+
+    @Test fun allExactReplayReconstructsOnlyMissingSnapshotReservationFromRemainingOriginalPromise() =
+        withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
+            assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased()
+            val primary = allPrimaryImage(f); val identities = f.identityImage(); val oldAudits = f.audits(); val before = f.counters()
+            // Missing paid row, deliberately no test-side refund and no reset of the original U.
+            assertEquals(1, f.observer.update("DELETE FROM complaint_resource_ids WHERE id = ? AND data_scope_id = ?", f.record.event.complaintIds().single(), f.scope))
+            assertEquals(before, f.counters())
+            val use = OwnerDeleteLiteralCharges.resource + OwnerDeleteLiteralCharges.audit
+            assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased(); f.assertNoAuthority()
+            assertAllRecoveryState(f, materialized(f) + use)
+            assertEquals(primary, allPrimaryImage(f)); assertEquals(identities, f.identityImage())
+            assertTransfer(before, f.counters(), use = use); assertRecoveryAuditDelta(oldAudits, f.audits(), removed = 0)
+            assertEquals(0, f.calls.count { it.sql == appliedSql(f) })
+            val calls = f.calls.filter { it.step === TestActiveOwnerDeleteQueueStepV1.APPLY }.map { it.sql }
+            assertTrue(calls.indexOfFirst { it.startsWith("INSERT INTO complaint_resource_ids") } < calls.indexOfFirst { "FROM complaints WHERE id = ANY" in it })
+            assertAllNoopReplay(f)
+        }
+
+    @Test fun allMissingCompletedReceiptRetainsTheOriginalCompletionAndRetryExpiry() = withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
+        assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased()
+        val old = f.receipt(); val proofAndApplied = allPrimaryImage(f) - "installation_deletion_receipts"
+        val before = f.counters(); val oldAudits = f.audits()
+        assertEquals(1, f.observer.update("DELETE FROM installation_deletion_receipts WHERE data_scope_id = ?", f.scope))
+        assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased(); f.assertNoAuthority()
+        assertAllRecoveryState(f, materialized(f) + OwnerDeleteLiteralCharges.audit)
+        listOf("authorized_at", "completed_at", "expires_at", "external_event_id", "external_object_version").forEach { assertEquals(old[it], f.receipt()[it], it) }
+        assertEquals(proofAndApplied, allPrimaryImage(f) - "installation_deletion_receipts")
+        assertTransfer(before, f.counters(), actual = allReceipt, use = OwnerDeleteLiteralCharges.audit)
+        assertRecoveryAuditDelta(oldAudits, f.audits(), removed = 0)
+        assertAllNoopReplay(f)
+    }
+
+    @Test fun allMissingBookkeepingUsesPrivacyHeadroomAcrossCreationClosureAndCeiling() {
+        listOf(QueuePrivacyInput.CLOSED, QueuePrivacyInput.CEILING).forEach { input -> withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
+            assertEquals(1, f.observer.update("DELETE FROM installation_deletion_receipts WHERE data_scope_id = ?", f.scope))
+            withPrivacyInput(f, input) {
+                val before = f.counters()
+                assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased(); f.assertNoAuthority()
+                assertAllRecoveryState(f, materialized(f))
+                assertTransfer(before, f.counters(), actual = allReceipt, use = materialized(f), refund = OwnerDeleteLiteralCharges.content, observation = true)
+            }
+        } }
+    }
+
+    @Test fun allMissingReceiptOneByteBelowItsPostObservationHardHeadroomRefusesBeforeBookkeepingOrDomainWrites() =
+        withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
+            assertEquals(1, f.observer.update("DELETE FROM installation_deletion_receipts WHERE data_scope_id = ?", f.scope))
+            withPrivacyInput(f, QueuePrivacyInput.BOOKKEEPING_HARD_CAP) {
                 val rows = f.domainImage(); val before = f.counters(); val original = f.begin()
                 assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { f.poll(original) }
-                f.assertReleased(); f.assertNoAuthority()
-                assertEquals(rows, f.domainImage()); assertObservationCharge(before, f.counters())
-                assertEquals(1, f.raw.order.count { it == "DECRYPT" }, "A genuinely authenticated native object does not replace the missing committed grammar.")
-                assertTrue(f.raw.ackRequests.isEmpty()); assertEquals(0, original.primaryAcked)
-                assertEquals(0L, f.count("complaint_deletion_journal_applied")); f.assertSameOriginalRefused(original)
+                f.assertReleased(); f.assertNoAuthority(); assertEquals(rows, f.domainImage()); assertObservationCharge(before, f.counters())
+                assertTrue(f.deletionObservations.isNotEmpty()); assertEquals(1, f.raw.order.count { it == "DECRYPT" })
+                assertFalse(f.calls.any { it.step === TestActiveOwnerDeleteQueueStepV1.APPLY &&
+                    (it.sql.startsWith("INSERT") || it.sql.startsWith("UPDATE") || it.sql.startsWith("DELETE")) })
+                assertEquals(0, original.primaryAcked); assertTrue(f.raw.ackRequests.isEmpty()); f.assertSameOriginalRefused(original)
+            }
+        }
+
+    @Test fun allTornPairCompetingPrimariesAndUnknownCumulativeHistoryRemainUnacked() {
+        listOf("missing-credential", "competing-n", "competing-p", "missing-l-after-e", "unknown-u").forEach { cut ->
+            withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
+                val applied = cut in setOf("missing-l-after-e", "unknown-u")
+                if (applied) { assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased() }
+                f.adversarialTransaction { jdbc -> when (cut) {
+                    "missing-credential" -> {
+                        // DATABASE-CORRUPTION injection, not a legitimate producible backup:
+                        // preserve the frozen pending-ID/no-credential/PRESENT-C negative. The
+                        // old raw DELETE violated an immediate FK before reaching recovery.
+                        assertEquals("origin", jdbc.queryForObject("SHOW session_replication_role", String::class.java))
+                        jdbc.execute("SET LOCAL session_replication_role = 'replica'")
+                        try { assertEquals(1, jdbc.update("DELETE FROM app_installations WHERE id = ? AND data_scope_id = ?", f.precursor.actor.id, f.scope)) }
+                        finally { jdbc.execute("SET LOCAL session_replication_role = 'origin'") }
+                        assertEquals("origin", jdbc.queryForObject("SHOW session_replication_role", String::class.java))
+                    }
+                    "competing-n" -> assertEquals(1, jdbc.update("INSERT INTO installation_deletion_receipts SELECT r.* FROM installation_deletion_receipts n " +
+                        "CROSS JOIN LATERAL jsonb_populate_record(NULL::installation_deletion_receipts, to_jsonb(n) || jsonb_build_object('deletion_key', ?::uuid)) r " +
+                        "WHERE n.data_scope_id = ?", UUID.randomUUID(), f.scope))
+                    "competing-p" -> {
+                        // Canonical comparison bytes only: a second PREPARED SQL row is an
+                        // adversarial input, not another native PUT/readback or primary issuer.
+                        val route = f.process.consumers.journalRouting.derive(f.record.event.tuple).candidates().first { it != f.record.event.route }
+                        val event = f.precursor.codec.canonicalize(f.record.event.tuple, f.record.event.complaintIds(), route.routingKeyId)
+                        jdbc.query(OwnerDeleteAllPersistenceSql.test(f.precursor.dataScope).INSERT_PUBLICATION, { row, _ -> row.getTimestamp(1) }, event.route.eventId,
+                            UUID.fromString(f.process.consumers.journalConfiguration.declaration().writer.generationId), event.tuple.epoch, event.complaintIds().size,
+                            event.route.routingKeyId, event.route.objectKey, event.canonicalBytes(), MessageDigest.getInstance("SHA-256").digest(event.canonicalBytes())).single()
+                    }
+                    "missing-l-after-e" -> assertEquals(1, jdbc.update("DELETE FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", f.scope))
+                    else -> {
+                        val retired = ComplaintCapacityVector.units(ComplaintCapacityCounter.JOURNAL_RETIREMENTS, 1).with(ComplaintCapacityCounter.STORAGE_BYTES, 262144)
+                        assertEquals(1, jdbc.update("UPDATE complaint_recovery_capacity_reservations SET converted_amounts = ?::bigint[] WHERE data_scope_id = ?",
+                            vectorText(materialized(f) + retired), f.scope))
+                    }
+                } }
+                assertEquals("origin", f.observer.queryForObject("SHOW session_replication_role", String::class.java))
+                if (cut == "missing-credential") {
+                    assertEquals(1L, f.count("complaints")); assertEquals(0L, f.count("app_installations"))
+                    assertEquals("DELETION_PENDING", f.observer.queryForObject("SELECT state FROM complaint_installation_ids WHERE id = ?", String::class.java, f.precursor.actor.id))
+                }
+                val rows = f.domainImage(); val before = f.counters(); val acknowledgements = f.raw.ackRequests.toList(); val original = f.begin()
+                assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { f.poll(original) }
+                f.assertReleased(); f.assertNoAuthority(); assertEquals(rows, f.domainImage())
+                if (applied) assertEquals(before, f.counters()) else assertObservationCharge(before, f.counters())
+                assertEquals(acknowledgements, f.raw.ackRequests); assertEquals(0, original.primaryAcked)
+                assertEquals(if (applied) 1L else 0L, f.count("complaint_deletion_journal_applied")); f.assertSameOriginalRefused(original)
             }
         }
     }
@@ -460,11 +671,13 @@ class TestActiveOwnerDeleteQueueIT {
             QueuePrivacyInput.CLOSED -> amount("actual_units")
             QueuePrivacyInput.CEILING -> amount("creation_limit") + 1
             QueuePrivacyInput.HARD_CAP -> amount("hard_limit") - amount("recovery_reserved_units") - amount("test_reserved_units") - 8191
+            QueuePrivacyInput.BOOKKEEPING_HARD_CAP -> amount("hard_limit") - amount("recovery_reserved_units") - amount("test_reserved_units") - (8192 + 32768 - 1)
         }
         val injected = target - amount("actual_units")
         assertTrue(injected >= 0)
         val free = amount("free_units") - injected
         if (input == QueuePrivacyInput.HARD_CAP) assertEquals(8191L, free) else assertTrue(free >= 8192)
+        if (input == QueuePrivacyInput.BOOKKEEPING_HARD_CAP) assertEquals(40959L, free)
         assertEquals(1, f.observer.update("UPDATE complaint_capacity_counters SET free_units = ?, actual_units = ? WHERE name = 'storage_bytes'", free, target))
         if (input == QueuePrivacyInput.CLOSED) {
             assertEquals(2, f.observer.update("UPDATE complaint_journal_control SET creation_closed = true WHERE data_scope_id IN (?, ?) AND NOT creation_closed", UUID(0, 0), f.scope))
@@ -502,6 +715,84 @@ class TestActiveOwnerDeleteQueueIT {
         assertEquals(1, updated)
     }
 
+    // Independent fixed V14 bookkeeping envelopes, not the product's charge calculator as oracle.
+    private val allReceipt = ComplaintCapacityVector.units(ComplaintCapacityCounter.INSTALLATION_RECEIPTS, 1).with(ComplaintCapacityCounter.STORAGE_BYTES, 32768)
+    private val allPublication = ComplaintCapacityVector.units(ComplaintCapacityCounter.JOURNAL_PUBLICATIONS, 1).with(ComplaintCapacityCounter.STORAGE_BYTES, 262144)
+    private val allReservation = ComplaintCapacityVector.units(ComplaintCapacityCounter.RECOVERY_RESERVATIONS, 1).with(ComplaintCapacityCounter.STORAGE_BYTES, 16384)
+
+    private fun allPrimaryImage(f: TestActiveOwnerDeleteQueueFixtureV1) = f.domainImage().filterKeys {
+        it in setOf("installation_deletion_receipts", "complaint_journal_publications", "complaint_deletion_journal_applied")
+    }
+
+    private fun assertAllRecoveryState(f: TestActiveOwnerDeleteQueueFixtureV1, used: ComplaintCapacityVector, credentialPresent: Boolean = true) {
+        assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, f.family)
+        assertSame(f.record.stored, f.raw.stored); assertSame(f.record.event, f.raw.event)
+        assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM complaints WHERE owner_id = ?", Long::class.java, f.precursor.actor.id))
+        assertEquals("DELETED", f.observer.queryForObject("SELECT state FROM complaint_installation_ids WHERE id = ?", String::class.java, f.precursor.actor.id))
+        val credentials = f.observer.queryForList("SELECT * FROM app_installations WHERE id = ?", f.precursor.actor.id)
+        if (credentialPresent) {
+            val credential = credentials.single()
+            assertEquals("DELETED", credential["state"]); assertEquals(f.record.event.tuple.credentialVersion + 1, credential["credential_version"])
+            listOf("platform", "owner_reference", "last_authenticated_at").forEach { assertNull(credential[it], it) }
+            assertEquals(f.credentialIdentityBeforeQueue, f.credentialIdentity(), "No verifier, identity or original creation replacement.")
+        } else assertTrue(credentials.isEmpty(), "Valid absent credentials are never reconstructed.")
+        val publication = f.precursor.publication(); val receipt = f.receipt()
+        assertEquals("APPLIED", publication["state"]); assertEquals("COMPLETED", receipt["state"])
+        assertArrayEquals(f.record.event.canonicalBytes(), publication["event_bytes"] as ByteArray)
+        assertEquals(f.record.stored.version, publication["object_version"]); assertEquals(f.record.stored.key, publication["object_key"])
+        val ciphertextHash = MessageDigest.getInstance("SHA-256").digest(f.record.stored.bytes)
+        assertArrayEquals(ciphertextHash, publication["ciphertext_hash"] as ByteArray)
+        assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(publication["verification_bytes"] as ByteArray), publication["verification_hash"] as ByteArray)
+        assertEquals(f.record.stored.lastModified, (publication["object_created_at"] as Timestamp).toInstant())
+        assertEquals(f.record.event.route.eventId, receipt["external_event_id"]); assertEquals(f.record.stored.version, receipt["external_object_version"])
+        assertArrayEquals(ciphertextHash, receipt["external_ciphertext_hash"] as ByteArray)
+        assertEquals(publication["created_at"], receipt["authorized_at"]); assertEquals(publication["applied_at"], receipt["completed_at"])
+        assertEquals((receipt["completed_at"] as Timestamp).toInstant().plus(Duration.ofHours(192)), (receipt["expires_at"] as Timestamp).toInstant())
+        val applied = f.observer.queryForList("SELECT * FROM complaint_deletion_journal_applied WHERE data_scope_id = ?", f.scope).single()
+        assertEquals(f.record.stored.key, applied["object_key"]); assertEquals(f.record.stored.version, applied["object_version"])
+        assertArrayEquals(ciphertextHash, applied["ciphertext_hash"] as ByteArray); assertEquals(publication["applied_at"], applied["applied_at"])
+        val reserve = f.observer.queryForMap("SELECT state, reserved_amounts::text, converted_amounts::text FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", f.scope)
+        assertEquals("PARTIAL", reserve["state"]); assertEquals(vectorText(promise(f)), reserve["reserved_amounts"]); assertEquals(vectorText(used), reserve["converted_amounts"])
+        assertEquals(setOf("SYSTEM"), f.observer.queryForList("SELECT complaint_actor_kind FROM audit_log WHERE complaint_data_scope_id = ? " +
+            "AND action = 'COMPLAINT_RECOVERY_APPLIED'", String::class.java, f.scope).toSet())
+    }
+
+    private fun assertAllNoopReplay(f: TestActiveOwnerDeleteQueueFixtureV1) {
+        val rows = f.domainImage(); val counters = f.counters()
+        assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased(); f.assertNoAuthority()
+        assertEquals(rows, f.domainImage()); assertEquals(counters, f.counters())
+        assertEquals(0, f.calls.count { it.sql == appliedSql(f) })
+        assertFalse(f.calls.any { it.step === TestActiveOwnerDeleteQueueStepV1.APPLY &&
+            (it.sql.startsWith("INSERT") || it.sql.startsWith("UPDATE") || it.sql.startsWith("DELETE")) })
+    }
+
+    private fun assertRecoveryAuditDelta(before: Map<String, Long>, after: Map<String, Long>, removed: Long) {
+        val expected = before.toMutableMap()
+        if (removed != 0L) expected["COMPLAINT_DELETED"] = expected.getOrDefault("COMPLAINT_DELETED", 0L) + removed
+        expected["COMPLAINT_RECOVERY_APPLIED"] = expected.getOrDefault("COMPLAINT_RECOVERY_APPLIED", 0L) + 1
+        assertEquals(expected, after)
+    }
+
+    private fun assertTransfer(before: Map<ComplaintCapacityCounter, DeleteAllCounter>, after: Map<ComplaintCapacityCounter, DeleteAllCounter>,
+        actual: ComplaintCapacityVector = ComplaintCapacityVector.ZERO, reserve: ComplaintCapacityVector = ComplaintCapacityVector.ZERO,
+        use: ComplaintCapacityVector = ComplaintCapacityVector.ZERO, refund: ComplaintCapacityVector = ComplaintCapacityVector.ZERO, observation: Boolean = false) {
+        assertEquals(22, after.size)
+        before.forEach { (counter, old) ->
+            val observed = if (observation && counter === ComplaintCapacityCounter.STORAGE_BYTES) 8192L else 0L
+            assertEquals(old.copy(free = old.free - actual[counter] - reserve[counter] + refund[counter] - observed,
+                actual = old.actual + actual[counter] + use[counter] - refund[counter] + observed,
+                recovery = old.recovery + reserve[counter] - use[counter]), after.getValue(counter), counter.storedName)
+        }
+    }
+
+    private fun chargeAdversarialRows(jdbc: JdbcTemplate, charge: ComplaintCapacityVector) {
+        // Fixed counted synthetic C/resource setup, not a product capacity grant or conversion.
+        ComplaintCapacityCounter.entries.filter { charge[it] > 0 }.sortedBy { it.storedName }.forEach { counter ->
+            assertEquals(1, jdbc.update("UPDATE complaint_capacity_counters SET free_units = free_units - ?, actual_units = actual_units + ? " +
+                "WHERE name = ? AND free_units >= ?", charge[counter], charge[counter], counter.storedName, charge[counter]))
+        }
+    }
+
     private fun assertApplied(f: TestActiveOwnerDeleteQueueFixtureV1) {
         val targets = f.precursor.reports.size.toLong()
         listOf("complaint_idempotency_receipts", "installation_deletion_receipts", "complaint_journal_publications",
@@ -512,7 +803,7 @@ class TestActiveOwnerDeleteQueueIT {
         val expectedAudits = f.auditsBeforeQueue.toMutableMap()
         fun add(action: String, count: Long) { expectedAudits[action] = expectedAudits.getOrDefault(action, 0L) + count }
         add("COMPLAINT_DELETED", targets)
-        add(if (f.family == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) "COMPLAINT_INSTALLATION_DELETED" else "COMPLAINT_RECOVERY_APPLIED", 1)
+        add("COMPLAINT_RECOVERY_APPLIED", 1)
         assertEquals(expectedAudits, f.audits())
         assertEquals("APPLIED", f.precursor.publication()["state"])
         assertEquals("COMPLETED", f.receipt()["state"]); assertEquals("APPLIED", f.receipt()["outcome"])
@@ -524,9 +815,10 @@ class TestActiveOwnerDeleteQueueIT {
         assertEquals(targets, f.observer.queryForObject("SELECT count(*) FROM complaint_resource_ids WHERE data_scope_id = ? AND state = 'DELETED'", Long::class.java, f.scope))
         if (f.family == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) {
             assertEquals("DELETED", f.observer.queryForObject("SELECT state FROM complaint_installation_ids WHERE id = ?", String::class.java, f.precursor.actor.id))
-            val credential = f.observer.queryForMap("SELECT state, credential_version FROM app_installations WHERE id = ?", f.precursor.actor.id)
+            val credential = f.observer.queryForMap("SELECT state, credential_version, platform, owner_reference, last_authenticated_at FROM app_installations WHERE id = ?", f.precursor.actor.id)
             assertEquals("DELETED", credential["state"])
             assertEquals(f.record.event.tuple.credentialVersion + 1, credential["credential_version"])
+            listOf("platform", "owner_reference", "last_authenticated_at").forEach { assertNull(credential[it], it) }
             assertEquals(f.credentialIdentityBeforeQueue, f.credentialIdentity(), "ALL changes its retained lifecycle/version, never the original verifier or identity.")
         } else assertEquals(f.identitiesBeforeQueue, f.identityImage(), "OWNER/ADMIN resource erasure preserves the existing credential pairs exactly.")
         val reserve = f.observer.queryForMap("SELECT state, reserved_amounts::text, converted_amounts::text FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", f.scope)
@@ -601,5 +893,5 @@ class TestActiveOwnerDeleteQueueIT {
 }
 
 private enum class QueueBindingCut { DESIRED, DATABASE, RESTORE, CATALOG, EXPIRED, REPLACED, MAINTENANCE, SCAN }
-private enum class QueuePrivacyInput { CLOSED, CEILING, HARD_CAP }
+private enum class QueuePrivacyInput { CLOSED, CEILING, HARD_CAP, BOOKKEEPING_HARD_CAP }
 private enum class QueueCommitCut { BEFORE, AFTER, UNKNOWN, UNRESOLVED_RELEASE }

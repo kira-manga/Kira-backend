@@ -81,7 +81,7 @@ internal class VersionBoundTestActiveOwnerDeleteQueueV1 private constructor(
         put("supportedFamilies", buildJsonObject {
             put("OWNER_DELETE", "NATIVE_RECOVERY_FOUR_RETAINED_KEYS_ONE_VERSION_PER_KEY")
             if (routing.journalConfiguration.ownerDeleteAll) {
-                put("OWNER_DELETE_ALL", "EXACT_RETAINED_VERIFIED_PRIMARY_OR_UNEXPIRED_APPLIED_REPLAY")
+                put("OWNER_DELETE_ALL", "BOUNDED_NATIVE_NPL_AND_DOMAIN_RECOVERY_ONE_VERSION_PER_RETAINED_KEY")
             }
             if (routing.journalConfiguration.registeredAdminDelete) {
                 put("ADMIN_DELETE", "NATIVE_RECOVERY_FOUR_RETAINED_KEYS_ONE_VERSION_PER_KEY")
@@ -91,7 +91,7 @@ internal class VersionBoundTestActiveOwnerDeleteQueueV1 private constructor(
             }
         })
         if (routing.journalConfiguration.ownerDeleteAll) {
-            put("allRecoveryUnfinished", "MISSING_NPL_PREPARED_WITHOUT_VERIFY_MISSING_PAIR_ALIASES_POST_REPLAY_DOMAIN_REPAIR")
+            put("allRecoveryUnfinished", "ALIAS_WITH_MISSING_PRIMARY_RECEIPT_REQUIRES_PRIMARY_READBACK")
         }
         put("operations", "RECEIVE_EXACT_NATIVE_GET_DECRYPT_FENCED_APPLY_RELEASE_ACK")
         put("observationStorageProfile", TestActiveOwnerDeleteQueueStorageV1.STORAGE_PROFILE)
