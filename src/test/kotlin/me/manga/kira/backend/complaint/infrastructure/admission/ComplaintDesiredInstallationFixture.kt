@@ -385,6 +385,13 @@ internal class DesiredInstallationInvocation(
         }
         cleanupVerified = true // The actual one-shot result is returned only after its original cleanup predicate.
         result
+    } catch (problem: Throwable) {
+        runCatching {
+            System.err.println("DESIRED_INSTALLATION_COMMAND_FAILURE class=${problem.javaClass.name} phase=EXECUTE " +
+                "probeInstalled=${probe != null} targetObserved=${target != null} closingObserved=$closingObserved " +
+                "betweenObserved=$betweenObserved cleanupVerified=$cleanupVerified")
+        }
+        throw problem
     } finally {
         assertNoLostAssertions()
         assertEquals(http.createdClients, http.closedClients)
@@ -472,8 +479,12 @@ internal class DesiredInstallationTestClock : PersistenceNanoClock {
     override fun nanoTime(): Long {
         try {
             onSample()
-        } catch (failure: AssertionError) {
-            assertionFailure.compareAndSet(null, failure)
+        } catch (failure: Throwable) {
+            if (failure is AssertionError) assertionFailure.compareAndSet(null, failure)
+            // Observe the existing callback failure before the operator's redaction boundary.
+            runCatching {
+                System.err.println("DESIRED_INSTALLATION_CALLBACK_FAILURE class=${failure.javaClass.name} phase=CLOCK_CALLBACK")
+            }
             throw failure
         }
         return System.nanoTime() + extraNanos
@@ -492,6 +503,10 @@ internal class DesiredInstallationProbeJdbc(val coordinator: CatalogCoordinatorP
     var beforeSql: (PersistencePhasePath, DesiredInstallationSqlStep) -> Unit = { _, _ -> }
     var afterSql: (PersistencePhasePath, DesiredInstallationSqlStep) -> Unit = { _, _ -> }
     private val assertionFailure = AtomicReference<AssertionError?>()
+    private var diagnosticPath: PersistencePhasePath? = null
+    private var diagnosticStep: DesiredInstallationSqlStep? = null
+    private var diagnosticPhase = "NOT_ENTERED"
+    private var diagnosticReturned = false
     val phase: PersistencePhaseContext get() = checkNotNull(PersistencePhaseOwnership.current())
     val path: PersistencePhasePath get() = poolTestField(phase, "path")
 
@@ -518,9 +533,11 @@ internal class DesiredInstallationProbeJdbc(val coordinator: CatalogCoordinatorP
         throw failure
     }
 
-    private fun <T> observed(sql: String, args: Array<out Any?>, action: () -> T): T = preserveAssertions {
+    private fun <T> observed(sql: String, args: Array<out Any?>, action: () -> T): T = try { preserveAssertions {
+        diagnosticPath = null; diagnosticStep = null; diagnosticReturned = false; diagnosticPhase = "PROBE"
         val current = phase
         val selectedPath = path
+        diagnosticPath = selectedPath
         val holder = TransactionSynchronizationManager.getResource(coordinator.dataSource) as ConnectionHolder
         assertSame(coordinator.dataSource, dataSource)
         assertEquals(setOf(coordinator.dataSource), TransactionSynchronizationManager.getResourceMap().keys)
@@ -549,8 +566,23 @@ internal class DesiredInstallationProbeJdbc(val coordinator: CatalogCoordinatorP
             READ_DESIRED_CONTROL_V1 -> DesiredInstallationSqlStep.READ_CONTROL
             else -> error("Unexpected desired installation SQL.")
         }
+        diagnosticStep = step
         steps.add(selectedPath to step)
+        diagnosticPhase = "BEFORE_SQL"
         beforeSql(selectedPath, step)
-        action().also { afterSql(selectedPath, step) }
+        diagnosticPhase = "SQL"
+        action().also {
+            diagnosticReturned = true; diagnosticPhase = "AFTER_SQL"
+            afterSql(selectedPath, step)
+            diagnosticPhase = "RETURNED"
+        }
+    } } catch (problem: Throwable) {
+        // Actual original JDBC/mapper/callback failure, before production replaces its class/cause.
+        runCatching {
+            System.err.println("DESIRED_INSTALLATION_PROBE_FAILURE class=${problem.javaClass.name} " +
+                "phase=${diagnosticPath?.name ?: "NOT_ENTERED"} step=${diagnosticStep?.name ?: "NOT_ENTERED"} " +
+                "probePhase=$diagnosticPhase returned=$diagnosticReturned observed=${observations.isNotEmpty()}")
+        }
+        throw problem
     }
 }

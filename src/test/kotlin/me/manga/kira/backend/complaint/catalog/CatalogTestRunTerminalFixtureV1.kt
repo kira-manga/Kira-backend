@@ -58,14 +58,24 @@ internal fun withTerminalCatalogRun(tls: VersionBoundPersistenceConnectedFixture
         assertEquals(TestRunTerminalEpochSealResultV1.TERMINAL_EPOCH_AUTHENTICATED_AND_SEALED, seal.seal())
         epochProbe.assertReleased(); f.assertReleased()
         TestTerminalQuiescenceSqlProbeV1(f).use { probe ->
-            val d = seal.beginTerminalQuiescence().also { probe.original = it }
-            val approval = inputs.approval(inputs.statement(d)) // PSS ONCE, before the actual D call.
-            val raw = inputs.rawEvidence
+            var diagnosticPhase = "QUIESCENCE_BEGIN"
             try {
-                assertEquals(TestRunTerminalQuiescenceResultV1.TERMINAL_PREFIX_QUIESCENT_AND_SEALED, d.quiesce(approval, raw))
-                probe.assertReleased(); f.assertReleased()
-                CatalogTestRunTerminalFixtureV1(f, d, approval, raw).use(action)
-            } finally { approval.fill(0); raw.forEach { it.fill(0) } }
+                val d = seal.beginTerminalQuiescence().also { probe.original = it }
+                diagnosticPhase = "APPROVAL"
+                val approval = inputs.approval(inputs.statement(d)) // PSS ONCE, before the actual D call.
+                val raw = inputs.rawEvidence
+                try {
+                    diagnosticPhase = "QUIESCE"
+                    assertEquals(TestRunTerminalQuiescenceResultV1.TERMINAL_PREFIX_QUIESCENT_AND_SEALED, d.quiesce(approval, raw))
+                    diagnosticPhase = "QUIESCENCE_RELEASE"
+                    probe.assertReleased(); f.assertReleased()
+                    diagnosticPhase = "CATALOG_HANDOFF"
+                    CatalogTestRunTerminalFixtureV1(f, d, approval, raw).use(action)
+                } finally { approval.fill(0); raw.forEach { it.fill(0) } }
+            } catch (problem: Throwable) {
+                runCatching { probe.reportUnexpectedFailure(problem, diagnosticPhase) }
+                throw problem
+            }
         }
     }
 }

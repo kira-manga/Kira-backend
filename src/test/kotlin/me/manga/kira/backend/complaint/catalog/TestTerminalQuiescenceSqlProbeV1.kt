@@ -35,6 +35,9 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     private val owners = linkedMapOf<PersistencePhaseContext, TestRunTerminalQuiescenceV1>()
     private val assertion = AtomicReference<AssertionError?>()
+    private var probePhase = "NOT_ENTERED"
+    private var lastReturned = false
+    private var probeFailureObserved = false
     private val executor = f.registration.process.pools.catalogCoordinator.testTerminalQuiescence
     private val field = executor.javaClass.getDeclaredField("jdbc").apply { check(trySetAccessible()) }
     private val previous = field.get(executor) as JdbcTemplate
@@ -53,6 +56,7 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
     override fun update(sql: String, vararg args: Any?): Int = observed(sql, args) { super.update(sql, *args) }
 
     private fun <T> observed(sql: String, args: Array<out Any?>, action: () -> T): T = try {
+        lastReturned = false; probePhase = "PROBE"
         val phase = checkNotNull(PersistencePhaseOwnership.current())
         val owner = ownedCutField(phase, "testTerminalQuiescence") as TestRunTerminalQuiescenceV1
         val path = ownedCutField(phase, "path") as PersistencePhasePath
@@ -90,9 +94,29 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
         assertFalse(lease.completion.quiescent())
         val call = Call(phase, owner.step, sql, args.map { if (it is ByteArray) Bytes(it.size, Sha256.hex(it)) else it })
         calls.add(call)
+        probePhase = "BEFORE_SQL"
         before(call)
-        action().also { after(call) }
-    } catch (problem: AssertionError) { assertion.compareAndSet(null, problem); throw problem }
+        probePhase = "SQL"
+        action().also {
+            lastReturned = true; probePhase = "AFTER_SQL"
+            after(call)
+            probePhase = "RETURNED"
+        }
+    } catch (problem: Throwable) {
+        if (problem is AssertionError) assertion.compareAndSet(null, problem)
+        probeFailureObserved = true
+        runCatching { reportUnexpectedFailure(problem) } // Actual JDBC/mapper/callback class before redaction.
+        throw problem
+    }
+
+    /** Existing-probe state only; the boundary argument is a fixed TEST call-site phase, never runtime data. */
+    fun reportUnexpectedFailure(problem: Throwable, boundary: String = "SQL_PROBE") {
+        System.err.println("TERMINAL_QUIESCENCE_UNEXPECTED class=${problem.javaClass.name} " +
+            "phase=${original?.step?.name ?: "NOT_ENTERED"} boundary=$boundary probePhase=$probePhase " +
+            "returned=$lastReturned probeFailureObserved=$probeFailureObserved nativeObserved=${f.sealHttp.terminalInventoryRequests.isNotEmpty()} " +
+            "observed=${observations.isNotEmpty()} committedObserved=${observations.keys.any { it.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED }} " +
+            "leasesQuiescent=${observations.isNotEmpty() && observations.values.all { it.lease.completion.quiescent() }}")
+    }
 
     fun assertReleased(requireCommitted: Boolean = true) {
         requireConnectionFree()
@@ -111,7 +135,9 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
     }
     override fun close() {
         before = {}; after = {}
+        probePhase = "CLOSE"
         try { assertReleased(requireCommitted = false) }
+        catch (problem: Throwable) { runCatching { reportUnexpectedFailure(problem, "PROBE_CLOSE") }; throw problem }
         finally { assertSame(this, field.get(executor)); field.set(executor, previous) }
     }
     class Call(val phase: PersistencePhaseContext, val step: TestTerminalQuiescenceStepV1, val sql: String, val arguments: List<Any?>)

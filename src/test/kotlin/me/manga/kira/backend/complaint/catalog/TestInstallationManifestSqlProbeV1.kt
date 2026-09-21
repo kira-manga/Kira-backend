@@ -8,7 +8,6 @@ import me.manga.kira.backend.common.infrastructure.persistence.StepUpPhaseObserv
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
-import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestSqlV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OrdinaryJournalRetentionV1
@@ -51,8 +50,8 @@ internal class TestInstallationManifestSqlProbeV1 private constructor(
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     private val owners = linkedMapOf<PersistencePhaseContext, TestRunInstallationManifestV1>()
     private val assertion = AtomicReference<AssertionError?>()
-    private var lastSite = "NOT_ENTERED"
-    private var lastSqlHash = "NOT_ENTERED"
+    private var probePhase = "NOT_ENTERED"
+    private var firstFailureClass = "NOT_OBSERVED"
     private var lastReturned = false
     private var databaseClock: Pair<PersistencePhaseContext, Instant>? = null
     private var sidecarTiming = "NOT_OBSERVED"
@@ -84,6 +83,7 @@ internal class TestInstallationManifestSqlProbeV1 private constructor(
     override fun update(sql: String, vararg args: Any?): Int = observed(sql, args) { super.update(sql, *args) }
 
     private fun <T> observed(sql: String, args: Array<out Any?>, action: () -> T): T = try {
+        lastReturned = false; probePhase = "PROBE"
         val phase = checkNotNull(PersistencePhaseOwnership.current())
         val owner = ownedCutField(phase, "testInstallationManifest") as TestRunInstallationManifestV1
         if (original == null && expectedDrain != null) {
@@ -113,19 +113,24 @@ internal class TestInstallationManifestSqlProbeV1 private constructor(
         assertFalse(lease.completion.quiescent())
         val call = Call(phase, owner.step, sql, args.map { if (it is ByteArray) it.copyOf() else it })
         calls.add(call)
-        lastSqlHash = Sha256.hex(sql.toByteArray(Charsets.UTF_8))
-        lastSite = Throwable().stackTrace.filter { it.className.startsWith("me.manga.kira.backend.complaint.infrastructure.terminal.") }
-            .take(6).joinToString(";") { "${it.fileName}:${it.methodName}:${it.lineNumber}" }
-        lastReturned = false
+        probePhase = "BEFORE_SQL"
         before(call)
+        probePhase = "SQL"
         action().also { result ->
+            lastReturned = true; probePhase = "AFTER_SQL"
             if (sql == "SELECT clock_timestamp()") {
                 val value = (result as? List<*>)?.singleOrNull() as? Instant
                 databaseClock = value?.let { phase to it }
             }
-            lastReturned = true; after(call)
+            after(call)
+            probePhase = "RETURNED"
         }
-    } catch (problem: AssertionError) { assertion.compareAndSet(null, problem); throw problem }
+    } catch (problem: Throwable) {
+        if (problem is AssertionError) assertion.compareAndSet(null, problem)
+        if (firstFailureClass == "NOT_OBSERVED") firstFailureClass = problem.javaClass.name
+        runCatching { reportUnexpectedFailure(problem) } // Before the original's stackless sanitizer.
+        throw problem
+    }
 
     /** Boolean-only diagnostic from the exact mapper row and preceding same-phase database sample. */
     private fun timingPredicates(row: ResultSet): String {
@@ -140,11 +145,12 @@ internal class TestInstallationManifestSqlProbeV1 private constructor(
             "frozenLeCeilingObserved=${frozen <= OrdinaryJournalRetentionV1.ceilingSecond(now)}"
     }
 
-    /** Unexpected TEST failure only: fixed source locations/hash, never SQL, arguments, rows or throwable prose. */
-    fun reportUnexpectedFailure() {
-        System.err.println("MANIFEST_PREPARE_UNEXPECTED step=${original?.step} calls=${calls.size} " +
-            "returned=$lastReturned sqlSha256=$lastSqlHash site=$lastSite sidecarTiming=$sidecarTiming " +
-            "outcomes=${observations.keys.toList().takeLast(8).map { it.databaseOutcome().name }}")
+    /** TEST-only class/phase/boolean observations; no SQL/hash, values, locations or throwable prose. */
+    fun reportUnexpectedFailure(problem: Throwable? = null) {
+        System.err.println("MANIFEST_PREPARE_UNEXPECTED class=${problem?.javaClass?.name ?: firstFailureClass} " +
+            "phase=${original?.step?.name ?: "NOT_ENTERED"} probePhase=$probePhase returned=$lastReturned " +
+            "observed=${observations.isNotEmpty()} committedObserved=${observations.keys.any { it.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED }} " +
+            "leasesQuiescent=${observations.isNotEmpty() && observations.values.all { it.lease.completion.quiescent() }} sidecarTiming=$sidecarTiming")
     }
 
     fun assertReleased(requireCommitted: Boolean = true) {
@@ -161,12 +167,14 @@ internal class TestInstallationManifestSqlProbeV1 private constructor(
     }
     fun reset() {
         assertReleased(requireCommitted = false); calls.clear(); observations.clear(); owners.clear()
-        lastSite = "NOT_ENTERED"; lastSqlHash = "NOT_ENTERED"; lastReturned = false
+        probePhase = "NOT_ENTERED"; firstFailureClass = "NOT_OBSERVED"; lastReturned = false
         databaseClock = null; sidecarTiming = "NOT_OBSERVED"
     }
     override fun close() {
         before = {}; after = {}
+        probePhase = "CLOSE"
         try { assertReleased(requireCommitted = false) }
+        catch (problem: Throwable) { runCatching { reportUnexpectedFailure(problem) }; throw problem }
         finally { assertSame(this, field.get(executor)); field.set(executor, previous) }
     }
     class Call(val phase: PersistencePhaseContext, val step: TestInstallationManifestStepV1, val sql: String, val arguments: List<Any?>)
