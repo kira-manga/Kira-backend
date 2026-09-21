@@ -33,6 +33,8 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
         val proof = OwnerDeleteAllVerificationCodecV1(binding).parse(checkNotNull(p.verificationBytes), binding.fromTest(event))
         requireDrain(proof.objectVersion == p.objectVersion && proof.ciphertextSha256 == HexFormat.of().formatHex(p.ciphertextHash) &&
             Instant.parse(proof.objectCreatedAt) == p.objectCreatedAt && Instant.parse(proof.retainUntil) == p.retainUntil && Instant.parse(proof.verifiedAt) == p.verifiedAt)
+        val primaryApplied = family.single { it.key == p.objectKey && it.version == p.objectVersion }
+        requireDrain(primaryApplied.eventId == p.eventId && primaryApplied.ciphertext == proof.ciphertextSha256 && primaryApplied.at == value.appliedAt)
         val now = TestOrdinaryDrainPersistenceV1.now(jdbc)
         val verifiedAt = Instant.parse(proof.verifiedAt)
         val recovery = value.recovery
@@ -65,13 +67,21 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
             }, target).single()
         }
         requireDrain(jdbc.queryForObject("SELECT NOT EXISTS (SELECT 1 FROM complaints WHERE owner_id = ?)", Boolean::class.java, tuple.actorId) == true)
-        val primarySummary = jdbc.query(primaryAudit, { row, _ -> Summary.read(row, recovery.lastAppliedAt, value.appliedAt, primary = true) },
-            Math.addExact(tuple.credentialVersion, 1L), facts.scope, facts.scope.toString(), Timestamp.from(value.appliedAt)).single()
-        requireRemovalAudits(jdbc, facts, primarySummary, "INSTALLATION")
+        val installationSummaries = jdbc.query(primaryAudit, { row, _ -> Summary.read(row, recovery.lastAppliedAt, value.appliedAt, installation = true) },
+            Math.addExact(tuple.credentialVersion, 1L), facts.scope, facts.scope.toString(), Timestamp.from(value.appliedAt))
         val routes = facts.routing.derive(tuple).candidates()
-        val summaries = jdbc.query(recoveryAudits, { row, _ -> Summary.read(row, recovery.lastAppliedAt, value.appliedAt, primary = false) },
+        val recoverySummaries = jdbc.query(recoveryAudits, { row, _ -> Summary.read(row, recovery.lastAppliedAt, value.appliedAt, installation = false) },
             facts.scope, facts.scope.toString(), routes.joinToString(",", "{", "}") { it.eventId })
-        requireDrain(summaries.size <= 4 && summaries.map { it.at }.distinct().size == summaries.size)
+        requireDrain(recoverySummaries.size <= 4 && recoverySummaries.map { it.at }.distinct().size == recoverySummaries.size)
+        val systemPrimaries = recoverySummaries.filter { it.at == value.appliedAt }
+        // The native proof and exact N/P/E/L comparisons precede this accounting check. The
+        // producer's audit corroborates effects: one INSTALLATION or SYSTEM shape, never both.
+        requireDrain(installationSummaries.size + systemPrimaries.size == 1)
+        val primarySummary = (installationSummaries + systemPrimaries).single()
+        val primaryActor = if (installationSummaries.isNotEmpty()) "INSTALLATION" else "SYSTEM"
+        requireDrain(primaryActor == "INSTALLATION" || primarySummary.eventId == p.eventId)
+        requireRemovalAudits(jdbc, facts, primarySummary, primaryActor)
+        val summaries = recoverySummaries.filterNot { it === primarySummary }
         summaries.forEach { summary ->
             requireDrain(summary.at > value.appliedAt)
             requireRemovalAudits(jdbc, facts, summary, "SYSTEM")
@@ -85,7 +95,7 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
         }
         requireDrain(recovery.used[ComplaintCapacityCounter.RESOURCE_IDS] == reconstructed &&
             reconstructed == primarySummary.resources.toLong() + summaries.sumOf { it.resources.toLong() } &&
-            recovery.used[ComplaintCapacityCounter.INSTALLATION_IDS] == summaries.sumOf { it.installations.toLong() } &&
+            recovery.used[ComplaintCapacityCounter.INSTALLATION_IDS] == primarySummary.installations.toLong() + summaries.sumOf { it.installations.toLong() } &&
             recovery.used[ComplaintCapacityCounter.AUDIT_ROWS] == primarySummary.removed + 1L + summaries.sumOf { it.removed + 1L })
         // Unlike LIVE, TEST ordinary objects are ineligible for production retirement (frozen V6
         // §7.2). requireSupported rejects EVERY retirement row, and this reader rejects any spent
@@ -115,14 +125,14 @@ internal object TestOrdinaryDrainAllPersistenceV1 {
     }
     private class Summary(val eventId: String?, val at: Instant, val removed: Int, val resources: Int, val installations: Int) {
         companion object {
-            fun read(row: ResultSet, last: Instant, first: Instant, primary: Boolean): Summary {
+            fun read(row: ResultSet, last: Instant, first: Instant, installation: Boolean): Summary {
                 requireDrain(TestOrdinaryDrainRowsV1.boolean(row, "valid"))
                 val at = checkNotNull(row.getTimestamp("created_at")).toInstant()
                 val removed = row.getInt("removed")
                 val resources = row.getInt("reconstructed")
-                val installations = if (primary) 0 else row.getInt("installation")
+                val installations = if (installation) 0 else row.getInt("installation")
                 requireDrain(at in first..last && removed in 0..100 && resources in 0..100 && installations in 0..1)
-                return Summary(if (primary) null else checkNotNull(row.getString("event_id")), at, removed, resources, installations)
+                return Summary(if (installation) null else checkNotNull(row.getString("event_id")), at, removed, resources, installations)
             }
         }
     }

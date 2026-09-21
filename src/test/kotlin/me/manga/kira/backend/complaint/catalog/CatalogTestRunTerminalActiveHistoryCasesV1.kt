@@ -20,6 +20,13 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerm
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalProjectionSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalResultV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalSqlV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionFixtureV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainPersistenceV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.TestTerminalJsonV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -32,6 +39,7 @@ import org.springframework.jdbc.datasource.SingleConnectionDataSource
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.nio.file.Files
+import java.time.Clock
 import java.util.UUID
 
 internal enum class TerminalCatalogHistoryRowFaultV1 { MISSING_A, FOREIGN_A_IDENTITY, REWRITTEN_A_XMIN }
@@ -163,6 +171,155 @@ internal object CatalogTestRunTerminalActiveHistoryCasesV1 {
             assertEquals(1, f.signatures.size); assertEquals(1, f.http.bodies.size)
             assertThrows<RuntimeException> { original.publish(f.unsigned, f.request()) }
         }
+
+    /** Both variants use B's original native readback; PREPARED does not borrow a SQL VERIFY. */
+    fun allQueueSuccessful(tls: VersionBoundPersistenceConnectedFixture, verifyPublication: Boolean) =
+        withNonemptyActiveHistoryTerminalCatalogRun(tls, TerminalCatalogQueueHistoryV1.SETTLED,
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, verifyPublication) { h ->
+            val f = h.catalog; val b = checkNotNull(h.queue)
+            assertEquals(verifyPublication, b.verifiedPublication)
+            assertRetainedAllQueuePrimary(b, "CONVERTED"); assertNonemptyHistory(h)
+            assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM complaints WHERE data_scope_id = ?", Long::class.java, f.scope))
+            assertEquals(1L, f.record.installationManifest.summary.deletedCount)
+            val protected = h.preservedRows(); val counters = f.f.p.counters(); val reserve = unused(f)
+            val nativeStart = f.f.sealHttp.terminalInventoryRequests.size; val journalStart = f.f.sealHttp.order.size
+            f.http.replicateOnPut = true
+            val original = f.begin()
+            assertEquals(CatalogTestRunTerminalResultV1.DUAL_COPY_ACCEPTED_AND_PURGING_PROJECTED, original.publish(f.unsigned, f.request()))
+            original.requireActualCleanup(); f.probe.assertReleased(); f.probe.assertHistoryOrder(active = true); assertProjected(f)
+            val charge = TestTerminalCapacityChargesV1.SCOPED_CATALOG + TestTerminalCapacityChargesV1.AUDIT
+            assertCharge(f, counters, charge); assertEquals(reserve - charge, unused(f))
+            assertEquals(protected, h.preservedRows(), "ALL queue proof, terminal identity, both TTLs and V26/V29 remain physical originals through E.")
+            assertRetainedAllQueuePrimary(b, "CONVERTED"); assertNonemptyHistory(h); assertNonemptyNativePairs(h, nativeStart, journalStart, 2)
+            assertEquals(1, f.signatures.size); assertEquals(1, f.http.bodies.size)
+            assertArrayEquals(f.unsigned, f.bytes("unsigned_bytes")); assertArrayEquals(f.bytes("envelope_bytes"), f.http.bodies.single())
+            CatalogTestRunTerminalCasesV1.assertOrder(f.probe)
+        }
+
+    fun allFamilyEvidenceRefuses(tls: VersionBoundPersistenceConnectedFixture) = allComparisonRefusals(tls, listOf(
+        AllFault.MISSING_N, AllFault.N_FINGERPRINT, AllFault.MISSING_P, AllFault.P_VERSION,
+        AllFault.MISSING_E, AllFault.E_HASH, AllFault.E_TIME, AllFault.MISSING_L, AllFault.L_PROMISE,
+    ))
+
+    fun allPrimarySummaryRefuses(tls: VersionBoundPersistenceConnectedFixture) = allComparisonRefusals(tls, listOf(
+        AllFault.MISSING_SUMMARY, AllFault.DUPLICATE_SUMMARY, AllFault.BOTH_SUMMARIES, AllFault.SUMMARY_EVENT,
+        AllFault.SUMMARY_TIME, AllFault.SUMMARY_ACTOR, AllFault.SUMMARY_EXTRA_DETAIL, AllFault.SUMMARY_STRING_COUNT,
+        AllFault.SUMMARY_REMOVED, AllFault.SUMMARY_RESOURCES, AllFault.SUMMARY_INSTALLATIONS, AllFault.REMOVAL_ACTOR, AllFault.UNKNOWN_U,
+    ))
+
+    /**
+     * Real B+SEALED fixture once per selector. These are comparison-only refusals, NOT failed
+     * D/E originals: each deliberate SQL fault is rolled back to its exact original xmin using
+     * a savepoint. Nothing restores a spent capability or seeds a new successful family.
+     */
+    private fun allComparisonRefusals(tls: VersionBoundPersistenceConnectedFixture, faults: List<AllFault>) =
+        withSealedNonemptyActiveHistoryTerminalRun(tls, TerminalCatalogQueueHistoryV1.SETTLED,
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, true) { f, a, b, _ ->
+            assertRetainedAllQueuePrimary(checkNotNull(b), "PARTIAL")
+            val context = TestRunOrdinaryDrainV1.withHttpFixture(a.registration, a.deletionOwner, a.deletion, a.audit,
+                Clock.systemUTC(), System::nanoTime, { error("Comparison tests cannot dispatch S3.") }, { error("Comparison tests cannot dispatch KMS.") })
+            val before = terminalCatalogAllComparisonRows(f.observer, f.scope)
+            val originalCalls = a.deletion.calls.size
+            a.raw { connection ->
+                connection.autoCommit = false
+                val source = SingleConnectionDataSource(connection, true)
+                val input = JdbcTemplate(source)
+                val comparison = object : JdbcTemplate(source) {
+                    override fun update(sql: String, vararg args: Any?): Int = throw AssertionError("ALL fact comparisons must never write SQL.")
+                }
+                try {
+                    requireAllComparison(comparison, context, a) // Uncorrupted genuine facts pass; no SQL-error false-positive oracle.
+                    assertEquals(before, terminalCatalogAllComparisonRows(input, f.scope))
+                    faults.forEach { fault ->
+                        val savepoint = connection.setSavepoint()
+                        try {
+                            corruptAllComparison(input, a, fault)
+                            val damaged = terminalCatalogAllComparisonRows(input, f.scope)
+                            assertNotEquals(before, damaged, fault.name)
+                            val failure = assertThrows<RuntimeException>(fault.name) { requireAllComparison(comparison, context, a) }
+                            assertTrue(failure is TestOrdinaryDrainExceptionV1 || failure is NoSuchElementException || failure is IllegalStateException,
+                                "Refusal must be a row/comparison invariant, not an SQL-dispatch error: ${fault.name}")
+                            assertEquals(damaged, terminalCatalogAllComparisonRows(input, f.scope), "No comparison write, refund or authority: ${fault.name}")
+                        } finally { connection.rollback(savepoint); connection.releaseSavepoint(savepoint) }
+                        assertEquals(before, terminalCatalogAllComparisonRows(input, f.scope), "Rollback restores actual bytes AND xmin: ${fault.name}")
+                    }
+                } finally { connection.rollback() }
+            }
+            assertEquals(before, terminalCatalogAllComparisonRows(f.observer, f.scope))
+            assertEquals(originalCalls, a.deletion.calls.size, "Comparison helpers never invoke a registered owner, VERIFY or APPLY.")
+            assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
+            assertRetainedAllQueuePrimary(b, "PARTIAL"); a.assertReleased(); f.assertReleased()
+        }
+
+    private fun requireAllComparison(jdbc: JdbcTemplate, context: TestRunOrdinaryDrainV1, a: TestRegisteredInitialCheckpointDeletionFixtureV1) {
+        val event = checkNotNull(a.event)
+        val facts = TestOrdinaryDrainPersistenceV1.FamilyFacts(a.process.consumers.journalRouting, event.comparison.epoch)
+        val run = jdbc.query(TestOrdinaryDrainSqlV1.runWithActiveHistory.removeSuffix(" FOR UPDATE OF r"),
+            { row, _ -> TestOrdinaryDrainRowsV1.Run(row, context) }, *a.registration.sealingRunArguments()).single()
+        val value = TestOrdinaryDrainPersistenceV1.closedPrimary(jdbc, facts, event.route.eventId)
+        val family = TestOrdinaryDrainPersistenceV1.readFamilyFacts(jdbc, facts, value, checkNotNull(value.publication.verifiedAt))
+        TestOrdinaryDrainPersistenceV1.requirePrimaryFacts(jdbc, facts, run, value, family, converted = false, lockDomain = false)
+    }
+
+    private enum class AllFault {
+        MISSING_N, N_FINGERPRINT, MISSING_P, P_VERSION, MISSING_E, E_HASH, E_TIME, MISSING_L, L_PROMISE,
+        MISSING_SUMMARY, DUPLICATE_SUMMARY, BOTH_SUMMARIES, SUMMARY_EVENT, SUMMARY_TIME, SUMMARY_ACTOR,
+        SUMMARY_EXTRA_DETAIL, SUMMARY_STRING_COUNT, SUMMARY_REMOVED, SUMMARY_RESOURCES, SUMMARY_INSTALLATIONS, REMOVAL_ACTOR, UNKNOWN_U,
+    }
+
+    /** Disposable comparison inputs only. No mutation here is a producer or a recovery fixture. */
+    private fun corruptAllComparison(jdbc: JdbcTemplate, a: TestRegisteredInitialCheckpointDeletionFixtureV1, fault: AllFault) {
+        val scope = a.scope
+        fun change(table: String, assignment: String): Int = jdbc.update("UPDATE $table SET $assignment WHERE data_scope_id = ?", scope)
+        fun summary(assignment: String): Int = jdbc.update("UPDATE audit_log SET $assignment WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_RECOVERY_APPLIED'", scope)
+        val count = when (fault) {
+            AllFault.MISSING_N -> jdbc.update("DELETE FROM installation_deletion_receipts WHERE data_scope_id = ?", scope)
+            AllFault.N_FINGERPRINT -> change("installation_deletion_receipts", "fingerprint = set_byte(fingerprint, 0, get_byte(fingerprint, 0) # 1)")
+            AllFault.MISSING_P -> {
+                // Only this negative breaches the retained N/P foreign key. Rollback restores it;
+                // no trigger bypass, deleted row or synthesized native evidence enters a positive.
+                jdbc.execute("SET LOCAL session_replication_role = 'replica'")
+                try { jdbc.update("DELETE FROM complaint_journal_publications WHERE data_scope_id = ?", scope) }
+                finally { jdbc.execute("SET LOCAL session_replication_role = 'origin'") }
+            }
+            AllFault.P_VERSION -> change("complaint_journal_publications", "object_version = object_version || '-mismatch'")
+            AllFault.MISSING_E -> jdbc.update("DELETE FROM complaint_deletion_journal_applied WHERE data_scope_id = ?", scope)
+            AllFault.E_HASH -> change("complaint_deletion_journal_applied", "ciphertext_hash = set_byte(ciphertext_hash, 0, get_byte(ciphertext_hash, 0) # 1)")
+            AllFault.E_TIME -> {
+                assertEquals(true, jdbc.queryForObject("SELECT verified_at < applied_at FROM complaint_journal_publications WHERE data_scope_id = ?", Boolean::class.java, scope))
+                jdbc.update("UPDATE complaint_deletion_journal_applied e SET applied_at = p.verified_at FROM complaint_journal_publications p " +
+                    "WHERE e.data_scope_id = ? AND e.event_id = p.event_id", scope) // Still within the old VERIFY..last range, but not N/P completion.
+            }
+            AllFault.MISSING_L -> jdbc.update("DELETE FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", scope)
+            AllFault.L_PROMISE -> change("complaint_recovery_capacity_reservations", "reserved_amounts[2] = reserved_amounts[2] - 1")
+            AllFault.MISSING_SUMMARY -> jdbc.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_RECOVERY_APPLIED'", scope)
+            AllFault.DUPLICATE_SUMMARY, AllFault.BOTH_SUMMARIES -> {
+                val duplicate = fault === AllFault.DUPLICATE_SUMMARY
+                // Explicit negative id avoids advancing a nontransactional identity sequence.
+                jdbc.update("INSERT INTO audit_log (id, actor_user_id, action, entity_type, entity_id, detail, created_at, complaint_data_scope_id, complaint_actor_kind) " +
+                    "OVERRIDING SYSTEM VALUE SELECT -id, actor_user_id, " + (if (duplicate) "action" else "'COMPLAINT_INSTALLATION_DELETED'") +
+                    ", entity_type, entity_id, " + (if (duplicate) "detail" else "jsonb_build_object('version', ${checkNotNull(a.event).tuple.credentialVersion + 1L}, 'removed', 1, 'reconstructed', 0)") +
+                    ", created_at, complaint_data_scope_id, " + (if (duplicate) "complaint_actor_kind" else "'INSTALLATION'") +
+                    " FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_RECOVERY_APPLIED'", scope)
+            }
+            AllFault.SUMMARY_EVENT -> {
+                val event = checkNotNull(a.event)
+                val other = a.process.consumers.journalRouting.derive(event.tuple).candidates().first { it.eventId != event.route.eventId }
+                jdbc.update("UPDATE audit_log SET detail = jsonb_set(detail, '{eventId}', to_jsonb(?::text)) " +
+                    "WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_RECOVERY_APPLIED'", other.eventId, scope)
+            }
+            AllFault.SUMMARY_TIME -> summary("created_at = created_at + interval '1 microsecond'")
+            AllFault.SUMMARY_ACTOR -> summary("complaint_actor_kind = 'INSTALLATION'")
+            AllFault.SUMMARY_EXTRA_DETAIL -> summary("detail = detail || '{\"unexpected\": 1}'::jsonb")
+            AllFault.SUMMARY_STRING_COUNT -> summary("detail = jsonb_set(detail, '{removed}', '\"1\"'::jsonb)")
+            AllFault.SUMMARY_REMOVED -> summary("detail = jsonb_set(detail, '{removed}', '2'::jsonb)")
+            AllFault.SUMMARY_RESOURCES -> summary("detail = jsonb_set(detail, '{reconstructed}', '1'::jsonb)")
+            AllFault.SUMMARY_INSTALLATIONS -> summary("detail = jsonb_set(detail, '{installation}', '1'::jsonb)")
+            AllFault.REMOVAL_ACTOR -> jdbc.update("UPDATE audit_log SET complaint_actor_kind = 'INSTALLATION' WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_DELETED'", scope)
+            AllFault.UNKNOWN_U -> change("complaint_recovery_capacity_reservations", "converted_amounts[2] = converted_amounts[2] + 1, converted_amounts[21] = converted_amounts[21] + 65536")
+        }
+        assertEquals(1, count, fault.name)
+    }
 
     /** Real B refusal leaves POLLING. Actual D completes the primary/drain; it does not settle B. */
     fun genuinePollingQueueRefusesCatalog(tls: VersionBoundPersistenceConnectedFixture) =

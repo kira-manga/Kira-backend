@@ -10,6 +10,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersi
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalActiveHistorySqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalPreflightSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalProjectionSqlV1
@@ -18,14 +19,21 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerm
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialDeletionSqlCallV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainStepV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPreparedOwnerDeleteAllV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
+import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.assertThrows
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.ResultSetExtractor
 import org.springframework.jdbc.core.RowMapper
@@ -246,8 +254,10 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
     private val afterDeletion = a.deletion.after
     private val calls = mutableListOf<TestRegisteredInitialDeletionSqlCallV1>()
     private val owners = linkedMapOf<PersistencePhaseContext, TestRunOwnerDeleteContinuationV1>()
+    private val allOwners = linkedMapOf<PersistencePhaseContext, TestRunOwnerDeleteAllContinuationV1>()
     private val assertion = AtomicReference<AssertionError?>()
     private var original: TestRunOrdinaryDrainV1? = null
+    private var allReplay: TestRunOwnerDeleteAllContinuationV1? = null
     private val templates = listOf<Any>(f.runtime.pools.catalogCoordinator.testOrdinaryDrain,
         f.runtime.pools.catalogCoordinator.testOrdinarySeal).map { executor ->
         val field = executor.javaClass.getDeclaredField("jdbc").apply { check(trySetAccessible()) }
@@ -259,6 +269,28 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
         a.deletion.before = ::observeDeletion
         a.deletion.after = {} // A's generic holder/result probe remains installed and still observes every call.
     }
+
+    /** Internal registered privacy caller, not an authenticated HTTP request or a new primary. */
+    fun replayAll() {
+        requireConnectionFree(); check(original == null && allReplay == null)
+        assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, a.family)
+        val replay = TestRunPreparedOwnerDeleteAllV1.withHttpFixture(a.registration, a.deletionOwner, a.deletion, a.audit,
+            a.actor.id, a.key, AwsJournalKmsFixture.CREDENTIALS,
+            { error("Completed registered ALL replay must not open S3 or republish.") },
+            { error("Completed registered ALL replay must not open KMS or re-encrypt.") }, Clock.systemUTC(), System::nanoTime)
+        allReplay = replay
+        assertEquals(204, replay.complete().responseStatus) // Internal completion metadata only.
+        assertReleased()
+        assertEquals(listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY),
+            calls.map { it.phase to it.path }.distinct().map { it.second })
+        assertTrue(calls.none { Regex("\\b(?:UPDATE|INSERT|DELETE)\\s+(?:INTO\\s+|FROM\\s+)?(?:complaint_|installation_|app_|audit_)").containsMatchIn(it.sql) },
+            "Retained completed replay performs comparison SQL only.")
+        val count = calls.size
+        assertThrows<TestRunOwnerDeleteAllExceptionV1> { replay.complete() }
+        assertEquals(count, calls.size, "A new owner may reload retained facts; the consumed original cannot be reset.")
+        assertReleased()
+    }
+
     fun begin(s3: () -> SdkHttpClient, kms: () -> SdkHttpClient): TestRunOrdinaryDrainV1 {
         requireConnectionFree(); check(original == null)
         return TestRunOrdinaryDrainV1.withHttpFixture(a.registration, a.deletionOwner, a.deletion, a.audit,
@@ -268,15 +300,27 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
         }
     }
     private fun observeDeletion(call: TestRegisteredInitialDeletionSqlCallV1) = try {
-        val drain = checkNotNull(original)
-        assertEquals(TestOrdinaryDrainStepV1.PRIMARIES, drain.step)
-        assertTrue(call.path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY),
-            "The original verified primary resumes and applies; it neither republishes nor needs inventory recovery.")
-        val owner = ownedCutField(call.phase, "testRunOwnerDelete") as TestRunOwnerDeleteContinuationV1
-        val selectedBy = ownedCutField(owner, "selectedBy") as TestRunOwnerDeleteContinuationV1?
-        val selecting = selectedBy ?: owner
-        assertNull(ownedCutField(selecting, "selectedBy")); assertSame(drain, ownedCutField(selecting, "drainBy"))
-        assertSame(drain.budget, owner.budget)
+        val all = ownedCutField(call.phase, "testRunOwnerDeleteAll") as TestRunOwnerDeleteAllContinuationV1?
+        if (all != null) {
+            assertSame(checkNotNull(allReplay), all); assertNull(original)
+            assertNull(ownedCutField(all, "drainBy")); assertSame(a.registration, ownedCutField(all, "registration"))
+            assertSame(a.deletionOwner, ownedCutField(all, "ownership")); assertSame(a.deletion, ownedCutField(all, "jdbc"))
+            assertSame(checkNotNull(allReplay).budget, all.budget)
+            assertTrue(call.path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY))
+            assertNull(ownedCutField(call.phase, "testRunOwnerDelete"))
+            assertSame(all, allOwners.getOrPut(call.phase) { all })
+        } else {
+            val drain = checkNotNull(original)
+            assertEquals(TestOrdinaryDrainStepV1.PRIMARIES, drain.step)
+            assertTrue(call.path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY),
+                "The original verified primary resumes and applies; it neither republishes nor needs inventory recovery.")
+            val owner = ownedCutField(call.phase, "testRunOwnerDelete") as TestRunOwnerDeleteContinuationV1
+            val selectedBy = ownedCutField(owner, "selectedBy") as TestRunOwnerDeleteContinuationV1?
+            val selecting = selectedBy ?: owner
+            assertNull(ownedCutField(selecting, "selectedBy")); assertSame(drain, ownedCutField(selecting, "drainBy"))
+            assertSame(drain.budget, owner.budget)
+            assertSame(owner, owners.getOrPut(call.phase) { owner })
+        }
         assertNull(ownedCutField(call.phase, "testOrdinaryDrain"))
         val source = checkNotNull(a.deletion.dataSource)
         val connection = (TransactionSynchronizationManager.getResource(source) as ConnectionHolder).connection
@@ -288,7 +332,7 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
         assertFalse(f.p.advisory(connection, "complaint-journal-epoch", "ExclusiveLock"))
         val observation = a.deletion.observations.getValue(call.phase)
         assertSame(observation.lease, ownedPoolLease(connection)); assertFalse(observation.lease.completion.quiescent())
-        assertSame(owner, owners.getOrPut(call.phase) { owner }); calls.add(call)
+        calls.add(call)
         Unit
     } catch (problem: AssertionError) { assertion.compareAndSet(null, problem); throw problem }
 
@@ -298,12 +342,40 @@ internal class CatalogTerminalHistoryDrainProbeV1(private val f: TestRunPurgeFix
             assertTrue(a.deletion.observations.getValue(phase).lease.completion.quiescent())
             assertTrue(phase.testRunOwnerDeleteCleanupProven(owner)); assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
         }
+        allOwners.forEach { (phase, owner) ->
+            assertTrue(a.deletion.observations.getValue(phase).lease.completion.quiescent())
+            assertTrue(phase.testRunOwnerDeleteAllCleanupProven(owner)); assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+        }
         assertion.get()?.let { throw it }
     }
     fun assertPrimaryApplied(expected: Boolean) {
         assertReleased()
         assertEquals(if (expected) 1 else 0, calls.filter { it.path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY }.map { it.phase }.distinct().size,
             "B's actual SETTLED APPLY must not be repeated by D; a VERIFIED A/POLLING primary is completed by D itself.")
+        if (a.family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) {
+            assertFalse(expected); assertEquals(2, allOwners.size)
+            assertTrue(allOwners.values.all { it === allReplay }, "D excludes the completed ALL primary; only the explicit private replay uses ALL RELOAD/APPLY.")
+        }
+    }
+
+    /** Literal P-U release observed in the actual CONVERT SQL, never a calculator as oracle. */
+    fun assertAllResidualConversion() {
+        assertReleased(); assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, a.family)
+        val conversion = coordinator.calls.filter { it.step === TestOrdinaryDrainStepV1.CONVERT }
+        val mark = conversion.single { it.sql == TestOrdinaryDrainSqlV1.convert }
+        assertEquals(checkNotNull(a.event).route.eventId, mark.arguments[0]); assertEquals(a.scope, mark.arguments[1])
+        assertEquals(TerminalCatalogAllLiteralChargesV1.promise.toLongArray().joinToString(",", "{", "}"), mark.arguments[2])
+        assertEquals(TerminalCatalogAllLiteralChargesV1.applied.toLongArray().joinToString(",", "{", "}"), mark.arguments[3])
+        val remainder = TerminalCatalogAllLiteralChargesV1.promise - TerminalCatalogAllLiteralChargesV1.applied
+        val updates = conversion.filter { it.sql.startsWith("UPDATE complaint_capacity_counters") }
+        assertEquals(ComplaintCapacityCounter.entries.filter { remainder[it] != 0L }.map { it.storedName }.toSet(), updates.map { it.arguments[4] }.toSet())
+        assertEquals(updates.size, updates.map { it.arguments[4] }.distinct().size)
+        updates.forEach { call ->
+            val args = call.arguments; assertEquals(9, args.size)
+            val counter = ComplaintCapacityCounter.entries.single { it.storedName == args[4] }
+            assertEquals((args[5] as Long) + remainder[counter], args[0]); assertEquals(args[6], args[1])
+            assertEquals((args[7] as Long) - remainder[counter], args[2]); assertEquals(args[8], args[3])
+        }
     }
     override fun close() {
         try { assertReleased() }

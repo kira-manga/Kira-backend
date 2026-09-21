@@ -21,6 +21,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode
  * synthetic raw HTTP; genuine predecessor producers, but no installed denial/provider provenance.
  * Endpoint is PURGING. Exact A1/ordinary2/terminal3 declarations/producers are authored below.
  * B's original-object SETTLED/POLLING and one nonempty OWNER_DELETE composition are authored below.
+ * Retained-N/P/L ALL PREPARED/VERIFIED queue -> registered privacy replay -> D/E is separate from HTTP authentication.
  * No full ACTIVE recurrence, erasure, PURGED or supported-maximum-N qualification.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -80,6 +81,11 @@ class CatalogTestRunTerminalIT {
     @Test fun genuineSettledBApplyAndItsPermanent8192ChargeSurviveDAndThreeSealTerminalCatalogProjection() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.nonemptySuccessful(it, settledQueue = true) }
     @Test fun genuineSettledBNonemptyPreparedRecoveryAndProjectedReplayKeepOriginalBytesRowsAndSinglePayment() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.settledQueuePreparedRecoveryAndReplay(it) }
     @Test fun genuineMalformedQueuePollingSurvivesActualDAndRefusesEBeforeAnyNativeOrCatalogPayment() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.genuinePollingQueueRefusesCatalog(it) }
+
+    @Test fun genuinePreparedAllQueuePrimaryReplaysRegisteredAndCompletesTerminalWithSystemAudit() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allQueueSuccessful(it, verifyPublication = false) }
+    @Test fun genuineVerifiedAllQueuePrimaryReplaysRegisteredAndCompletesTerminalWithSystemAudit() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allQueueSuccessful(it, verifyPublication = true) }
+    @Test fun allSystemPrimaryAuditCannotReplaceMissingOrMismatchedFamilyEvidence() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allFamilyEvidenceRefuses(it) }
+    @Test fun allSystemPrimaryAuditRequiresOneExactPrimaryEventTimeActorAndCountedOutcome() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allPrimarySummaryRefuses(it) }
 
     private fun evidence(fault: TerminalCatalogEvidenceFaultV1) = withFixture { CatalogTestRunTerminalCasesV1.badEvidence(it, fault) }
     private fun delivery(fault: TerminalCatalogDeliveryFaultV1) = withFixture { CatalogTestRunTerminalCasesV1.badDelivery(it, fault) }
