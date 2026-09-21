@@ -116,6 +116,9 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     val initialCheckpointCreate = document.initialCheckpointCreate?.also(
         me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1::requireInput,
     )
+    val initialCheckpointDeletion = document.initialCheckpointDeletion?.also(
+        me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointDeletionV1::requireInput,
+    )
     val activeOwnerDeleteQueue = document.activeOwnerDeleteQueue?.also(
         me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1::requireInput,
     )
@@ -149,6 +152,8 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         if (!combinedInitialRecovery) valid((document.profile == ACTIVE_FIRST_CUT_SUCCESSOR_PROFILE) == (activeFirstCutSuccessor != null))
         valid((document.profile == INITIAL_CHECKPOINT_PROFILE || combinedInitialRecovery) == (initialCheckpoint != null))
         valid(initialCheckpointCreate == null || initialCheckpoint != null)
+        valid(initialCheckpointDeletion == null || initialCheckpoint != null && ordinaryPublication != null &&
+            journal.registeredAdminBatchDelete && journal.ownerDeleteAll)
         valid((document.profile == ACTIVE_SEAL_RECOVERY_PROFILE || combinedInitialRecovery) == (activeOrdinarySealRecovery != null))
         valid((activeFirstCut != null) == (ordinaryPublication != null))
         valid(activeOwnerDeleteQueue == null || initialCheckpoint != null && activeFirstCut != null && journal.declaration().limits.deadlines.queueCallMillis >= 1500)

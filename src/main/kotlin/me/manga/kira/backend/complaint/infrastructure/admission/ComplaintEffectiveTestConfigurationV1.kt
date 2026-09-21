@@ -78,6 +78,7 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             // Additive independent read owner; no absence rule excludes a separately retained recovery recipe.
             owner.initialCheckpoint?.let { put("initialCheckpoint", it.inventory()) }
             owner.initialCheckpointCreate?.let { put("initialCheckpointCreate", it.inventory()) }
+            owner.initialCheckpointDeletion?.let { put("initialCheckpointDeletion", it.inventory()) }
             owner.activeOwnerDeleteQueue?.let { put("activeOwnerDeleteQueue", it.inventory()) }
             owner.activeOrdinarySealRecovery?.let {
                 it.requireRetained(owner.pools, owner.consumers.journalRouting, owner.activeFirstCut, owner.ordinarySeal)

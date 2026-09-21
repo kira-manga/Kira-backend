@@ -1,12 +1,15 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunTerminalCasesV1
+import me.manga.kira.backend.complaint.catalog.CatalogTestRunTerminalActiveHistoryCasesV1
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunTerminalRecoveryCasesV1
 import me.manga.kira.backend.complaint.catalog.OfflineCatalogTestRunTerminalCasesV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogCommitEdgeV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogDeliveryFaultV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogEvidenceFaultV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogRecoveryRefusalV1
+import me.manga.kira.backend.complaint.catalog.TerminalCatalogHistoryNativeFaultV1
+import me.manga.kira.backend.complaint.catalog.TerminalCatalogHistoryRowFaultV1
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
@@ -16,7 +19,9 @@ import org.junit.jupiter.api.parallel.ExecutionMode
 /**
  * Authored focused selector only, NOT discovery/execution/acceptance. PostgreSQL/native SDK over
  * synthetic raw HTTP; genuine predecessor producers, but no installed denial/provider provenance.
- * Endpoint is PURGING. No ACTIVE/V26/B/V29, erasure, PURGED or supported-maximum-N qualification.
+ * Endpoint is PURGING. Exact A1/ordinary2/terminal3 declarations/producers are authored below.
+ * B's genuine nonempty composition is still a pending fixture dependency, not a fake positive.
+ * No full ACTIVE recurrence, erasure, PURGED or supported-maximum-N qualification.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
@@ -56,10 +61,27 @@ class CatalogTestRunTerminalIT {
     @Test fun closedSchema4ParserAndFullChainRejectMalformedHistoryLinkAndSuffixSubstitution() = withFixture { OfflineCatalogTestRunTerminalCasesV1.strictFieldsHistoryAndLinks(it) }
     @Test fun unsignedSigned131072AndIndependentReaderBoundsAreEnforcedWithoutTruncatingInventory() = withFixture { OfflineCatalogTestRunTerminalCasesV1.signedPaidAndReaderBounds(it) }
 
+    @Test fun genuineInitialEmptyAAndRegisteredCreateReachSchema4WithAllThreeSealsAndNoSecondACharge() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.successful(it) }
+    @Test fun initialAHistoryPreparedFreshContinuationRetainsItsV26BytesAndNeverRepeatsSignPutOrPayment() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.preparedRecovery(it) }
+    @Test fun initialAHistoryProjectedFreshReplayIsReadOnlyIncludingV26XminAndEveryCustodyFile() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.projectedReplay(it) }
+    @Test fun declaredThreeSealCountCannotReplaceAMissingActualV26Row() = historyRow(TerminalCatalogHistoryRowFaultV1.MISSING_A)
+    @Test fun actualAHistoryMustKeepItsDatabaseAndFullDIdentity() = historyRow(TerminalCatalogHistoryRowFaultV1.FOREIGN_A_IDENTITY)
+    @Test fun identicalABytesWithDifferentXminCannotReplaceDsRetainedPhysicalPreimage() = historyRow(TerminalCatalogHistoryRowFaultV1.REWRITTEN_A_XMIN)
+    @Test fun freshPreparedContinuationRejectsRewrittenAAgainstOriginalCustodyBeforeAuthority() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.preparedPhysicalRewriteRefuses(it) }
+    @Test fun fullTerminalInventoryCannotOmitTheRealInitialASeal() = historyNative(TerminalCatalogHistoryNativeFaultV1.MISSING_A)
+    @Test fun extraAObjectVersionInSecondFullInventoryPassCannotBeFilteredAway() = historyNative(TerminalCatalogHistoryNativeFaultV1.SECOND_PASS_EXTRA_VERSION)
+    @Test fun initialAActualRetentionIsPreservedExactlyNotMerelyLongEnough() = historyNative(TerminalCatalogHistoryNativeFaultV1.CHANGED_RETENTION)
+    @Test fun initialANativeLastModifiedIsBoundToItsOriginalVerificationBytes() = historyNative(TerminalCatalogHistoryNativeFaultV1.CHANGED_LAST_MODIFIED)
+    @Test fun oldNoANoBTwoSealPreconditionAndCustodyFramingStayByteCompatible() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.legacyTwoSealCompatibility(it) }
+    @Test fun genuineThreeSealDeclarationKeepsCompleteContextualHistoryAndTheTwoSealPreterminalRoot() = withFixture { OfflineCatalogTestRunTerminalCasesV1.canonicalActiveHistory(it) }
+    @Test fun schema4RejectsOmittedReorderedRepeatedWrongWriterAndExtendedActiveSealDeclarations() = withFixture { OfflineCatalogTestRunTerminalCasesV1.strictActiveOrder(it) }
+
     private fun evidence(fault: TerminalCatalogEvidenceFaultV1) = withFixture { CatalogTestRunTerminalCasesV1.badEvidence(it, fault) }
     private fun delivery(fault: TerminalCatalogDeliveryFaultV1) = withFixture { CatalogTestRunTerminalCasesV1.badDelivery(it, fault) }
     private fun refusal(fault: TerminalCatalogRecoveryRefusalV1) = withFixture { CatalogTestRunTerminalRecoveryCasesV1.refuses(it, fault) }
     private fun lost(edge: TerminalCatalogCommitEdgeV1) = withFixture { CatalogTestRunTerminalRecoveryCasesV1.lostCommitAcknowledgement(it, edge) }
+    private fun historyRow(fault: TerminalCatalogHistoryRowFaultV1) = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.rowRefusal(it, fault) }
+    private fun historyNative(fault: TerminalCatalogHistoryNativeFaultV1) = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.nativeRefusal(it, fault) }
     private fun withFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =
         VersionBoundPersistenceConnectedFixture(database.value, testActivation = true).use { it.bind(); action(it) }
 }

@@ -454,8 +454,31 @@ internal class JournalPublicationLanesV1 private constructor(
         private var caller: Thread? = null
         private var attempt: TestOwnerDeleteCodecAttemptV1? = null
         private var closeFailure: Throwable? = null
+        private var publishedWork: CommittedTestOwnerDeleteWork.Prepared? = null
+        private var publishedReadback: TestOwnerDeleteJournalReadbackV1? = null
         private var cutoffWork: ReleasedTestActiveCutoffPublicationV1? = null
         private var cutoffCompleted = false
+
+        /** Reserved original native custody is required before new AUTH and remains reserved through its SQL waits. */
+        internal fun requireAuthorizing(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+            store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore) {
+            factory.requireInitialBinding(original, store)
+            synchronized(lifecycle) {
+                requireJournalPublication(!routineOwner && state == PublicationOwnerStateV1.RESERVED && !stopRequested)
+                requireRunning(this)
+            }
+        }
+
+        /** Identity of the actual successful native return, retained only AFTER real physical cleanup. */
+        internal fun requireInitialReadback(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+            store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore, work: CommittedTestOwnerDeleteWork.Prepared,
+            readback: TestOwnerDeleteJournalReadbackV1) {
+            factory.requireInitialPublishedBinding(original, store)
+            synchronized(lifecycle) {
+                requireJournalPublication(!routineOwner && state == PublicationOwnerStateV1.CLOSED && caller == null && closeFailure == null &&
+                    publishedWork === work && publishedReadback === readback)
+            }
+        }
 
         fun publish(work: CommittedTestOwnerDeleteWork.Prepared): TestOwnerDeleteJournalReadbackV1 =
             journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
@@ -466,7 +489,7 @@ internal class JournalPublicationLanesV1 private constructor(
                     state = PublicationOwnerStateV1.RUNNING
                     caller = Thread.currentThread()
                 }
-                withJournalPublicationCleanup(
+                val observed = withJournalPublicationCleanup(
                     {
                         factory.requirePrepared(work)
                         val time = factory.startAttempt().also { synchronized(lifecycle) { attempt = it } }
@@ -476,6 +499,8 @@ internal class JournalPublicationLanesV1 private constructor(
                     },
                     ::finishPublication,
                 )
+                synchronized(lifecycle) { publishedWork = work; publishedReadback = observed }
+                observed
             }
 
         /** Same native lifecycle, routine-only. The returned observation is not an APPLY receipt. */
@@ -596,6 +621,29 @@ internal class JournalPublicationLanesV1 private constructor(
         private var caller: Thread? = null
         private var attempt: TestOwnerDeleteCodecAttemptV1? = null
         private var closeFailure: Throwable? = null
+        private var publishedWork: CommittedTestAdminDeleteWork.Prepared? = null
+        private var publishedReadback: TestOwnerDeleteJournalReadbackV1? = null
+
+        /** Reserved original native custody is required before new AUTH and remains reserved through its SQL waits. */
+        internal fun requireAuthorizing(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+            store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteStore) {
+            factory.requireInitialBinding(original, store)
+            synchronized(lifecycle) {
+                requireJournalPublication(state == PublicationOwnerStateV1.RESERVED && !stopRequested)
+                requireRunning(this)
+            }
+        }
+
+        /** Identity of the actual successful native return, retained only AFTER real physical cleanup. */
+        internal fun requireInitialReadback(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+            store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteStore, work: CommittedTestAdminDeleteWork.Prepared,
+            readback: TestOwnerDeleteJournalReadbackV1) {
+            factory.requireInitialPublishedBinding(original, store)
+            synchronized(lifecycle) {
+                requireJournalPublication(state == PublicationOwnerStateV1.CLOSED && caller == null && closeFailure == null &&
+                    publishedWork === work && publishedReadback === readback)
+            }
+        }
 
         fun publish(work: CommittedTestAdminDeleteWork.Prepared): TestOwnerDeleteJournalReadbackV1 =
             journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
@@ -606,7 +654,7 @@ internal class JournalPublicationLanesV1 private constructor(
                     state = PublicationOwnerStateV1.RUNNING
                     caller = Thread.currentThread()
                 }
-                withJournalPublicationCleanup(
+                val observed = withJournalPublicationCleanup(
                     {
                         factory.requirePrepared(work)
                         val time = factory.startAttempt().also { synchronized(lifecycle) { attempt = it } }
@@ -616,6 +664,8 @@ internal class JournalPublicationLanesV1 private constructor(
                     },
                     ::finishPublication,
                 )
+                synchronized(lifecycle) { publishedWork = work; publishedReadback = observed }
+                observed
             }
 
         internal fun readExisting(tuple: me.manga.kira.backend.security.TestAdminDeleteJournalTupleV1, targetId: java.util.UUID, routingKeyId: String): TestOwnerDeleteJournalReadbackV1 =
@@ -729,6 +779,29 @@ internal class JournalPublicationLanesV1 private constructor(
         private var caller: Thread? = null
         private var attempt: TestOwnerDeleteCodecAttemptV1? = null
         private var closeFailure: Throwable? = null
+        private var publishedWork: CommittedOwnerDeleteAllWork.Prepared? = null
+        private var publishedReadback: TestOwnerDeleteJournalReadbackV1? = null
+
+        /** Reserved original native custody is required before new AUTH and remains reserved through its SQL waits. */
+        internal fun requireAuthorizing(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+            store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore) {
+            factory.requireInitialBinding(original, store)
+            synchronized(lifecycle) {
+                requireJournalPublication(state == PublicationOwnerStateV1.RESERVED && !stopRequested)
+                requireRunning(this)
+            }
+        }
+
+        /** Identity of the actual successful native return, retained only AFTER real physical cleanup. */
+        internal fun requireInitialReadback(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+            store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore, work: CommittedOwnerDeleteAllWork.Prepared,
+            readback: TestOwnerDeleteJournalReadbackV1) {
+            factory.requireInitialPublishedBinding(original, store)
+            synchronized(lifecycle) {
+                requireJournalPublication(state == PublicationOwnerStateV1.CLOSED && caller == null && closeFailure == null &&
+                    publishedWork === work && publishedReadback === readback)
+            }
+        }
 
         fun publish(work: CommittedOwnerDeleteAllWork.Prepared): TestOwnerDeleteJournalReadbackV1 =
             journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
@@ -739,7 +812,7 @@ internal class JournalPublicationLanesV1 private constructor(
                     state = PublicationOwnerStateV1.RUNNING
                     caller = Thread.currentThread()
                 }
-                withJournalPublicationCleanup(
+                val observed = withJournalPublicationCleanup(
                     {
                         factory.requirePrepared(work)
                         val time = factory.startAttempt().also { synchronized(lifecycle) { attempt = it } }
@@ -749,6 +822,8 @@ internal class JournalPublicationLanesV1 private constructor(
                     },
                     ::finishPublication,
                 )
+                synchronized(lifecycle) { publishedWork = work; publishedReadback = observed }
+                observed
             }
 
         internal fun requireConstructing(

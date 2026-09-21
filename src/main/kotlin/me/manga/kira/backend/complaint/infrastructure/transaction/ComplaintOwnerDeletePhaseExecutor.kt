@@ -3,6 +3,7 @@ package me.manga.kira.backend.complaint.infrastructure.transaction
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationFailure
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationRejected
@@ -22,6 +23,7 @@ import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteVe
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteApplyInputV1
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteAuthorizationV1
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteLocalGraphV1
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalReadbackV1
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDelete
@@ -37,13 +39,21 @@ internal class ComplaintOwnerDeletePhaseExecutor(
     fun requirePublisher(publisher: TestOwnerDeleteJournalPublisherFactoryV1) = publisher.requireBinding(store)
     fun requireGraph(graph: TestOwnerDeleteLocalGraphV1, selectedReads: ComplaintOwnerDeleteReadPhaseExecutor) { check(store.graph === graph && reads === selectedReads); graph.requireUnchanged() }
     @Suppress("TooGenericExceptionCaught")
-    fun authorize(identity: ComplaintOwnerOperationIdentity, candidate: ComplaintOwnerDeleteCandidate, preflight: ComplaintOwnerDeleteObservation, admitted: ComplaintAdmittedOwnerDelete): TestOwnerDeleteAuthorizationV1 {
+    fun authorize(identity: ComplaintOwnerOperationIdentity, candidate: ComplaintOwnerDeleteCandidate, preflight: ComplaintOwnerDeleteObservation,
+        admitted: ComplaintAdmittedOwnerDelete, lane: JournalPublicationLanesV1.TestOwnerDeleteReservation? = null): TestOwnerDeleteAuthorizationV1 {
         reads.requirePreflight(preflight, identity, candidate.tuple)
         check(!preflight.authorized)
+        val original = store.graph.initialDeletion
+        original?.let {
+            it.requireEntry(ownership, PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE)
+            reads.requireGraph(store.graph)
+            checkNotNull(lane).requireAuthorizing(it, store)
+        }
         val phase = ownership.enterComplaintOwnerDeleteAuthorize(admitted, candidate.tuple)
         var operation: ComplaintOwnerDeleteAuthorizationOperation? = null
         var refusal: ComplaintOwnerOperationFailure? = null
         try {
+            original?.let { phase.bindInitialOwnerDeleteAuthorize(it, store, admitted, checkNotNull(lane)) }
             phase.ownerDelete.bindAuthorize(admitted)
             phase.begin()
             operation = store.authorize(identity, candidate, checkNotNull(preflight.platform))
@@ -62,9 +72,14 @@ internal class ComplaintOwnerDeletePhaseExecutor(
     fun reload(identity: ComplaintOwnerOperationIdentity, candidate: ComplaintOwnerDeleteCandidate, preflight: ComplaintOwnerDeleteObservation): TestOwnerDeleteAuthorizationV1 {
         reads.requirePreflight(preflight, identity, candidate.tuple)
         check(preflight.authorized)
+        val original = store.graph.initialDeletion
+        original?.let {
+            it.requireEntry(ownership, PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD)
+            reads.requireGraph(store.graph)
+        }
         val phase = ownership.enterComplaintOwnerDeleteReload()
         var operation: ComplaintOwnerDeleteAuthorizationOperation? = null
-        try { phase.begin(); operation = store.reload(identity, candidate, checkNotNull(preflight.platform)); phase.commit() }
+        try { original?.let(phase::bindInitialDeletionRead); phase.begin(); operation = store.reload(identity, candidate, checkNotNull(preflight.platform)); phase.commit() }
         catch (problem: Throwable) { phase.recordFailure(problem) }
         finally { phase.finish() }
         return (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).result
@@ -76,6 +91,23 @@ internal class ComplaintOwnerDeletePhaseExecutor(
         var operation: ComplaintOwnerDeleteVerificationOperation? = null
         try { phase.begin(); operation = verification.verify(input); phase.commit() }
         catch (problem: Throwable) { phase.recordFailure(problem) }
+        finally { phase.finish() }
+        return (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).result
+    }
+    /** Original released work and this closed recipe's actual cleaned-up native observation only. */
+    @Suppress("TooGenericExceptionCaught")
+    fun verify(work: CommittedTestOwnerDeleteWork.Prepared, readback: TestOwnerDeleteJournalReadbackV1,
+        lane: JournalPublicationLanesV1.TestOwnerDeleteReservation): CommittedTestOwnerDeleteVerificationV1 {
+        val original = checkNotNull(store.graph.initialDeletion)
+        original.requireEntry(ownership, PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY)
+        verification.requireBinding(store)
+        val input = verification.captureInitial(work, readback, lane)
+        val phase = ownership.enterComplaintOwnerDeleteVerify()
+        var operation: ComplaintOwnerDeleteVerificationOperation? = null
+        try {
+            phase.bindInitialOwnerDeleteVerify(original, verification, input)
+            phase.begin(); operation = verification.verify(input); phase.commit()
+        } catch (problem: Throwable) { phase.recordFailure(problem) }
         finally { phase.finish() }
         return (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).result
     }

@@ -32,6 +32,7 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogCommonHeadEvidence
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationRecordV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainPersistenceV1
@@ -114,6 +115,20 @@ internal class JdbcComplaintOwnerDeleteAllApplyStore private constructor(
             MessageDigest.getInstance("SHA-256").digest(bytes), original)
     }
 
+    /** Native ACTIVE delivery only. No primary work, verifier or terminal inventory original is fabricated. */
+    internal fun captureRegisteredQueueRecovery(original: TestActiveOwnerDeleteQueueV1): OwnerDeleteAllApplyInputV1 {
+        requireConnectionFree()
+        val graph = checkNotNull(controls.testGraph)
+        check(graph.recoveryRegistration === original.registration)
+        val readback = original.ownedRecoveryReadback(this, graph, jdbc)
+        readback.requireOriginal(original)
+        val event = routing.fromTest(readback.event)
+        val record = codec.observed(readback)
+        val bytes = codec.canonicalBytes(record)
+        return CapturedOwnerDeleteAllQueueApply(issuer, routing, event, record, bytes,
+            MessageDigest.getInstance("SHA-256").digest(bytes), original)
+    }
+
     fun apply(input: OwnerDeleteAllApplyInputV1): ComplaintOwnerDeleteAllApplyOperation =
         ComplaintOwnerDeleteAllApplyOperation.capture(jdbc, capacity, audit, controls, policy, codec, issuer, routing, input)
 
@@ -179,6 +194,12 @@ private class CapturedOwnerDeleteAllInventoryApply(issuer: Any, routing: OwnerDe
     val original: TestRunOrdinaryDrainV1,
 ) : CapturedOwnerDeleteAllApply(issuer, routing, event, record, bytes, hash)
 
+/** Separate private capture: exact retained VERIFIED primary or completed replay, not missing-N/P/L recovery. */
+private class CapturedOwnerDeleteAllQueueApply(issuer: Any, routing: OwnerDeleteAllJournalBindingV1,
+    event: OwnerDeleteAllJournalEventV1, record: OwnerDeleteAllVerificationRecordV1, bytes: ByteArray, hash: ByteArray,
+    val original: TestActiveOwnerDeleteQueueV1,
+) : CapturedOwnerDeleteAllApply(issuer, routing, event, record, bytes, hash)
+
 internal class OwnerDeleteAllMaterializedCountsV1(val removed: Int, val resources: Int, val installations: Int,
     val applied: Int, val summary: Int) {
     init { check(removed in 0..100 && resources in 0..100 && installations in 0..1 && applied in 0..1 && summary in 0..1) }
@@ -199,6 +220,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     private val observed: CapturedOwnerDeleteAllApply,
 ) {
     private val inventory = observed as? CapturedOwnerDeleteAllInventoryApply
+    private val queue = observed as? CapturedOwnerDeleteAllQueueApply
     private fun primary() = observed as? CapturedOwnerDeleteAllPrimaryApply ?: error("Committed primary input required")
     private val sql = if (controls.scope.testOnly) OwnerDeleteAllApplySql.test(controls.scope) else OwnerDeleteAllApplySql.live
     private var stage = Stage.RETAINED
@@ -215,6 +237,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     private var pending: OwnerDeleteAllReconciliationPendingV1? = null
     private var inventoryCounts: OwnerDeleteAllMaterializedCountsV1? = null
     private var inventoryAt: Instant? = null
+    private var retainedVerification: OwnerDeleteAllApplyRows.Verification? = null
 
     fun belongsTo(selected: PersistencePhaseContext): Boolean = phase === selected
     fun completedFor(selected: PersistencePhaseContext): Boolean = belongsTo(selected) && stage === Stage.COMPLETE &&
@@ -222,7 +245,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
 
     val result: CommittedOwnerDeleteAllApplyV1
         get() {
-            check(inventory == null)
+            check(inventory == null && queue == null)
             phase.ownerDeleteAllApply.requireCommitted(this)
             requireConnectionFree()
             return released ?: Released(checkNotNull(completion), checkNotNull(expiry)).also { released = it }
@@ -230,21 +253,25 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
 
     val continuationResult: OwnerDeleteAllApplyOutcomeV1
         get() {
-            check(inventory == null)
+            check(inventory == null && queue == null)
             if (!phase.ownerDeleteAllApply.reconciliationPending(this)) return result
             requireConnectionFree()
             return pending ?: ReconciliationPending(primary().work, primary().proof).also { pending = it }
         }
 
     internal fun requireRegisteredContinuation(original: TestRunOwnerDeleteAllContinuationV1) {
-        check(inventory == null); original.requireApplyInput(observed)
+        check(inventory == null && queue == null); original.requireApplyInput(observed)
     }
     internal fun requireRegisteredInventoryRecovery(original: TestRunOrdinaryDrainV1) {
         check(inventory?.original === original && controls.testGraph?.recoveryRegistration === original.registration)
         original.requireRecoveryInput(observed)
     }
+    internal fun requireRegisteredQueueRecovery(original: TestActiveOwnerDeleteQueueV1) {
+        check(queue?.original === original && inventory == null && controls.testGraph?.recoveryRegistration === original.registration)
+        original.requireRecoveryInput(observed)
+    }
     internal fun requireRecovered() {
-        check(inventory != null)
+        check(inventory != null || queue != null)
         phase.ownerDeleteAllApply.requireCommitted(this); requireConnectionFree()
     }
 
@@ -258,6 +285,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         stage = Stage.RESERVATION
         recovery = jdbc.query(sql.LOCK_RECOVERY, { row, _ -> OwnerDeleteAllApplyRows.recovery(row) }, receipt.reference).single()
         check(checkNotNull(recovery).eventId == observed.record.eventId && checkNotNull(recovery).promise == OwnerDeleteAllCapacityCharges.RECOVERY)
+        if (queue != null) requireQueueHistory(receipt)
         stage = Stage.COUNTERS_READY
         val paid = capacity.lockForOwnerDeleteAllApply(this)
         stage = Stage.INSTALLATION
@@ -274,7 +302,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         completion = if (replay) checkNotNull(receipt.completedAt) else now
         expiry = if (replay) checkNotNull(receipt.expiresAt) else now.plus(RETRY_RETENTION)
         check(!checkNotNull(completion).isAfter(now) && checkNotNull(expiry).isAfter(now))
-        check(!checkNotNull(completion).isBefore(observed.verifiedAt))
+        check(!checkNotNull(completion).isBefore(if (queue == null) observed.verifiedAt else checkNotNull(retainedVerification).verifiedAt))
         lockResources()
         val content = lockContent()
         requireReducer(installation, credential, content.isNotEmpty())
@@ -298,6 +326,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         requireRetained()
         check(paid.completedFor(this))
         requireFinalState()
+        queue?.original?.requireAppliedCurrent(this, jdbc)
         stage = Stage.COMPLETE
     }
 
@@ -323,13 +352,26 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         check(MessageDigest.isEqual(publication.hash, observed.semanticHash) && publication.createdAt == receipt.authorizedAt)
         val proof = publication.verification
         val parsed = codec.parse(proof.bytes, observed.event)
-        check(parsed == observed.record && proof.bytes.contentEquals(observed.verificationBytes))
-        check(MessageDigest.isEqual(proof.verificationHash, observed.verificationHash) && MessageDigest.isEqual(proof.hash, observed.ciphertextHash))
+        if (queue == null) {
+            check(parsed == observed.record && proof.bytes.contentEquals(observed.verificationBytes))
+            check(MessageDigest.isEqual(proof.verificationHash, observed.verificationHash))
+            check(proof.retainUntil == observed.retainedUntil && proof.verifiedAt == observed.verifiedAt)
+        } else {
+            // Fresh GET time is not the earlier committed VERIFY time. Bind the actual native
+            // event/version/wire/creation, retain historical proof bytes for the existing CAS,
+            // and require retention never to shrink. Stored bytes alone grant no recovery right.
+            check(parsed.objectVersion == observed.record.objectVersion && parsed.ciphertextSha256 == observed.record.ciphertextSha256 &&
+                parsed.objectCreatedAt == observed.record.objectCreatedAt)
+            check(proof.retainUntil == Instant.parse(parsed.retainUntil) && proof.verifiedAt == Instant.parse(parsed.verifiedAt) &&
+                !observed.retainedUntil.isBefore(proof.retainUntil) && !observed.verifiedAt.isBefore(proof.verifiedAt))
+        }
+        check(MessageDigest.isEqual(proof.hash, observed.ciphertextHash))
         check(proof.version == parsed.objectVersion && proof.createdAt == Instant.parse(parsed.objectCreatedAt))
-        check(proof.retainUntil == observed.retainedUntil && proof.verifiedAt == observed.verifiedAt)
+        retainedVerification = proof
         val now = databaseNow()
         requireRetention(now)
-        check(!publication.createdAt.isAfter(now) && !publication.createdAt.isAfter(observed.verifiedAt))
+        check(!publication.createdAt.isAfter(now) && !publication.createdAt.isAfter(proof.verifiedAt))
+        if (queue != null) check(proof.retainUntil.isAfter(now))
         replay = receipt.state == "COMPLETED"
         check(publication.state == if (replay) "APPLIED" else "VERIFIED")
         check(publication.appliedAt == receipt.completedAt)
@@ -339,6 +381,34 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
             check(MessageDigest.isEqual(external.hash, observed.ciphertextHash))
         }
         return receipt
+    }
+
+    /** Bounded exact-primary grammar. ALL aliases and old-snapshot domain/N/P/L repair remain unfinished. */
+    private fun requireQueueHistory(receipt: OwnerDeleteAllApplyRows.Receipt) {
+        checkNotNull(queue)
+        val reserve = checkNotNull(recovery)
+        val routes = routing.derive(observed.event.tuple)
+        check(routes.size == 4)
+        val family = jdbc.query(sql.QUEUE_APPLIED_FAMILY, { row, _ ->
+            OwnerDeleteAllApplyRows.valid(row)
+            check(row.getString("event_id") == observed.record.eventId && row.getString("object_key") == observed.record.objectKey &&
+                row.getString("object_version") == observed.record.objectVersion &&
+                OwnerDeleteAllApplyRows.bytes(row, "ciphertext_hash").contentEquals(observed.ciphertextHash) &&
+                row.getObject("writer_generation", UUID::class.java) == observed.writer &&
+                OwnerDeleteAllApplyRows.long(row, "journal_epoch") == observed.event.tuple.epoch &&
+                OwnerDeleteAllApplyRows.long(row, "target_count") == observed.targets.size.toLong() &&
+                OwnerDeleteAllApplyRows.instant(row, "applied_at") == receipt.completedAt)
+        }, routes.joinToString(",", "{", "}") { it.eventId })
+        if (replay) {
+            val resourcesUsed = reserve.used[ComplaintCapacityCounter.RESOURCE_IDS]
+            val auditsUsed = reserve.used[ComplaintCapacityCounter.AUDIT_ROWS]
+            check(family.size == 1 && reserve.state == "PARTIAL" && resourcesUsed in 0..100 && auditsUsed in 1..101 &&
+                reserve.used == OwnerDeleteAllCapacityCharges.APPLIED + ComplaintCapacityCharges.RESOURCE_ID.scaled(resourcesUsed) +
+                    ComplaintCapacityCharges.AUDIT.scaled(auditsUsed) &&
+                !checkNotNull(reserve.convertedAt).isBefore(checkNotNull(receipt.completedAt)))
+        } else {
+            check(family.isEmpty() && reserve.state == "RESERVED" && reserve.used.isZero() && reserve.convertedAt == null)
+        }
     }
 
     /** Existing N/P/L only; all native versions are authenticated before this privacy transaction. */
@@ -497,7 +567,10 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         check(installation.state == expected && credential.state == expected)
         check(credential.credentialVersion == if (replay) nextCredentialVersion() else observed.credentialVersion)
         check(credential.rowVersion > 0 && (!replay || credential.rowVersion > 1))
-        check(MessageDigest.isEqual(credential.verifier, primary().verifier))
+        if (queue == null) check(MessageDigest.isEqual(credential.verifier, primary().verifier))
+        // The queue has the authenticated immutable ALL event and exact committed N/P/L, not a
+        // current request secret. It can finish only this existing pending/deleted pair/version;
+        // no missing credential, replacement verifier, primary work or new authorization is minted.
         check(installation.terminalAt == receipt.completedAt && credential.deletedAt == receipt.completedAt && credential.expiresAt == receipt.expiresAt)
     }
 
@@ -618,8 +691,8 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
                 sql.MARK_APPLIED,
                 time,
                 observed.record.eventId,
-                observed.verificationBytes,
-                observed.verificationHash,
+                checkNotNull(retainedVerification).bytes,
+                checkNotNull(retainedVerification).verificationHash,
             ) == 1,
         )
         checkWrite()

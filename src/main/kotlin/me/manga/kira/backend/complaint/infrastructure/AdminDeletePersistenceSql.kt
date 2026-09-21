@@ -18,6 +18,8 @@ internal object AdminDeletePersistenceSql {
             )
         """.trimIndent()
     val AUTHENTICATE = "$ACTOR SELECT principal.verdict FROM principal"
+    private val REGISTERED_ACTOR = "${me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionSqlV1.identity}, ${ACTOR.removePrefix("WITH ")}"
+    val REGISTERED_AUTHENTICATE = "$REGISTERED_ACTOR SELECT (SELECT matches FROM current_identity) AS registered_current_identity, principal.verdict FROM principal"
 
     internal val RECEIPT_COLUMNS = """
         r.actor_id, r.idempotency_key, r.operation, r.data_scope_id, r.test_only, r.state,
@@ -63,6 +65,10 @@ internal object AdminDeletePersistenceSql {
     """.trimIndent()
     val OBSERVE = """
         $ACTOR SELECT principal.verdict, $RECEIPT_COLUMNS FROM principal
+        LEFT JOIN complaint_idempotency_receipts r ON r.actor_kind = 'ADMIN' AND r.actor_id = principal.user_id AND r.idempotency_key = ?::uuid
+    """.trimIndent()
+    val REGISTERED_OBSERVE = """
+        $REGISTERED_ACTOR SELECT (SELECT matches FROM current_identity) AS registered_current_identity, principal.verdict, $RECEIPT_COLUMNS FROM principal
         LEFT JOIN complaint_idempotency_receipts r ON r.actor_kind = 'ADMIN' AND r.actor_id = principal.user_id AND r.idempotency_key = ?::uuid
     """.trimIndent()
     val LOCK_RECEIPT = "SELECT $RECEIPT_COLUMNS FROM complaint_idempotency_receipts r WHERE r.actor_kind = 'ADMIN' AND r.actor_id = ? AND r.idempotency_key = ? FOR UPDATE"

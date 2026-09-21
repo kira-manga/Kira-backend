@@ -40,7 +40,7 @@ internal class PersistenceComplaintMaintenanceFenceV1(private val phase: Persist
             phase.requireComplaintMaintenanceFence(this, connection)
             if (observedLock != true) refuse(PersistencePhaseFailureCode.ENTRY_REFUSED)
             stage = FenceStage.READING_GATE
-            val gate = if (phase.path.catalogTestRunTerminal || phase.path === PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT)
+            val gate = if (phase.terminalCatalogMaintenanceRead(this, connection))
                 PersistenceComplaintMaintenanceGateV1.readTerminal(connection) else PersistenceComplaintMaintenanceGateV1.read(connection)
             requireRemaining() // The separate gate statement and its original descendants have returned/closed.
             phase.requireComplaintMaintenanceGate(this, connection, gate)
@@ -154,6 +154,12 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
 
     internal fun matchesOpenProjectedActive(token: UUID, scope: UUID, unsigned: ByteArray, hash: ByteArray): Boolean =
         matchesOpenProjectedActiveRegistrationScope(scope) && projectedTestToken == token &&
+            projectedUnsigned.contentEquals(unsigned) && projectedHash.contentEquals(hash)
+
+    /** Privacy-only comparison. Creation closure does not open or bypass maintenance/projected/pending gates. */
+    internal fun matchesOpenProjectedActiveDeletion(token: UUID, scope: UUID, unsigned: ByteArray, hash: ByteArray): Boolean =
+        !maintenanceClosed && !projectedTestClosed && !pendingCatalog && pendingTestToken == null && !pendingTestPrepared &&
+            projectedTestScope == scope && projectedTestToken == token && projectedUnsigned != null && projectedHash != null &&
             projectedUnsigned.contentEquals(unsigned) && projectedHash.contentEquals(hash)
 
     /** Bounded read-only selector ONLY. The fresh named owner must re-admit evidence before any lease/effect. */

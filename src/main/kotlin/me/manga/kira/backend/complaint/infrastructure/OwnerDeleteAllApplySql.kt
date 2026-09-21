@@ -149,6 +149,14 @@ internal class OwnerDeleteAllApplySql private constructor(scope: ComplaintDataSc
         FROM complaint_deletion_journal_applied WHERE object_key = ? AND object_version = ?
     """.trimIndent()
 
+    /** Used only by the private ACTIVE queue capture, not a terminal inventory or primary-request grant. */
+    val QUEUE_APPLIED_FAMILY = """
+        SELECT event_id, object_key, object_version, ciphertext_hash, writer_generation, journal_epoch, target_count, applied_at,
+            ($LIVE) AS live, (event_kind = 'OWNER_DELETE_ALL' AND isfinite(applied_at) AND complaint_digest_valid(ciphertext_hash)) AS valid
+        FROM complaint_deletion_journal_applied WHERE event_id = ANY (?::text[])
+        ORDER BY event_id, object_key, object_version LIMIT 5
+    """.trimIndent()
+
     val INSERT_APPLIED = """
         INSERT INTO complaint_deletion_journal_applied
             (object_key, object_version, event_id, ciphertext_hash, writer_generation, journal_epoch, event_kind, target_count,

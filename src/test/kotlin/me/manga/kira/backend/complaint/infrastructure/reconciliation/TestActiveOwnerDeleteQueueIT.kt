@@ -15,10 +15,14 @@ import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersi
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
+import me.manga.kira.backend.complaint.infrastructure.AdminDeletePersistenceSql
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -53,15 +57,19 @@ class TestActiveOwnerDeleteQueueIT {
     private val database = lazy { PgLifecycleDatabaseFixture(TestActiveOwnerDeleteQueueIT::class.java).also { it.start() } }
     @AfterAll fun closeDatabase() { if (database.isInitialized()) database.value.close() }
 
-    @Test fun nativeExactOwnerDeleteReconstructsMissingBookkeepingAndAcksOnlyAfterCommittedReleasedApply() = withQueue { f ->
+    @Test fun genuineRegisteredFamiliesApplyTheOriginalNativePutAndAckOnlyAfterCommittedReleasedApply() = forEachFamily { f ->
         val before = f.counters()
-        assertTrue(listOf("complaint_idempotency_receipts", "complaint_journal_publications", "complaint_recovery_capacity_reservations",
-            "complaint_deletion_journal_applied").all { f.count(it) == 0L })
+        assertAuthorizationCharge(f)
+        assertEquals("AUTHORIZED_DELETE", f.receipt()["state"])
+        assertEquals("VERIFIED", f.precursor.publication()["state"])
+        assertEquals(0L, f.count("complaint_deletion_journal_applied"))
+        assertSame(f.record.stored, f.raw.stored)
+        assertSame(f.record.event, f.raw.event)
         val original = f.begin()
         val completed = f.poll(original)
         assertEquals(f.scope, completed.scope); assertEquals(1, completed.primaryAcknowledged); assertEquals(0, completed.dlqAcknowledged)
         f.assertReleased(); f.assertNoAuthority()
-        assertApplied(f); assertRecoveryCharge(before, f.counters())
+        assertApplied(f); assertRecoveryCharge(f, before, f.counters())
         assertEquals(listOf("synthetic-primary-receipt-1"), f.raw.ackRequests)
         assertEquals(listOf("STS", "GetQueueUrl:PRIMARY", "GetQueueAttributes:PRIMARY", "ReceiveMessage:PRIMARY", "GET", "DECRYPT",
             "DeleteMessage:PRIMARY", "GetQueueUrl:DLQ", "GetQueueAttributes:DLQ", "ReceiveMessage:DLQ"), f.raw.order)
@@ -71,7 +79,7 @@ class TestActiveOwnerDeleteQueueIT {
         f.coordinator.observations.forEach { (phase, value) ->
             assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome()); assertTrue(value.lease.completion.quiescent())
         }
-        f.deletion.observations.forEach { (phase, value) ->
+        f.deletionObservations.forEach { (phase, value) ->
             assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome()); assertTrue(value.lease.completion.quiescent())
         }
         // Actual populated logical envelope only, not a maximum physical disk/WAL qualification.
@@ -81,21 +89,21 @@ class TestActiveOwnerDeleteQueueIT {
         f.assertSameOriginalRefused(original)
     }
 
-    @Test fun aFreshAtLeastOnceRedeliveryReauthenticatesEverythingWithoutRechargingOrSecondAudit() = withQueue { f ->
+    @Test fun aFreshAtLeastOnceRedeliveryReauthenticatesEverythingWithoutRechargingOrSecondAudit() = forEachFamily { f ->
         f.poll(); f.assertReleased()
-        val paid = f.counters(); val oldToken = f.control()["lease_token"] as Long
+        val paid = f.counters(); val oldToken = f.control()["lease_token"] as Long; val rows = f.domainImage()
         val original = f.begin(); val result = f.poll(original)
         assertEquals(1, result.primaryAcknowledged); assertEquals(0, result.dlqAcknowledged)
         f.assertReleased(); f.assertNoAuthority(); assertApplied(f)
-        assertEquals(paid, f.counters()); assertEquals(oldToken + 1, f.control()["lease_token"])
+        assertEquals(paid, f.counters()); assertEquals(rows, f.domainImage()); assertEquals(oldToken + 1, f.control()["lease_token"])
         assertEquals(1L, f.count("complaint_test_active_queue_observations"))
         assertEquals(2, f.raw.order.count { it == "STS" }); assertEquals(2, f.raw.order.count { it == "GET" }); assertEquals(2, f.raw.order.count { it == "DECRYPT" })
         assertEquals(listOf("synthetic-primary-receipt-1", "synthetic-primary-receipt-2"), f.raw.ackRequests)
-        assertEquals(0, f.calls.count { it.sql == OwnerDeletePersistenceSql.INSERT_APPLIED })
+        assertEquals(0, f.calls.count { it.sql == appliedSql(f) })
         f.assertSameOriginalRefused(original)
     }
 
-    @Test fun sameKeyDifferentOpaqueVersionIsNotBorrowedTerminalAliasAuthority() = withQueue { f ->
+    @Test fun sameKeyDifferentOpaqueVersionIsNotBorrowedTerminalAliasAuthority() = forEachFamily { f ->
         f.poll(); f.assertReleased(); val paid = f.counters()
         f.raw.differentOpaqueVersion()
         val original = f.begin()
@@ -103,6 +111,81 @@ class TestActiveOwnerDeleteQueueIT {
         f.assertReleased(); assertApplied(f); assertEquals(paid, f.counters())
         assertEquals(0, original.primaryAcked); assertEquals(1, f.raw.ackRequests.size)
         assertEquals("POLLING", f.observation()?.get("state")); f.assertNoAuthority(); f.assertSameOriginalRefused(original)
+    }
+
+    @Test fun creationClosureDoesNotBlockGenuinePrivacyApplyOrSpendAnyCreationReserve() = forEachFamily { f ->
+        withPrivacyInput(f, QueuePrivacyInput.CLOSED) {
+            val before = f.counters()
+            assertEquals(1, f.poll().primaryAcknowledged)
+            f.assertReleased(); f.assertNoAuthority(); assertApplied(f); assertRecoveryCharge(f, before, f.counters())
+        }
+    }
+
+    @Test fun creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom() = forEachFamily { f ->
+        withPrivacyInput(f, QueuePrivacyInput.CEILING) {
+            val before = f.counters()
+            assertEquals(1, f.poll().primaryAcknowledged)
+            f.assertReleased(); f.assertNoAuthority(); assertApplied(f); assertRecoveryCharge(f, before, f.counters())
+        }
+    }
+
+    @Test fun oneByteShortOfTheObservationHardCapRefusesBeforeNativeApplyOrAck() = forEachFamily { f ->
+        withPrivacyInput(f, QueuePrivacyInput.HARD_CAP) {
+            val before = f.counters(); val rows = f.domainImage(); val original = f.begin()
+            assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { f.poll(original) }
+            f.assertReleased(); f.assertNoAuthority()
+            assertEquals(before, f.counters()); assertEquals(rows, f.domainImage()); assertNull(f.observation())
+            assertTrue(f.raw.order.isEmpty() && f.raw.ackRequests.isEmpty() && f.deletionObservations.isEmpty())
+            assertEquals(0, original.primaryAcked); f.assertSameOriginalRefused(original)
+        }
+    }
+
+    @Test fun adminRecoveryUsesTheOriginalConsumedGrantNotLaterRoleCredentialOrFreshStepUpAuthority() {
+        listOf(ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE).forEach { family -> withQueue(family) { f ->
+            val user = f.precursor.exchange.ordinary.userId
+            val before = f.observer.queryForMap("SELECT role, enabled, credential_version FROM users WHERE id = ?", user)
+            val grant = checkNotNull(f.precursor.proof).grantId
+            assertEquals(grant, f.record.event.adminComparison.consumedGrantId)
+            assertEquals(grant, f.receipt()["consumed_grant_id"])
+            assertNotNull(f.observer.queryForObject("SELECT used_at FROM admin_step_up_grants WHERE id = ?", java.sql.Timestamp::class.java, grant))
+            val nativeBefore = f.precursor.native.counts()
+            assertEquals(1, f.observer.update("UPDATE users SET role = 'USER', enabled = false, credential_version = credential_version + 1 WHERE id = ?", user))
+            try {
+                assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased(); assertApplied(f)
+                val rows = f.domainImage(); val paid = f.counters()
+                assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased(); f.assertNoAuthority(); assertApplied(f)
+                assertEquals(rows, f.domainImage()); assertEquals(paid, f.counters())
+                assertEquals(f.grantBeforeQueue, f.grantImage()); assertEquals(nativeBefore, f.precursor.native.counts())
+                assertFalse(f.calls.any { "admin_step_up_grants" in it.sql }, "Recovery is not a step-up/authentication issuer.")
+            } finally {
+                // Dispose only the adversarial auth input after outcome assertions, not a product transition.
+                assertEquals(1, f.observer.update("UPDATE users SET role = ?, enabled = ?, credential_version = ? WHERE id = ?",
+                    before["role"], before["enabled"], before["credential_version"], user))
+            }
+        } }
+    }
+
+    @Test fun allPreparedMissingBookkeepingOrMissingPairRemainExplicitUnackedRecoveryGaps() {
+        listOf("prepared", "missing-npl", "missing-credential").forEach { cut ->
+            withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, verifyPublication = cut != "prepared") { f ->
+                // Adversarial missing-row inputs after genuine AUTH/native PUT; never seed replacement
+                // authority or pretend missing ALL recovery has been implemented. No synthetic refund.
+                if (cut == "missing-npl") {
+                    listOf("installation_deletion_receipts", "complaint_recovery_capacity_reservations", "complaint_journal_publications").forEach {
+                        assertEquals(1, f.observer.update("DELETE FROM $it WHERE data_scope_id = ?", f.scope))
+                    }
+                }
+                if (cut == "missing-credential") assertEquals(1, f.observer.update(
+                    "DELETE FROM app_installations WHERE id = ? AND data_scope_id = ?", f.precursor.actor.id, f.scope))
+                val rows = f.domainImage(); val before = f.counters(); val original = f.begin()
+                assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { f.poll(original) }
+                f.assertReleased(); f.assertNoAuthority()
+                assertEquals(rows, f.domainImage()); assertObservationCharge(before, f.counters())
+                assertEquals(1, f.raw.order.count { it == "DECRYPT" }, "A genuinely authenticated native object does not replace the missing committed grammar.")
+                assertTrue(f.raw.ackRequests.isEmpty()); assertEquals(0, original.primaryAcked)
+                assertEquals(0L, f.count("complaint_deletion_journal_applied")); f.assertSameOriginalRefused(original)
+            }
+        }
     }
 
     @Test fun aSupportedDlqDeliveryWarnsWithValueFreeTextButCreatesNoDlqOrQueueHealthAuthority() = withQueue { f ->
@@ -114,7 +197,7 @@ class TestActiveOwnerDeleteQueueIT {
             assertEquals(0, result.primaryAcknowledged); assertEquals(1, result.dlqAcknowledged)
             f.assertReleased(); assertApplied(f); f.assertNoAuthority()
             assertEquals(listOf("synthetic-dlq-receipt-1"), f.raw.ackRequests)
-            assertEquals(listOf("ACTIVE TEST OWNER_DELETE DLQ delivery observed; bounded recovery attempted, not queue-health evidence."),
+            assertEquals(listOf("ACTIVE TEST deletion DLQ delivery observed; bounded recovery attempted, not queue-health evidence."),
                 appender.list.map { it.formattedMessage })
         } finally { logger.detachAppender(appender); appender.stop() }
     }
@@ -125,7 +208,7 @@ class TestActiveOwnerDeleteQueueIT {
         assertEquals(0, result.primaryAcknowledged); assertEquals(0, result.dlqAcknowledged)
         f.assertReleased(); f.assertNoAuthority(); assertObservationCharge(before, f.counters())
         assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.raw.requests.isEmpty()); assertTrue(f.raw.kms.requests.isEmpty())
-        assertTrue(f.deletion.observations.isEmpty()); assertEquals(0L, f.count("complaint_deletion_journal_applied"))
+        assertTrue(f.deletionObservations.isEmpty()); assertEquals(0L, f.count("complaint_deletion_journal_applied"))
         assertEquals(2, f.raw.order.count { it.startsWith("ReceiveMessage:") })
         assertEquals("SETTLED", f.observation()?.get("state"))
     }
@@ -144,7 +227,7 @@ class TestActiveOwnerDeleteQueueIT {
             assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { f.poll(original) }
             f.assertReleased(); f.assertNoAuthority(); assertObservationCharge(before, f.counters())
             assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.raw.requests.isEmpty()); assertTrue(f.raw.kms.requests.isEmpty())
-            assertTrue(f.deletion.observations.isEmpty()); assertEquals("POLLING", f.observation()?.get("state"))
+            assertTrue(f.deletionObservations.isEmpty()); assertEquals("POLLING", f.observation()?.get("state"))
             f.assertSameOriginalRefused(original)
         } }
     }
@@ -154,12 +237,11 @@ class TestActiveOwnerDeleteQueueIT {
         val original = f.begin()
         assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { f.poll(original) }
         f.assertReleased(); f.assertNoAuthority(); assertEquals(listOf("STS"), f.raw.order)
-        assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.deletion.observations.isEmpty()); f.assertSameOriginalRefused(original)
+        assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.deletionObservations.isEmpty()); f.assertSameOriginalRefused(original)
     }
 
-    @Test fun authenticatedUnsupportedFamilyBadMetadataAndBadAeadTagCannotBecomeApplyOrAck() {
-        listOf("family", "metadata", "tag").forEach { kind -> withPoisonedQueue { f ->
-            if (kind == "family") f.raw.externalObject(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL)
+    @Test fun badMetadataAndBadAeadTagOnTheOriginalPutCannotBecomeApplyOrAck() {
+        listOf("metadata", "tag").forEach { kind -> withPoisonedQueue { f ->
             f.raw.changeS3 = { _, reply ->
                 if (kind == "metadata") reply.headers = reply.headers.filterKeys { !it.equals("x-amz-meta-kira-journal-schema", true) } +
                     ("x-amz-meta-kira-journal-schema" to listOf("2"))
@@ -175,7 +257,7 @@ class TestActiveOwnerDeleteQueueIT {
             val original = f.begin()
             assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { f.poll(original) }
             f.assertReleased(); f.assertNoAuthority()
-            assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.deletion.observations.isEmpty())
+            assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.deletionObservations.isEmpty())
             assertEquals(0L, f.count("complaint_deletion_journal_applied"))
             assertEquals(if (kind == "metadata") 0 else 1, f.raw.order.count { it == "DECRYPT" })
             f.assertSameOriginalRefused(original)
@@ -191,7 +273,7 @@ class TestActiveOwnerDeleteQueueIT {
             val original = f.begin()
             assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { f.poll(original) }
             assertTrue(reached); f.assertReleased(); f.assertNoAuthority()
-            assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.raw.requests.isEmpty()); assertTrue(f.deletion.observations.isEmpty())
+            assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.raw.requests.isEmpty()); assertTrue(f.deletionObservations.isEmpty())
             assertEquals(0, original.primaryAcked); assertEquals("POLLING", f.observation()?.get("state")); f.assertSameOriginalRefused(original)
         } }
     }
@@ -241,7 +323,7 @@ class TestActiveOwnerDeleteQueueIT {
             assertSame(owner, (ownedCutField(owner.recipe, "active") as AtomicReference<*>).get())
             assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { owner.recipe.close() }
             assertFalse(ownerReturned.get(), "Abort and close request are not native return/reclamation.")
-            assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.deletion.observations.isEmpty())
+            assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.deletionObservations.isEmpty())
             gate.release(); worker.value()
             assertTrue(nativeReturning.get() && ownerReturned.get()); assertEquals(0, owner.primaryAcked)
             assertSame(owner, (ownedCutField(owner.recipe, "active") as AtomicReference<*>).get(), "Late return cannot rehabilitate this poisoned delivery.")
@@ -266,7 +348,7 @@ class TestActiveOwnerDeleteQueueIT {
                 if (interrupted) { assertThrows<InterruptedException> { f.poll(original) }; assertTrue(Thread.currentThread().isInterrupted) }
                 else assertThrows<CancellationException> { f.poll(original) }
             } finally { Thread.interrupted() } // Caller cleanup only; never a renewed original.
-            f.assertReleased(); f.assertNoAuthority(); assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.deletion.observations.isEmpty())
+            f.assertReleased(); f.assertNoAuthority(); assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.deletionObservations.isEmpty())
             assertSame(original, (ownedCutField(original.recipe, "active") as AtomicReference<*>).get())
             val requests = f.raw.order.toList()
             try {
@@ -292,7 +374,7 @@ class TestActiveOwnerDeleteQueueIT {
         f.assertSameOriginalRefused(original)
     }
 
-    @Test fun priorSafeApplyAndAckRemainTruthfulWhenFinalSettlementCommitIsUnknown() = withPoisonedQueue { f ->
+    @Test fun priorSafeApplyAndAckRemainTruthfulWhenFinalSettlementCommitIsUnknown() = forEachPoisonedFamily { f ->
         commitCut(f, QueueCommitCut.UNKNOWN, settlement = true)
     }
 
@@ -307,7 +389,7 @@ class TestActiveOwnerDeleteQueueIT {
         assertTrue(closeAttempted); assertEquals("Complaint journal publication failed fatally.", fatal.message)
         assertNull(fatal.cause); assertTrue(fatal.suppressed.isEmpty())
         f.assertSqlReleased(); f.raw.assertDisposed(returned = false); f.assertNoAuthority()
-        assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.deletion.observations.isEmpty())
+        assertTrue(f.raw.ackRequests.isEmpty()); assertTrue(f.deletionObservations.isEmpty())
         assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { original.requireNativeReleased(original.recipe) }
         assertSame(fatal, assertThrows<Error> { f.poll(original) })
     }
@@ -315,7 +397,7 @@ class TestActiveOwnerDeleteQueueIT {
     private fun commitCut(f: TestActiveOwnerDeleteQueueFixtureV1, cut: QueueCommitCut, settlement: Boolean) {
         var phase: PersistencePhaseContext? = null
         val resource = Any(); val sentinel = Any(); var bound = false
-        f.after = { call -> if (phase == null && call.sql == (if (settlement) TestActiveOwnerDeleteQueueSqlV1.settle else OwnerDeletePersistenceSql.INSERT_APPLIED)) {
+        f.after = { call -> if (phase == null && call.sql == (if (settlement) TestActiveOwnerDeleteQueueSqlV1.settle else appliedSql(f))) {
             phase = call.phase
             if (cut === QueueCommitCut.UNKNOWN) {
                 val jdbc = JdbcTemplate(if (settlement) f.runtime.pools.catalogCoordinator.dataSource else f.runtime.pools.deletion)
@@ -348,16 +430,62 @@ class TestActiveOwnerDeleteQueueIT {
         assertEquals(outcome, checkNotNull(phase).databaseOutcome())
         f.assertReleased(); f.assertNoAuthority()
         if (settlement) {
-            assertApplied(f); assertRecoveryCharge(before, f.counters())
+            assertApplied(f); assertRecoveryCharge(f, before, f.counters())
             assertEquals(1, f.raw.ackRequests.size); assertEquals(1, original.primaryAcked)
             assertEquals("POLLING", f.observation()?.get("state")); assertEquals(0, (f.observation()?.get("primary_acked") as Number).toInt())
             assertEquals(original.attemptId, f.control()["lease_owner"])
         } else {
             assertTrue(f.raw.ackRequests.isEmpty()); assertEquals(0, original.primaryAcked)
-            if (outcome === PersistenceDatabaseOutcome.COMMITTED) { assertApplied(f); assertRecoveryCharge(before, f.counters()) }
+            if (outcome === PersistenceDatabaseOutcome.COMMITTED) { assertApplied(f); assertRecoveryCharge(f, before, f.counters()) }
             else { assertEquals(0L, f.count("complaint_deletion_journal_applied")); assertObservationCharge(before, f.counters()) }
         }
         f.assertSameOriginalRefused(original)
+    }
+
+    /**
+     * Explicit adversarial input AFTER genuine AUTH/VERIFY, not naturally generated exhaustion.
+     * Full D, P hashes/limits/ordinals, Y/T reserves and every history row stay unchanged. Cleanup
+     * reverses only the injected offset/closure bits, preserving the actual queue accounting delta.
+     */
+    private fun withPrivacyInput(f: TestActiveOwnerDeleteQueueFixtureV1, input: QueuePrivacyInput, action: () -> Unit) {
+        fun invariantCounters() = f.observer.queryForList("SELECT (to_jsonb(c) - ARRAY['free_units','actual_units','configuration_closed'])::text " +
+            "FROM complaint_capacity_counters c ORDER BY ordinal", String::class.java)
+        fun invariantControls() = f.observer.queryForList("SELECT (to_jsonb(c) - 'creation_closed')::text FROM complaint_journal_control c ORDER BY data_scope_id", String::class.java)
+        val controls = invariantControls(); val counters = invariantCounters(); val domain = f.domainImage(); val old = f.counters()
+        assertEquals(22L, f.observer.queryForObject("SELECT count(*) FROM complaint_capacity_counters WHERE NOT configuration_closed", Long::class.java))
+        val storage = f.observer.queryForMap("SELECT hard_limit, creation_limit, free_units, actual_units, recovery_reserved_units, test_reserved_units " +
+            "FROM complaint_capacity_counters WHERE name = 'storage_bytes'")
+        fun amount(name: String) = (storage.getValue(name) as Number).toLong()
+        val target = when (input) {
+            QueuePrivacyInput.CLOSED -> amount("actual_units")
+            QueuePrivacyInput.CEILING -> amount("creation_limit") + 1
+            QueuePrivacyInput.HARD_CAP -> amount("hard_limit") - amount("recovery_reserved_units") - amount("test_reserved_units") - 8191
+        }
+        val injected = target - amount("actual_units")
+        assertTrue(injected >= 0)
+        val free = amount("free_units") - injected
+        if (input == QueuePrivacyInput.HARD_CAP) assertEquals(8191L, free) else assertTrue(free >= 8192)
+        assertEquals(1, f.observer.update("UPDATE complaint_capacity_counters SET free_units = ?, actual_units = ? WHERE name = 'storage_bytes'", free, target))
+        if (input == QueuePrivacyInput.CLOSED) {
+            assertEquals(2, f.observer.update("UPDATE complaint_journal_control SET creation_closed = true WHERE data_scope_id IN (?, ?) AND NOT creation_closed", UUID(0, 0), f.scope))
+            assertEquals(22, f.observer.update("UPDATE complaint_capacity_counters SET configuration_closed = true"))
+        }
+        try {
+            assertEquals(counters, invariantCounters()); assertEquals(controls, invariantControls()); assertEquals(domain, f.domainImage())
+            f.counters().forEach { (counter, current) ->
+                val prior = old.getValue(counter); val delta = if (counter == ComplaintCapacityCounter.STORAGE_BYTES) injected else 0
+                assertEquals(prior.free - delta, current.free); assertEquals(prior.actual + delta, current.actual)
+                assertEquals(prior.recovery, current.recovery); assertEquals(prior.test, current.test)
+            }
+            action()
+        } finally {
+            // Fixture input cleanup only, never a refund/completeness result.
+            assertEquals(1, f.observer.update("UPDATE complaint_capacity_counters SET free_units = free_units + ?, actual_units = actual_units - ? WHERE name = 'storage_bytes'", injected, injected))
+            if (input == QueuePrivacyInput.CLOSED) {
+                assertEquals(22, f.observer.update("UPDATE complaint_capacity_counters SET configuration_closed = false"))
+                assertEquals(2, f.observer.update("UPDATE complaint_journal_control SET creation_closed = false WHERE data_scope_id IN (?, ?)", UUID(0, 0), f.scope))
+            }
+        }
     }
 
     private fun changeBinding(f: TestActiveOwnerDeleteQueueFixtureV1, cut: QueueBindingCut) {
@@ -367,20 +495,73 @@ class TestActiveOwnerDeleteQueueIT {
             QueueBindingCut.RESTORE -> f.observer.update("UPDATE complaint_journal_control SET restore_identity = ? WHERE data_scope_id = ?", UUID.randomUUID(), f.scope)
             QueueBindingCut.CATALOG -> f.observer.update("UPDATE complaint_journal_control SET accepted_catalog_hash = ? WHERE data_scope_id = ?", ByteArray(32) { 8 }, UUID(0L, 0L))
             QueueBindingCut.EXPIRED -> f.observer.update("UPDATE complaint_journal_control SET lease_expires_at = clock_timestamp() - interval '1 millisecond' WHERE data_scope_id = ?", f.scope)
+            QueueBindingCut.MAINTENANCE -> f.observer.update("UPDATE complaint_journal_control SET maintenance_closed = true WHERE data_scope_id = ?", f.scope)
+            QueueBindingCut.SCAN -> f.observer.update("UPDATE complaint_journal_control SET scan_requested = true WHERE data_scope_id = ?", f.scope)
             QueueBindingCut.REPLACED -> f.observer.update("UPDATE complaint_journal_control SET lease_owner = ?, lease_token = lease_token + 1 WHERE data_scope_id = ?", UUID.randomUUID(), f.scope)
         }
         assertEquals(1, updated)
     }
 
     private fun assertApplied(f: TestActiveOwnerDeleteQueueFixtureV1) {
-        listOf("complaint_idempotency_receipts", "complaint_journal_publications", "complaint_recovery_capacity_reservations", "complaint_deletion_journal_applied",
-            "complaint_installation_ids", "complaint_resource_ids").forEach { assertEquals(1L, f.count(it), it) }
-        assertEquals(0L, f.count("app_installations"), "Recovery reserves identity, never synthesizes credentials.")
-        assertEquals(0L, f.count("complaints")); assertEquals(mapOf("COMPLAINT_RECOVERY_APPLIED" to 1L), f.audits())
-        assertEquals("RECOVERY_RESERVED", f.observer.queryForObject("SELECT state FROM complaint_installation_ids WHERE id = ?", String::class.java, f.raw.event.tuple.actorId))
-        assertEquals("DELETED", f.observer.queryForObject("SELECT state FROM complaint_resource_ids WHERE id = ?", String::class.java, f.raw.event.complaintIds().single()))
-        assertEquals("APPLIED", f.observer.queryForObject("SELECT state FROM complaint_journal_publications WHERE event_id = ?", String::class.java, f.raw.event.route.eventId))
-        assertEquals("COMPLETED", f.observer.queryForObject("SELECT state FROM complaint_idempotency_receipts WHERE data_scope_id = ?", String::class.java, f.scope))
+        val targets = f.precursor.reports.size.toLong()
+        listOf("complaint_idempotency_receipts", "installation_deletion_receipts", "complaint_journal_publications",
+            "complaint_recovery_capacity_reservations", "complaint_installation_ids", "app_installations", "complaint_resource_ids").forEach {
+            assertEquals(f.countsBeforeQueue.getValue(it), f.count(it), "No reconstruction/credential synthesis: $it")
+        }
+        assertEquals(1L, f.count("complaint_deletion_journal_applied")); assertEquals(0L, f.count("complaints"))
+        val expectedAudits = f.auditsBeforeQueue.toMutableMap()
+        fun add(action: String, count: Long) { expectedAudits[action] = expectedAudits.getOrDefault(action, 0L) + count }
+        add("COMPLAINT_DELETED", targets)
+        add(if (f.family == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) "COMPLAINT_INSTALLATION_DELETED" else "COMPLAINT_RECOVERY_APPLIED", 1)
+        assertEquals(expectedAudits, f.audits())
+        assertEquals("APPLIED", f.precursor.publication()["state"])
+        assertEquals("COMPLETED", f.receipt()["state"]); assertEquals("APPLIED", f.receipt()["outcome"])
+        assertEquals(f.record.stored.version, f.receipt()["external_object_version"])
+        assertEquals(f.record.event.route.eventId, f.receipt()["external_event_id"])
+        assertEquals(f.receiptBeforeQueue, f.receiptIdentity(), "The original actor, operation, targets, fingerprint and consumed grant never change.")
+        if (f.verifiedPublication) assertEquals(f.proofBeforeQueue, f.publicationProof(), "Recovery does not replace the committed native VERIFY proof.")
+        assertEquals(f.grantBeforeQueue, f.grantImage(), "AUTH's original consumed grant is neither reissued nor consumed again.")
+        assertEquals(targets, f.observer.queryForObject("SELECT count(*) FROM complaint_resource_ids WHERE data_scope_id = ? AND state = 'DELETED'", Long::class.java, f.scope))
+        if (f.family == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) {
+            assertEquals("DELETED", f.observer.queryForObject("SELECT state FROM complaint_installation_ids WHERE id = ?", String::class.java, f.precursor.actor.id))
+            val credential = f.observer.queryForMap("SELECT state, credential_version FROM app_installations WHERE id = ?", f.precursor.actor.id)
+            assertEquals("DELETED", credential["state"])
+            assertEquals(f.record.event.tuple.credentialVersion + 1, credential["credential_version"])
+            assertEquals(f.credentialIdentityBeforeQueue, f.credentialIdentity(), "ALL changes its retained lifecycle/version, never the original verifier or identity.")
+        } else assertEquals(f.identitiesBeforeQueue, f.identityImage(), "OWNER/ADMIN resource erasure preserves the existing credential pairs exactly.")
+        val reserve = f.observer.queryForMap("SELECT state, reserved_amounts::text, converted_amounts::text FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", f.scope)
+        assertEquals("PARTIAL", reserve["state"])
+        assertEquals(vectorText(promise(f)), reserve["reserved_amounts"])
+        assertEquals(vectorText(materialized(f)), reserve["converted_amounts"], "Only observed new applied/audit rows spend the existing Y; its future remainder stays reserved.")
+    }
+
+    private fun authorization(f: TestActiveOwnerDeleteQueueFixtureV1): ComplaintCapacityVector = when (f.family) {
+        ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> ComplaintCapacityVector.of(longArrayOf(
+            0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 376832, 0))
+        ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE -> OwnerDeleteLiteralCharges.authorization + OwnerDeleteLiteralCharges.audit
+        else -> OwnerDeleteLiteralCharges.authorization
+    }
+    private fun promise(f: TestActiveOwnerDeleteQueueFixtureV1): ComplaintCapacityVector = when (f.family) {
+        ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> ComplaintCapacityVector.of(longArrayOf(
+            0, 113, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0, 4, 0, 0, 0, 0, 100, 0, 0, 10240000, 0))
+        ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE -> ComplaintCapacityVector.of(longArrayOf(
+            0, 6, 0, 0, 0, 0, 0, 2, 0, 4, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 589824, 0))
+        else -> OwnerDeleteLiteralCharges.promise
+    }
+    private fun materialized(f: TestActiveOwnerDeleteQueueFixtureV1) = OwnerDeleteLiteralCharges.appliedOnly +
+        OwnerDeleteLiteralCharges.audit.scaled(f.precursor.reports.size.toLong() + 1)
+    private fun vectorText(vector: ComplaintCapacityVector) = vector.toLongArray().joinToString(",", "{", "}")
+    private fun assertAuthorizationCharge(f: TestActiveOwnerDeleteQueueFixtureV1) {
+        f.beforeAuthorization.forEach { (counter, old) ->
+            val auth = authorization(f)[counter]; val promise = promise(f)[counter]
+            assertEquals(old.copy(free = old.free - auth - promise, actual = old.actual + auth, recovery = old.recovery + promise),
+                f.afterAuthorization.getValue(counter), counter.storedName)
+        }
+    }
+    private fun appliedSql(f: TestActiveOwnerDeleteQueueFixtureV1): String = when (f.family) {
+        ComplaintJournalDeletionKindV1.OWNER_DELETE -> OwnerDeletePersistenceSql.INSERT_APPLIED
+        ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> OwnerDeleteAllApplySql.test(f.precursor.dataScope).INSERT_APPLIED
+        else -> AdminDeletePersistenceSql.INSERT_APPLIED
     }
     private fun assertObservationCharge(before: Map<ComplaintCapacityCounter, DeleteAllCounter>, after: Map<ComplaintCapacityCounter, DeleteAllCounter>) {
         assertEquals(22, after.size)
@@ -389,29 +570,36 @@ class TestActiveOwnerDeleteQueueIT {
             assertEquals(old.copy(free = old.free - charge, actual = old.actual + charge), after.getValue(counter), counter.storedName)
         }
     }
-    private fun assertRecoveryCharge(before: Map<ComplaintCapacityCounter, DeleteAllCounter>, after: Map<ComplaintCapacityCounter, DeleteAllCounter>) {
+    private fun assertRecoveryCharge(f: TestActiveOwnerDeleteQueueFixtureV1, before: Map<ComplaintCapacityCounter, DeleteAllCounter>, after: Map<ComplaintCapacityCounter, DeleteAllCounter>) {
         assertEquals(22, after.size)
         before.forEach { (counter, old) ->
             val observation = if (counter === ComplaintCapacityCounter.STORAGE_BYTES) 8192L else 0L
-            val bookkeeping = OwnerDeleteLiteralCharges.missingBookkeeping[counter]
-            val promise = OwnerDeleteLiteralCharges.promise[counter]
-            val materialized = OwnerDeleteLiteralCharges.reconstructAbsent[counter]
-            assertEquals(old.copy(free = old.free - bookkeeping - promise - observation, actual = old.actual + bookkeeping + materialized + observation,
-                recovery = old.recovery + promise - materialized), after.getValue(counter), counter.storedName)
+            val used = materialized(f)[counter]
+            val refund = OwnerDeleteLiteralCharges.content[counter] * f.precursor.reports.size
+            assertEquals(old.copy(free = old.free + refund - observation, actual = old.actual + used - refund + observation,
+                recovery = old.recovery - used), after.getValue(counter), counter.storedName)
         }
     }
 
     /** Sticky unknown/failed native custody is expected to make owning assembly shutdown refuse too.
      * A body-complete marker prevents that expected teardown error from hiding setup/test failures.
      */
-    private fun withPoisonedQueue(action: (TestActiveOwnerDeleteQueueFixtureV1) -> Unit) {
+    private fun withPoisonedQueue(family: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE, action: (TestActiveOwnerDeleteQueueFixtureV1) -> Unit) {
         var assertionsCompleted = false
-        assertThrows<RuntimeException> { withQueue { f -> action(f); assertionsCompleted = true } }
+        assertThrows<RuntimeException> { withQueue(family) { f -> action(f); assertionsCompleted = true } }
         assertTrue(assertionsCompleted, "Only the already-asserted poisoned recipe's assembly close may supply the expected outer failure.")
     }
-    private fun withQueue(action: (TestActiveOwnerDeleteQueueFixtureV1) -> Unit) =
-        VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, activeFirstCut = true).use { it.bind(); withActiveQueueFixture(it, action) }
+    private fun forEachFamily(action: (TestActiveOwnerDeleteQueueFixtureV1) -> Unit) =
+        ComplaintJournalDeletionKindV1.entries.forEach { withQueue(it, action = action) }
+    private fun forEachPoisonedFamily(action: (TestActiveOwnerDeleteQueueFixtureV1) -> Unit) =
+        ComplaintJournalDeletionKindV1.entries.forEach { withPoisonedQueue(it, action) }
+    private fun withQueue(family: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE,
+        verifyPublication: Boolean = true, action: (TestActiveOwnerDeleteQueueFixtureV1) -> Unit) =
+        VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, activeFirstCut = true).use {
+            it.bind(); withActiveQueueFixture(it, family, verifyPublication, action = action)
+        }
 }
 
-private enum class QueueBindingCut { DESIRED, DATABASE, RESTORE, CATALOG, EXPIRED, REPLACED }
+private enum class QueueBindingCut { DESIRED, DATABASE, RESTORE, CATALOG, EXPIRED, REPLACED, MAINTENANCE, SCAN }
+private enum class QueuePrivacyInput { CLOSED, CEILING, HARD_CAP }
 private enum class QueueCommitCut { BEFORE, AFTER, UNKNOWN, UNRESOLVED_RELEASE }

@@ -18,7 +18,7 @@ internal object CatalogTestRunTerminalProjectionSqlV1 {
         AND r.sealed_at IS NOT NULL AND r.sealed_at >= r.created_at AND r.sealed_at <= clock_timestamp()
         AND complaint_finite_times(r.created_at, r.sealed_at, r.purging_at) AND r.purged_at IS NULL
         AND r.final_ordinary_epoch > 0 AND r.terminal_seal_epoch - 1 = r.final_ordinary_epoch
-        AND r.generation_seal_count = 2 AND complaint_digest_valid(r.generation_seal_root)
+        AND r.generation_seal_count IN (2, 3) AND complaint_digest_valid(r.generation_seal_root)
         AND complaint_bytes_match(r.seal_set_bytes, r.seal_set_hash, 65536)
         AND complaint_bytes_match(r.permanent_denial_bytes, r.permanent_denial_hash, 51291)
         AND ((r.state = 'SEALED' AND r.purging_at IS NULL AND r.event_manifest_count IS NULL AND r.event_manifest_root IS NULL

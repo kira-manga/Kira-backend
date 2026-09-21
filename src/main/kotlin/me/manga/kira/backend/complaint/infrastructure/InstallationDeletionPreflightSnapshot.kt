@@ -232,9 +232,15 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
          * per-installation/event lookups stop at two; two results are corruption, never an arbitrary
          * winning receipt/version. No row/advisory locks, descriptor transport or content scan.
          */
-        val SQL = """
-            WITH deletion_time AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
-            SELECT t.observed_at, isfinite(t.observed_at) AS finite_observed_at,
+        val SQL = sql(false)
+        val REGISTERED_SQL = sql(true)
+
+        // Two fixed statements; only the registered alternative adds same-snapshot birth/desired identity.
+        private fun sql(registered: Boolean) = """
+            ${if (registered) me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionSqlV1.identity + "," else "WITH"}
+            deletion_time AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
+            SELECT ${if (registered) "(SELECT matches FROM current_identity) AS registered_current_identity," else ""}
+                t.observed_at, isfinite(t.observed_at) AS finite_observed_at,
                 ${OwnerDeleteAllProcessBinding.columns},
                 i.id AS identity_id, i.data_scope_id AS identity_scope, i.state AS identity_state, i.terminal_at AS identity_terminal_at,
                 (complaint_is_v4(i.id) AND complaint_scope_valid(i.data_scope_id, i.test_only) AND i.created_at IS NOT NULL

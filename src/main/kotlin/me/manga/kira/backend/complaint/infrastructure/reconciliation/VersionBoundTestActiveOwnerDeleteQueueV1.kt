@@ -77,7 +77,22 @@ internal class VersionBoundTestActiveOwnerDeleteQueueV1 private constructor(
         put("sdk", ComplaintEffectiveEpochSealAcquisitionV1.sdk(routing.journalConfiguration.declaration().journalLocation.region, limits))
         put("sqsSdk", "2.54.19"); put("totalAttemptMillis", totalAttemptMillis)
         put("longPollSeconds", 1); put("maximumMessagesPerQueue", 1); put("visibilitySeconds", 30)
-        put("queues", "EXACT_J_PRIMARY_AND_DLQ"); put("family", "OWNER_DELETE_ONLY")
+        put("queues", "EXACT_J_PRIMARY_AND_DLQ"); put("family", "EXACT_REGISTERED_ORDINARY_DELETIONS_V1")
+        put("supportedFamilies", buildJsonObject {
+            put("OWNER_DELETE", "NATIVE_RECOVERY_FOUR_RETAINED_KEYS_ONE_VERSION_PER_KEY")
+            if (routing.journalConfiguration.ownerDeleteAll) {
+                put("OWNER_DELETE_ALL", "EXACT_RETAINED_VERIFIED_PRIMARY_OR_UNEXPIRED_APPLIED_REPLAY")
+            }
+            if (routing.journalConfiguration.registeredAdminDelete) {
+                put("ADMIN_DELETE", "NATIVE_RECOVERY_FOUR_RETAINED_KEYS_ONE_VERSION_PER_KEY")
+            }
+            if (routing.journalConfiguration.registeredAdminBatchDelete) {
+                put("ADMIN_BATCH_DELETE", "NATIVE_RECOVERY_FOUR_RETAINED_KEYS_ONE_VERSION_PER_KEY")
+            }
+        })
+        if (routing.journalConfiguration.ownerDeleteAll) {
+            put("allRecoveryUnfinished", "MISSING_NPL_PREPARED_WITHOUT_VERIFY_MISSING_PAIR_ALIASES_POST_REPLAY_DOMAIN_REPAIR")
+        }
         put("operations", "RECEIVE_EXACT_NATIVE_GET_DECRYPT_FENCED_APPLY_RELEASE_ACK")
         put("observationStorageProfile", TestActiveOwnerDeleteQueueStorageV1.STORAGE_PROFILE)
         put("observationStorageBytes", TestActiveOwnerDeleteQueueStorageV1.STORAGE_BYTES)

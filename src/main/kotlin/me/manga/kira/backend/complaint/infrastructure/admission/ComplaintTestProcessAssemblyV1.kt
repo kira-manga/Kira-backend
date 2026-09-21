@@ -304,6 +304,11 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
                 )
             },
             activeOwnerDeleteQueue = queue,
+            initialCheckpointDeletion = inputs.initialCheckpointDeletion?.let {
+                me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointDeletionV1.fromIndependentInputs(
+                    it, pools, routing, checkNotNull(scanner), checkNotNull(ordinaryPublication),
+                )
+            },
         )
         // No public-trust preparation, JDBC connection, STS/KMS/S3 construction, activation or registration was performed.
     }

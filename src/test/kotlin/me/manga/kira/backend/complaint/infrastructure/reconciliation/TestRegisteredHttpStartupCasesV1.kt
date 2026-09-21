@@ -92,9 +92,10 @@ internal object TestRegisteredHttpStartupCasesV1 {
                 val bootstrap = web.get(ComplaintInstallationRoutes.BOOTSTRAP)
                 checked(bootstrap, 200)
                 assertEquals("""{"dataScopeId":"${first.scope}","contractVersion":1}""", bootstrap.body().decodeToString())
-                for (path in listOf("/api/v1/auth/me", ComplaintInstallationRoutes.HISTORY, "${ComplaintInstallationRoutes.BOOTSTRAP}/")) {
+                for (path in listOf("/api/v1/auth/me", ComplaintInstallationRoutes.ME, "${ComplaintInstallationRoutes.BOOTSTRAP}/")) {
                     checked(web.get(path), 404) // Standalone TEST context does not host the full account/source/Admin app.
                 }
+                checked(web.get(ComplaintInstallationRoutes.HISTORY), 401)
                 val actor = first.initial.candidate().installation // Register identity with the existing fixture's exact cleanup.
                 try {
                     val beforeEnrollment = first.p.counters()
@@ -174,6 +175,127 @@ internal object TestRegisteredHttpStartupCasesV1 {
         }
     }
 
+    fun ownerReadsNoticesAndCursor(tls: VersionBoundPersistenceConnectedFixture) =
+        withPrepared(tls, globalScanBeforeActivation = true) { first, ordinary, raw ->
+        val providers = providerCounts(first, ordinary, raw)
+        first.assembly.beginRegisteredHttpStartup(first.registration).use { startup ->
+            startup.start()
+            StartedHttpView(first, startup).use { web ->
+                val actor = first.initial.candidate().installation
+                val foreign = first.initial.candidate().installation
+                try {
+                    val enrolled = web.post(ComplaintInstallationRoutes.ENROLLMENT, identityBody(actor, enrollment = true))
+                    checked(enrolled, 201)
+                    val bearer = token(enrolled, actor, first)
+                    val other = web.post(ComplaintInstallationRoutes.ENROLLMENT, identityBody(foreign, enrollment = true))
+                    checked(other, 201)
+                    val foreignBearer = token(other, foreign, first)
+                    web.assertRequestsReleased()
+                    assertEquals(providers, providerCounts(first, ordinary, raw))
+                    val captured = first.capture()
+                    first.awaitNativeReclaimed()
+                    TestActiveOrdinarySealFixtureV1(first, captured, ordinary).use { sealer ->
+                        val verified = sealer.seal()
+                        sealer.assertReleased()
+                        awaitInitialCheckpointLeaseExpiry(sealer.observer, sealer.scope)
+                        TestActiveInitialCheckpointFixtureV1(sealer, verified, raw).use { checkpoint ->
+                            checkpoint.checkpoint() // Genuine producer; no Completed object is passed to the HTTP composition.
+                            checkpoint.assertReleased()
+                            first.p.f.rows.globalPredecessor?.assertPreserved(first.observer)
+                            val afterProviders = providerCounts(first, ordinary, raw)
+                            // Spend exactly the existing two CREATE admissions, not a reset or a raised ceiling.
+                            val attempts = listOf(attempt(actor), attempt(actor))
+                            for (attempt in attempts) {
+                                val before = first.counters()
+                                checked(web.post(ComplaintInstallationRoutes.HISTORY, createBody(attempt), bearer, attempt.input.key), 201)
+                                assertCreateCharge(before, first.counters())
+                            }
+                            web.assertRequestsReleased()
+                            val counters = first.counters()
+                            val audits = auditImage(first)
+                            val history = web.get(ComplaintInstallationRoutes.HISTORY, bearer)
+                            checked(history, 200)
+                            val page = mapper.readTree(history.body())
+                            assertEquals(setOf("notices", "items", "nextCursor"), page.fieldNames().asSequence().toSet())
+                            assertEquals(attempts.map { it.input.id.toString() }.toSet(), page["items"].map { it["id"].textValue() }.toSet())
+                            assertEquals(2, page["items"].size()); assertTrue(page["nextCursor"].isNull)
+                            for (item in page["items"]) {
+                                assertEquals("REPORT", item["kind"].textValue()); assertEquals(1L, item["version"].longValue())
+                                assertEquals(attempts.first().candidate.request.subject, item["subject"].textValue())
+                                assertEquals(attempts.first().candidate.request.body, item["body"].textValue())
+                                val detail = web.get("${ComplaintInstallationRoutes.HISTORY}/${item["id"].textValue()}", bearer)
+                                checked(detail, 200)
+                                assertEquals(item, mapper.readTree(detail.body()))
+                                assertEquals(item["actionTag"].textValue(), header(detail, "ETag"))
+                            }
+                            assertEquals(2, page["notices"].size())
+                            assertEquals(setOf("complaints.notice.content-policy", "complaints.notice.source-requirements"),
+                                page["notices"].map { it["noticeKey"].textValue() }.toSet())
+                            for (notice in page["notices"]) {
+                                assertEquals(setOf("id", "kind", "noticeKey", "status", "createdAt", "updatedAt", "version"), notice.fieldNames().asSequence().toSet())
+                                assertEquals("NOTICE", notice["kind"].textValue()); assertEquals("PINNED", notice["status"].textValue())
+                                val detail = web.get("${ComplaintInstallationRoutes.HISTORY}/${notice["id"].textValue()}", bearer)
+                                checked(detail, 200)
+                                assertEquals(notice, mapper.readTree(detail.body())); assertNull(header(detail, "ETag"))
+                            }
+                            val firstResponse = web.get("${ComplaintInstallationRoutes.HISTORY}?limit=1", bearer)
+                            checked(firstResponse, 200)
+                            val firstPage = mapper.readTree(firstResponse.body())
+                            assertEquals(1, firstPage["items"].size()); assertEquals(page["notices"], firstPage["notices"])
+                            val cursor = checkNotNull(firstPage["nextCursor"].textValue())
+                            val nextPath = "${ComplaintInstallationRoutes.HISTORY}?limit=1&cursor=$cursor"
+                            val nextResponse = web.get(nextPath, bearer)
+                            checked(nextResponse, 200)
+                            val nextPage = mapper.readTree(nextResponse.body())
+                            assertEquals(1, nextPage["items"].size()); assertEquals(0, nextPage["notices"].size())
+                            assertTrue(nextPage["nextCursor"].isNull)
+                            assertEquals(page["items"].toList(), firstPage["items"].toList() + nextPage["items"].toList())
+                            val foreignHistory = web.get(ComplaintInstallationRoutes.HISTORY, foreignBearer)
+                            checked(foreignHistory, 200)
+                            val foreignPage = mapper.readTree(foreignHistory.body())
+                            assertEquals(0, foreignPage["items"].size()); assertEquals(page["notices"], foreignPage["notices"])
+                            val detailPath = "${ComplaintInstallationRoutes.HISTORY}/${attempts.first().input.id}"
+                            val foreignDetail = web.get(detailPath, foreignBearer)
+                            checked(foreignDetail, 404); assertNull(header(foreignDetail, "ETag"))
+                            val foreignCursor = web.get(nextPath, foreignBearer)
+                            checked(foreignCursor, 400)
+                            assertEquals("INVALID_CURSOR", mapper.readTree(foreignCursor.body())["errors"][0]["code"].textValue())
+
+                            // Actual incomplete TCP requests: aliases/methods stay closed before body or bearer.
+                            for ((method, path) in listOf(
+                                "HEAD" to detailPath, "GET" to "$detailPath/",
+                                "GET" to "${ComplaintInstallationRoutes.HISTORY}/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+                                "GET" to ComplaintInstallationRoutes.ME, "POST" to ComplaintInstallationRoutes.DELETE_ALL,
+                                "POST" to "$detailPath/replies", "PATCH" to "$detailPath/content", "DELETE" to detailPath,
+                            )) web.refusedBeforeBody(method, path, bearer, 404)
+                            web.refusedBeforeBody("GET", detailPath, bearer, 400) // Canonical GET still requires the existing bodyless contract.
+
+                            assertEquals(1, first.observer.update("UPDATE app_installations SET credential_version = credential_version + 1 WHERE id = ? AND data_scope_id = ?",
+                                actor.id, first.scope)) // Negative current-row drift only, never a positive identity seed.
+                            checked(web.get(ComplaintInstallationRoutes.HISTORY, bearer), 401)
+                            checked(web.get(detailPath, bearer), 401)
+                            first.registration.close() // Retaining the same handlers cannot revive a closed registration.
+                            checked(web.get(ComplaintInstallationRoutes.HISTORY, foreignBearer), 503)
+                            checked(web.get(detailPath, foreignBearer), 503)
+                            web.assertRequestsReleased(); checkpoint.assertReleased()
+                            assertEquals(counters, first.counters()); assertEquals(audits, auditImage(first))
+                            assertEquals(afterProviders, providerCounts(first, ordinary, raw))
+                        }
+                    }
+                } finally {
+                    web.assertRequestsReleased()
+                    // Owned disposable scope only; no product erasure, counter refund or read authority.
+                    first.observer.update("DELETE FROM complaints WHERE data_scope_id = ?", first.scope)
+                    first.observer.update("DELETE FROM complaint_resource_ids WHERE data_scope_id = ?", first.scope)
+                    first.observer.update("DELETE FROM complaint_idempotency_receipts WHERE data_scope_id = ? AND actor_id = ?", first.scope, actor.id)
+                    first.observer.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_CREATED'", first.scope)
+                }
+                startup.close()
+                web.assertDisposed(nativeStillActive = true)
+            }
+        }
+    }
+
     fun heldRequestDrainsBeforeJpaClose(tls: VersionBoundPersistenceConnectedFixture) = withPrepared(tls) { first, _, _ ->
         first.assembly.beginRegisteredHttpStartup(first.registration).use { startup ->
             startup.start()
@@ -239,7 +361,7 @@ internal object TestRegisteredHttpStartupCasesV1 {
         checkNotNull(retained).assertDisposed(nativeStillActive = false)
     }
 
-    // Only positive CREATE needs the captured global predecessor. HTTP lifecycle-only cases keep the old prerequisite.
+    // CREATE and read-after-CREATE cases need the captured global predecessor. Lifecycle-only cases keep the old prerequisite.
     private fun withPrepared(tls: VersionBoundPersistenceConnectedFixture, globalScanBeforeActivation: Boolean = false,
         action: (TestActiveFirstCutFixtureV1, TestActiveOrdinaryRawFixtureV1, TestActiveInitialCheckpointRawFixtureV1) -> Unit) {
         val ordinary = TestActiveOrdinaryRawFixtureV1()
@@ -294,12 +416,41 @@ internal object TestRegisteredHttpStartupCasesV1 {
                 .proxy(direct).connectTimeout(Duration.ofSeconds(2)).build()
         }
 
-        fun get(path: String): HttpResponse<ByteArray> = send(HttpRequest.newBuilder(uri(path)).GET())
+        fun get(path: String, bearer: String? = null): HttpResponse<ByteArray> =
+            send(HttpRequest.newBuilder(uri(path)).apply { bearer?.let { header("Authorization", "Bearer $it") } }.GET())
         fun post(path: String, body: ByteArray, bearer: String? = null, key: UUID? = null): HttpResponse<ByteArray> =
             send(HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json").apply {
                 bearer?.let { header("Authorization", "Bearer $it") }
                 key?.let { header("X-Kira-Idempotency-Key", it.toString()) }
             }.POST(HttpRequest.BodyPublishers.ofByteArray(body)))
+
+        /** No body is sent. An optional container 100 Continue is not the required final refusal. */
+        fun refusedBeforeBody(method: String, path: String, bearer: String, expected: Int) = Socket().use { socket ->
+            socket.connect(InetSocketAddress(loopback(), port), 2_000)
+            socket.soTimeout = 5_000
+            socket.getOutputStream().apply {
+                write(("$method $path HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nAuthorization: Bearer $bearer\r\n" +
+                    "Content-Type: application/json\r\nContent-Length: 2\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
+                flush()
+            }
+            val input = socket.getInputStream()
+            repeat(2) { index ->
+                val head = StringBuilder()
+                while (!head.endsWith("\r\n\r\n")) {
+                    val next = input.read()
+                    assertTrue(next >= 0 && head.length < 4096, "Expected a bounded final response before sending any request body.")
+                    head.append(next.toChar())
+                }
+                val lines = head.toString().split("\r\n")
+                if (index == 0 && lines.first().startsWith("HTTP/1.1 100 ")) return@repeat
+                assertTrue(lines.first().startsWith("HTTP/1.1 $expected "), "Body admission must not precede the final refusal.")
+                assertTrue(lines.any { it.equals("X-Kira-Complaint-Contract: 1", ignoreCase = true) })
+                assertTrue(lines.any { it.equals("Cache-Control: no-store, no-transform", ignoreCase = true) })
+                return@use
+            }
+            error("No final refusal before request body.")
+        }
+
         private fun uri(path: String) = URI.create("http://127.0.0.1:$port$path")
         private fun send(request: HttpRequest.Builder): HttpResponse<ByteArray> =
             client.send(request.timeout(Duration.ofSeconds(5)).build(), HttpResponse.BodyHandlers.ofByteArray())
@@ -329,6 +480,9 @@ internal object TestRegisteredHttpStartupCasesV1 {
     private fun providerCounts(first: TestActiveFirstCutFixtureV1, ordinary: TestActiveOrdinaryRawFixtureV1, raw: TestActiveInitialCheckpointRawFixtureV1) =
         listOf(first.native.sts.requests.size, first.native.kms.requests.size, first.native.requests.size, ordinary.requestBudgets.size,
             raw.sts.requests.size, raw.kms.requests.size, raw.requests.size, first.p.f.http.read.requests.size)
+
+    private fun auditImage(first: TestActiveFirstCutFixtureV1): List<String> = first.observer.queryForList(
+        "SELECT jsonb_build_array(to_jsonb(a), a.xmin::text)::text FROM audit_log a WHERE complaint_data_scope_id = ? ORDER BY id", String::class.java, first.scope)
 
     private fun attempt(actor: ScopedInstallationId): RegisteredInitialCreateAttemptV1 {
         val input = ComplaintOwnerCreateInput(UUID.randomUUID(), UUID.randomUUID(), ComplaintType.TECHNICAL,
@@ -375,7 +529,7 @@ internal object TestRegisteredHttpStartupCasesV1 {
     private fun loopback(): InetAddress = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
     private val mapper = ObjectMapper()
     private val SUBSET = setOf(ComplaintInstallationRoutes.BOOTSTRAP, ComplaintInstallationRoutes.ENROLLMENT, ComplaintInstallationRoutes.SESSION,
-        ComplaintInstallationRoutes.HISTORY, ComplaintInstallationRoutes.STATUS)
+        ComplaintInstallationRoutes.HISTORY, ComplaintInstallationRoutes.STATUS, "${ComplaintInstallationRoutes.HISTORY}/{id}")
     private val direct = object : ProxySelector() {
         override fun select(uri: URI): List<Proxy> = listOf(Proxy.NO_PROXY)
         override fun connectFailed(uri: URI, sa: SocketAddress, ioe: IOException) = Unit

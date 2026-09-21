@@ -16,6 +16,7 @@ internal class TestOwnerDeleteControlBindingV1(private val graph: TestOwnerDelet
     fun lock(jdbc: JdbcTemplate, authorizing: Boolean): Locked {
         graph.requireDeletion(jdbc)
         check(!authorizing || graph.recoveryRegistration == null)
+        graph.initialDeletion?.let { return it.lockControls(jdbc) }
         PersistencePhaseOwnership.current()?.registeredActiveQueueControls(graph, jdbc)?.let { epoch ->
             // Separate ACTIVE original: exact current full D, raw catalog and its live lease were
             // rechecked on this APPLY holder. No checkpoint health or SEALED exception is borrowed.
@@ -49,6 +50,7 @@ internal class TestOwnerDeleteControlBindingV1(private val graph: TestOwnerDelet
     /** Run comes AFTER counters, before owner/resource locks, never in the control-lock prefix. */
     fun lockRun(jdbc: JdbcTemplate, authorizing: Boolean) {
         graph.requireDeletion(jdbc)
+        graph.initialDeletion?.let { it.lockRun(jdbc, authorizing); return }
         if (graph.recoveryRegistration != null) {
             check(!authorizing)
             checkNotNull(PersistencePhaseOwnership.current()).requireTestRunDeletionRun(graph, jdbc)

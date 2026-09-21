@@ -1868,7 +1868,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         }
     }
 
-    /** One permanent ordinary-paid observation per run. No ordinal, test reserve or recovery reserve changes. */
+    /** One permanent ordinary-actual privacy observation per run. No ordinal, test or recovery reserve changes. */
     internal class LockedTestActiveOwnerDeleteQueue private constructor(
         private val store: JdbcComplaintCapacityStore,
         private val operation: TestActiveOwnerDeleteQueueOperationV1,
@@ -1884,13 +1884,14 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 if (charge) {
                     val expected = checkNotNull(store.expectedPolicyDigest)
                     val before = counters.ledger.balance
-                    val after = counters.ledger.chargeCreation(expected, TestActiveOwnerDeleteQueueStorageV1.ROW).balance
+                    val after = counters.ledger.chargePrivacyActual(expected, TestActiveOwnerDeleteQueueStorageV1.ROW).balance
                     check(after.testReserved == before.testReserved && after.recoveryReserved == before.recoveryReserved &&
                         after.hardLimit == before.hardLimit && after.creationLimit == before.creationLimit)
                     for (counter in ComplaintCapacityEncoding.lockOrder()) {
                         if (before.free[counter] == after.free[counter] && before.actual[counter] == after.actual[counter]) continue
                         check(counter === ComplaintCapacityCounter.STORAGE_BYTES)
-                        check(store.jdbc.update(INITIAL_CHECKPOINT_COUNTER, after.free[counter], after.actual[counter], counter.storedName, counter.storedOrdinal, expected,
+                        check(store.jdbc.update(TEST_ACTIVE_QUEUE_COUNTER, after.free[counter], after.actual[counter], counter.storedName, counter.storedOrdinal, expected,
+                            counters.ledger.configuration.creationClosed,
                             before.hardLimit[counter], before.creationLimit[counter], before.free[counter], before.actual[counter],
                             before.recoveryReserved[counter], before.testReserved[counter]) == 1)
                     }
@@ -2767,6 +2768,14 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         val INITIAL_CHECKPOINT_COUNTER = """
             UPDATE complaint_capacity_counters SET free_units = ?, actual_units = ?, updated_at = clock_timestamp()
         """.trimIndent() + "\n" + ENROLLMENT_COUNTER_MATCH
+        // Privacy bookkeeping may use unpromised hard headroom when creation is closed. Preserve the
+        // exact locked closure bit and all counter comparisons, without changing enrollment/CREATE SQL.
+        val TEST_ACTIVE_QUEUE_COUNTER = """
+            UPDATE complaint_capacity_counters SET free_units = ?, actual_units = ?, updated_at = clock_timestamp()
+            WHERE name = ? AND ordinal = ? AND accounting_version = 1 AND configuration_hash = ? AND configuration_closed = ?
+                AND hard_limit = ? AND creation_limit = ? AND free_units = ? AND actual_units = ?
+                AND recovery_reserved_units = ? AND test_reserved_units = ?
+        """.trimIndent()
         val CHARGE_ENROLLMENT_COUNTER = """
             UPDATE complaint_capacity_counters
             SET free_units = ?, actual_units = ?, test_reserved_units = ?, updated_at = clock_timestamp()

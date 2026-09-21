@@ -15,6 +15,9 @@ internal object OwnerDeletePersistenceSql {
         )
     """.trimIndent()
     val AUTHENTICATE = "$ACTOR SELECT actor.platform FROM (SELECT 1) seed LEFT JOIN actor ON true"
+    private val REGISTERED_ACTOR = "${me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionSqlV1.identity}, ${ACTOR.removePrefix("WITH ")}"
+    val REGISTERED_AUTHENTICATE = "$REGISTERED_ACTOR SELECT (SELECT matches FROM current_identity) AS registered_current_identity, actor.platform " +
+        "FROM (SELECT 1) seed LEFT JOIN actor ON true"
 
     internal val RECEIPT_COLUMNS = """
         r.actor_id, r.idempotency_key, r.operation, r.data_scope_id, r.test_only, r.state,
@@ -54,6 +57,11 @@ internal object OwnerDeletePersistenceSql {
     """.trimIndent()
     val OBSERVE = """
         $ACTOR SELECT actor.platform, $RECEIPT_COLUMNS FROM (SELECT 1) seed LEFT JOIN actor ON true
+        LEFT JOIN complaint_idempotency_receipts r ON r.actor_kind = 'INSTALLATION' AND r.actor_id = actor.id AND r.idempotency_key = ?::uuid
+    """.trimIndent()
+    val REGISTERED_OBSERVE = """
+        $REGISTERED_ACTOR SELECT (SELECT matches FROM current_identity) AS registered_current_identity, actor.platform, $RECEIPT_COLUMNS
+        FROM (SELECT 1) seed LEFT JOIN actor ON true
         LEFT JOIN complaint_idempotency_receipts r ON r.actor_kind = 'INSTALLATION' AND r.actor_id = actor.id AND r.idempotency_key = ?::uuid
     """.trimIndent()
     val LOCK_RECEIPT = "SELECT $RECEIPT_COLUMNS FROM complaint_idempotency_receipts r WHERE r.actor_kind = 'INSTALLATION' AND r.actor_id = ? AND r.idempotency_key = ? FOR UPDATE"

@@ -161,7 +161,7 @@ internal class TestActiveOwnerDeleteQueueOperationV1 private constructor(
             return tail to history
         }
 
-        /** Called only by the exact retained OWNER_DELETE APPLY boundary; no terminal/SEALED bypass. */
+        /** Called only by the exact retained registered deletion APPLY boundary; no terminal/SEALED bypass. */
         internal fun lockRecoveryControls(jdbc: JdbcTemplate, original: TestActiveOwnerDeleteQueueV1) {
             original.requireRecoveryHolder(jdbc)
             lockControls(jdbc, original); readAdmission(jdbc, original)

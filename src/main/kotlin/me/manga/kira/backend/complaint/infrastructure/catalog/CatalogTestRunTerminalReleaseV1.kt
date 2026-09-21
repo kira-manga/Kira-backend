@@ -49,7 +49,7 @@ internal class CatalogTestRunTerminalReleaseV1 private constructor(
         if (created) {
             (listOf(PREPARE, SIGN, SIGN_SQL, PUT, COMPLETE, PROJECT) + EFFECTS).forEach { requireTestTerminalCatalog(custody.read(it) == null) }
         } else {
-            requireTestTerminalCatalog(snapshot.terminal != null)
+            val terminal = snapshot.terminal ?: throw CatalogTestRunTerminalExceptionV1()
             listOf(PREPARE, SIGN, SIGN_SQL, PUT, COMPLETE, PROJECT).forEach { leaf ->
                 custody.read(leaf)?.let { arms[leaf] = parseArm(leaf, it) }
             }
@@ -59,7 +59,7 @@ internal class CatalogTestRunTerminalReleaseV1 private constructor(
             if (signature != null) {
                 requireTestTerminalCatalog(SIGN in arms)
                 signed = CatalogTestRunTerminalSignedV1.verify(original.process, input, signature, envelope)
-            } else requireTestTerminalCatalog(envelope == null && !snapshot.terminal.signed)
+            } else requireTestTerminalCatalog(envelope == null && !terminal.signed)
             custody.read(CatalogTestRunActivationReleaseLeafV1.SIGN_RETURNED)?.let {
                 requireTestTerminalCatalog(envelope != null && it.contentEquals(returnedRecord(checkNotNull(signed))))
             }
@@ -81,15 +81,15 @@ internal class CatalogTestRunTerminalReleaseV1 private constructor(
             requireTestTerminalCatalog(COMPLETE !in arms || delivered != null)
             ack?.let { requireAcknowledgedRecord(it) }
             delivered?.let { requireStoredDual() }
-            if (snapshot.terminal.signed) {
+            if (terminal.signed) {
                 requireTestTerminalCatalog(SIGN_SQL in arms)
-                snapshot.terminal.requireSigned(checkNotNull(signed))
+                terminal.requireSigned(checkNotNull(signed))
             }
-            if (snapshot.terminal.completed != null) {
+            if (terminal.completed != null) {
                 requireTestTerminalCatalog(COMPLETE in arms)
                 requireStoredDual()
             }
-            if (snapshot.terminal.projectedAt != null) requireTestTerminalCatalog(PROJECT in arms)
+            if (terminal.projectedAt != null) requireTestTerminalCatalog(PROJECT in arms)
         }
         requireSnapshot(snapshot)
     }

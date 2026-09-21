@@ -20,6 +20,8 @@ internal object TestActiveOwnerDeleteQueueSqlV1 {
 
     // Sampled only AFTER the fixed global -> scope -> counters(if acquisition) -> run -> observation locks.
     // Queue work can repair an unhealthy journal; neither a copied checkpoint nor its age is admission here.
+    // Privacy recovery is independent of creation closure. Maintenance, scan, full D and current-owner
+    // checks still apply; unchanged fingerprints also refuse control drift during this exact attempt.
     val current = """
         $expected
         SELECT (e.scope = d.scope AND r.test_only AND r.state = 'ACTIVE' AND (${ComplaintInstallationTestRunRows.activeShape})
@@ -33,7 +35,7 @@ internal object TestActiveOwnerDeleteQueueSqlV1 {
             AND c.restore_identity = d.restore_identity AND c.event_writer_generation = d.event_writer
             AND c.catalog_writer_generation = d.catalog_writer AND c.trust_bundle_hash = d.trust_hash
             AND c.accepted_catalog_generation = d.generation AND c.accepted_catalog_hash = d.activation_hash
-            AND NOT c.maintenance_closed AND NOT c.creation_closed AND c.pending_projection_token IS NULL AND NOT c.scan_requested
+            AND NOT c.maintenance_closed AND c.pending_projection_token IS NULL AND NOT c.scan_requested
             AND ((c.publication_epoch = 1 AND c.rotation_sequence = 0 AND c.rotation_state IS NULL AND c.rotation_id IS NULL AND c.seal_state IS NULL)
                 OR (c.publication_epoch = 2 AND c.rotation_sequence = 1 AND c.rotation_state = 'CAPTURED'
                     AND c.rotation_epoch_before = 1 AND c.rotation_epoch_after = 2 AND c.seal_state = 'SEAL_VERIFIED'
@@ -47,7 +49,7 @@ internal object TestActiveOwnerDeleteQueueSqlV1 {
             AND g.database_identity = d.database_identity AND g.restore_identity = d.restore_identity
             AND g.event_writer_generation = d.event_writer AND g.catalog_writer_generation = d.catalog_writer
             AND g.trust_bundle_hash = d.trust_hash AND g.accepted_catalog_generation = d.generation AND g.accepted_catalog_hash = d.activation_hash
-            AND NOT g.maintenance_closed AND NOT g.creation_closed AND g.pending_projection_token IS NULL AND NOT g.scan_requested AND g.publication_epoch > 0
+            AND NOT g.maintenance_closed AND g.pending_projection_token IS NULL AND NOT g.scan_requested AND g.publication_epoch > 0
             AND complaint_finite_times(g.updated_at, c.updated_at, c.lease_expires_at, s.sampled_at)
             AND s.sampled_at >= c.updated_at AND s.sampled_at >= g.updated_at
             AND s.sampled_at >= '1970-01-01T00:00:00Z'::timestamptz AND s.sampled_at < '10000-01-01T00:00:00Z'::timestamptz

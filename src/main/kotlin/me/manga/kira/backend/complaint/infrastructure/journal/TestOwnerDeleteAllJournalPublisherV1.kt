@@ -11,6 +11,7 @@ import me.manga.kira.backend.security.TestOwnerDeleteCodecAttemptV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
 import me.manga.kira.backend.security.aws.AwsTestOwnerDeleteDataKeyAdapterV1
+import me.manga.kira.backend.security.aws.EpochSealStsClientOwner
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
 import java.time.Clock
@@ -60,6 +61,11 @@ internal class TestOwnerDeleteAllJournalPublisherV1 private constructor(
         private var closed = false
         private var owner: TestOwnerDeleteAllJournalPublisherV1? = null
         private var failure: Throwable? = null
+        private var principalCheck: EpochSealStsClientOwner? = null
+        internal fun retainPrincipalCheck(owner: EpochSealStsClientOwner) {
+            requireJournalPublication(opened && !closed && principalCheck == null)
+            principalCheck = owner
+        }
         internal fun open(factory: TestOwnerDeleteAllJournalPublisherFactoryV1, lane: JournalPublicationLanesV1.TestOwnerDeleteAllReservation,
             store: JdbcComplaintOwnerDeleteAllStore, routing: TestOwnerDeleteJournalRoutingV1, credentials: AwsSessionCredentials,
             s3Http: (remainingMillis: () -> Int) -> SdkHttpClient, kmsHttp: (remainingMillis: () -> Int) -> SdkHttpClient,
@@ -70,6 +76,8 @@ internal class TestOwnerDeleteAllJournalPublisherV1 private constructor(
                 requireJournalPublication(!opened && !closed)
                 opened = true
                 val result = runCatching {
+                    factory.authenticateInitial(this, lane, attempt)
+                    lane.requireConstructing(factory, this, attempt)
                     val dataKeys = keys.open(routing.journalConfiguration, credentials, kmsHttp, nanoTime, attempt)
                     lane.requireConstructing(factory, this, attempt)
                     val client = s3.open(routing, credentials, s3Http, nanoTime, attempt)
@@ -83,7 +91,9 @@ internal class TestOwnerDeleteAllJournalPublisherV1 private constructor(
             closed = true
             val observed = runCatching {
                 val complete = owner
-                if (complete != null) complete.close() else withJournalPublicationCleanup({ s3.close() }, keys::close)
+                withJournalPublicationCleanup({
+                    if (complete != null) complete.close() else withJournalPublicationCleanup({ s3.close() }, keys::close)
+                }, { principalCheck?.close() })
             }.exceptionOrNull()
             if (observed != null && replaceJournalPublicationFailure(failure, observed)) failure = observed
             failure?.let { throw it }

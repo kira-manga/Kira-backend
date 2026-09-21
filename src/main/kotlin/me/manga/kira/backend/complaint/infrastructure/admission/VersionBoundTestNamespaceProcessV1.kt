@@ -48,6 +48,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     val terminalDenial: TestTerminalDenialAuthorityPolicyV1?,
     val initialCheckpointCreate: VersionBoundTestInitialCheckpointCreateV1?,
     val activeOwnerDeleteQueue: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1?,
+    val initialCheckpointDeletion: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointDeletionV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val canonical: ByteArray
@@ -58,6 +59,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         requireOwners()
         // Freeze absence too: the same ordinary graph cannot acquire new CREATE semantics after D.
         pools.retainTestInitialCheckpointCreate(initialCheckpointCreate)
+        pools.retainTestInitialCheckpointDeletion(initialCheckpointDeletion)
         // Same existing registry only; local N/R accounting registration is not TEST activation.
         publicationLanes.retainTestJournal(consumers.journalConfiguration)
         retainedPools = pools.descriptors()
@@ -93,6 +95,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     fun requireUnchangedConfiguration() {
         requireOwners()
         pools.requireTestInitialCheckpointCreate(initialCheckpointCreate)
+        pools.requireTestInitialCheckpointDeletion(initialCheckpointDeletion)
         publicationLanes.requireTestJournal(consumers.journalConfiguration)
         val current = pools.descriptors()
         require(current.size == retainedPools.size && current.indices.all { current[it] === retainedPools[it] }) {
@@ -179,6 +182,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         require(initialCheckpoint == null || activeFirstCut != null && activeCutoffPublication != null) { INVALID_TEST_PROCESS_CONFIGURATION }
         initialCheckpoint?.requireRetained(consumers.journalRouting, pools, ordinarySeal)
         initialCheckpointCreate?.requireRetained(pools, consumers.journalRouting, initialCheckpoint)
+        initialCheckpointDeletion?.requireRetained(pools, consumers.journalRouting, initialCheckpoint, activeCutoffPublication)
         require(activeOwnerDeleteQueue == null || initialCheckpoint != null && activeFirstCut != null) { INVALID_TEST_PROCESS_CONFIGURATION }
         activeOwnerDeleteQueue?.requireRetained(consumers.journalRouting, pools)
         catalogActivation.requireRetained(pools, catalogReadback, journal)
@@ -219,6 +223,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             terminalDenial: TestTerminalDenialAuthorityPolicyV1? = null,
             initialCheckpointCreate: VersionBoundTestInitialCheckpointCreateV1? = null,
             activeOwnerDeleteQueue: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1? = null,
+            initialCheckpointDeletion: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointDeletionV1? = null,
         ): VersionBoundTestNamespaceProcessV1 {
             requireConnectionFree()
             return VersionBoundTestNamespaceProcessV1(
@@ -226,6 +231,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
                 publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication, activeFirstCutSuccessor, initialCheckpoint, activeOrdinarySealRecovery, terminalDenial = terminalDenial,
                 initialCheckpointCreate = initialCheckpointCreate,
                 activeOwnerDeleteQueue = activeOwnerDeleteQueue,
+                initialCheckpointDeletion = initialCheckpointDeletion,
             )
         }
 

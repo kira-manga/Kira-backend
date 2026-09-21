@@ -10,7 +10,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode
 
 /**
  * SOURCE ONLY / NOT_COMPILED / NOT_RUN. Actual PG/TLS and genuine registered native fixture chain;
- * only raw provider HTTP is substituted. Initial-only CREATE and explicit subset HTTP composition,
+ * only raw provider HTTP is substituted. Initial-only CREATE and explicit read/CREATE HTTP subsets,
  * not recurrence/reply/health/queue, default activation or deployment.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -58,6 +58,9 @@ class TestRegisteredInitialCheckpointCreateIT {
 
     @Test fun explicitLoopbackStartupServesRegisteredIdentityCountedCreateAndReceiptsWithOriginalJpa() = withFixture {
         TestRegisteredHttpStartupCasesV1.identityCreateAndReceipts(it)
+    }
+    @Test fun explicitLoopbackStartupReadsOnlyOwnCreatedItemsAndScopedNoticesWithBoundCursorAndNoReadMutation() = withFixture {
+        TestRegisteredHttpStartupCasesV1.ownerReadsNoticesAndCursor(it)
     }
     @Test fun explicitLoopbackStartupWaitsForHeldOriginalIngressBeforeClosingJpaAndLeavesBorrowedPoolsOpen() = withFixture {
         TestRegisteredHttpStartupCasesV1.heldRequestDrainsBeforeJpaClose(it)

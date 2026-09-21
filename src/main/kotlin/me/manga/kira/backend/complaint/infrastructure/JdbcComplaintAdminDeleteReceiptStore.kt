@@ -14,10 +14,12 @@ import java.sql.Timestamp
 import java.util.UUID
 
 /** Current normal-user principal and exact receipt share ONE MVCC statement before proof or quota. */
-internal class JdbcComplaintAdminDeleteReceiptStore(private val jdbc: JdbcTemplate, private val graph: TestOwnerDeleteLocalGraphV1) {
+internal class JdbcComplaintAdminDeleteReceiptStore(private val jdbc: JdbcTemplate, internal val graph: TestOwnerDeleteLocalGraphV1) {
     private val issuer = Any()
     private val authentication = JdbcComplaintAdminReadStore(jdbc, graph.routing.journalConfiguration.scope)
-    fun authenticate(identity: ComplaintAdminReadIdentity): ComplaintAdminReadOperation = authentication.authenticateContentIdentity(identity)
+    fun authenticate(identity: ComplaintAdminReadIdentity): ComplaintAdminReadOperation = authentication.authenticateContentIdentity(identity, graph.initialDeletion)
+    internal fun requireEntry(owner: PersistencePhaseOwnership, path: PersistencePhasePath) { graph.initialDeletion?.requireEntry(owner, path) }
+    internal fun bind(phase: PersistencePhaseContext) { graph.initialDeletion?.let(phase::bindInitialDeletionRead) }
     init { graph.requireOrdinary(jdbc); check(graph.recoveryRegistration == null && graph.routing.journalConfiguration.adminDelete) }
     fun preflight(identity: ComplaintAdminReadIdentity, tuple: ComplaintAdminDeleteTuple): ComplaintAdminDeleteReadOperation =
         ComplaintAdminDeleteReadOperation.capture(jdbc, graph, issuer, identity, tuple)
@@ -57,12 +59,17 @@ internal class ComplaintAdminDeleteReadOperation private constructor(
     fun completedFor(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = belongsTo(selected, expected) && completed
     val result: ComplaintAdminDeleteObservation get() {
         phase.adminDeleteRead.requireCommitted(this); requireConnectionFree()
+        graph.initialDeletion?.requireGraph(graph)
         return released ?: ReleasedAdminDeleteObservation(issuer, identity, tuple, receipt, failure, authorizedGrantId).also { released = it }
     }
     private fun execute() {
         phase.adminDeleteRead.requireRetained(this, jdbc); graph.requireOrdinary(jdbc); identity.requireCurrent()
+        phase.requireRegisteredInitialDeletion(graph, jdbc)
         check(identity.scope == graph.routing.journalConfiguration.scope && tuple.scope == identity.scope && tuple.actor == identity.actor)
-        jdbc.query(AdminDeletePersistenceSql.OBSERVE, { row, _ ->
+        val actor = actorArguments(identity)
+        val args = graph.initialDeletion?.observationIdentityArguments()?.plus(elements = actor) ?: actor
+        jdbc.query(if (graph.initialDeletion == null) AdminDeletePersistenceSql.OBSERVE else AdminDeletePersistenceSql.REGISTERED_OBSERVE, { row, _ ->
+            if (graph.initialDeletion != null) check(row.getBoolean("registered_current_identity") && !row.wasNull())
             failure = when (row.getString("verdict")) {
                 "UNAUTHORIZED" -> ComplaintAdminDeleteFailure.UNAUTHORIZED
                 "FORBIDDEN" -> ComplaintAdminDeleteFailure.FORBIDDEN
@@ -82,8 +89,10 @@ internal class ComplaintAdminDeleteReadOperation private constructor(
                     }
                 }
             }
-        }, *actorArguments(identity).plus(tuple.key)).single()
-        phase.adminDeleteRead.requireRetained(this, jdbc); completed = true
+        }, *args.plus(tuple.key)).single()
+        phase.adminDeleteRead.requireRetained(this, jdbc)
+        phase.requireRegisteredInitialDeletion(graph, jdbc)
+        completed = true
     }
     companion object {
         internal fun actorArguments(identity: ComplaintAdminReadIdentity): Array<Any?> = arrayOf(identity.actor, identity.credentialVersion,

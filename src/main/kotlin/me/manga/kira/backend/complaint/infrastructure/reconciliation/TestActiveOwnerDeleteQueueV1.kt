@@ -18,9 +18,20 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackPort
 import me.manga.kira.backend.complaint.domain.catalog.CatalogVersionBody
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeletePhaseOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApplyOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminDeleteApplyOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminDeletePhaseOperation
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteApplyStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllApplyStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllVerificationStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteApplyStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteVerificationStore
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteVerificationStore
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyInputV1
+import me.manga.kira.backend.complaint.infrastructure.TestAdminDeleteApplyInputV1
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteApplyInputV1
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteLocalGraphV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
@@ -55,7 +66,9 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Explicit bounded ACTIVE accelerator: primary1 + DLQ1, OWNER_DELETE only. No loop/scheduler or
+ * Explicit bounded ACTIVE accelerator: primary1 + DLQ1, exact registered ordinary deletion families.
+ * ALL requires its retained VERIFIED primary or exact completed replay; missing ALL N/P/L and
+ * PREPARED-without-VERIFY remain unfinished recovery requirements, not ackable shortcuts. No loop/scheduler or
  * completeness/checkpoint/capability issuer. Every receipt is acked ONLY after its native exact
  * recovery APPLY actually commits/releases and a fresh full-D/lease check commits/releases.
  * A later observation failure cannot undo an earlier safe ack and never creates HEALTHY.
@@ -89,8 +102,12 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
         private set
     internal var step = TestActiveOwnerDeleteQueueStepV1.READ
         private set
-    internal val path: PersistencePhasePath get() = if (step === TestActiveOwnerDeleteQueueStepV1.APPLY) PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY
-        else PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE
+    internal val path: PersistencePhasePath get() = if (step === TestActiveOwnerDeleteQueueStepV1.APPLY) when (kind()) {
+        ComplaintJournalDeletionKindV1.OWNER_DELETE -> PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY
+        ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY
+        ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE -> PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY
+        else -> throw TestActiveOwnerDeleteQueueExceptionV1()
+    } else PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE
     private val caller = Thread.currentThread()
     private val failure = AtomicReference<Throwable?>()
     private var started = false
@@ -115,10 +132,16 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
     private var readback: TestActiveQueueReadbackV1? = null
     private var recoveryInput: TestOwnerDeleteApplyInputV1? = null
     private var recoveryOperation: ComplaintOwnerDeleteApplyOperation? = null
+    private var allRecoveryInput: OwnerDeleteAllApplyInputV1? = null
+    private var allRecoveryOperation: ComplaintOwnerDeleteAllApplyOperation? = null
+    private var adminRecoveryInput: TestAdminDeleteApplyInputV1? = null
+    private var adminRecoveryOperation: ComplaintAdminDeleteApplyOperation? = null
     private var recoveryControls = false
     private var recoveryRun = false
     private val graph: TestOwnerDeleteLocalGraphV1
     private val apply: JdbcComplaintOwnerDeleteApplyStore
+    private val allApply: JdbcComplaintOwnerDeleteAllApplyStore?
+    private val adminApply: JdbcComplaintAdminDeleteApplyStore?
     private val readbackIdentity = registration.activeReadbackArguments()
     private val expected = CatalogTestRunActivationCanonicalV3.fromRetained(process, identity.installationLimit)
     private val construction = S3CatalogReadbackAdapter.Construction()
@@ -144,6 +167,16 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
         val authorization = JdbcComplaintOwnerDeleteStore(deletionJdbc, capacity, audit, graph, codec = null)
         val verification = JdbcComplaintOwnerDeleteVerificationStore(deletionJdbc, graph, authorization)
         apply = JdbcComplaintOwnerDeleteApplyStore(deletionJdbc, capacity, audit, graph, authorization, verification)
+        allApply = if (routing.journalConfiguration.ownerDeleteAll) {
+            val store = JdbcComplaintOwnerDeleteAllStore(deletionJdbc, capacity, audit, graph, codec = null)
+            JdbcComplaintOwnerDeleteAllApplyStore(deletionJdbc, capacity, audit, graph,
+                JdbcComplaintOwnerDeleteAllVerificationStore(deletionJdbc, graph, store))
+        } else null
+        adminApply = if (routing.journalConfiguration.registeredAdminDelete) {
+            val store = JdbcComplaintAdminDeleteStore(deletionJdbc, capacity, audit, graph, codec = null)
+            JdbcComplaintAdminDeleteApplyStore(deletionJdbc, capacity, audit, graph, store,
+                JdbcComplaintAdminDeleteVerificationStore(deletionJdbc, graph, store))
+        } else null
     }
 
     fun poll(primaryCatalog: AwsSessionCredentials, replicaCatalog: AwsSessionCredentials): Completed {
@@ -185,19 +218,26 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
 
     private fun receiveAndApply(deadLetter: Boolean) {
         requireCurrentRunning(); recoveryInput = null; recoveryOperation = null; readback = null; locator = null; rechecked = null
+        allRecoveryInput = null; allRecoveryOperation = null; adminRecoveryInput = null; adminRecoveryOperation = null
         recoveryControls = false; recoveryRun = false
         step = TestActiveOwnerDeleteQueueStepV1.RECEIVE
         delivery = checkNotNull(queue).receive(deadLetter)
         execute(TestActiveOwnerDeleteQueueStepV1.RECHECK) // Includes an empty poll or a late native return.
         val selected = delivery ?: return
-        if (deadLetter) LOG.warn("ACTIVE TEST OWNER_DELETE DLQ delivery observed; bounded recovery attempted, not queue-health evidence.")
+        if (deadLetter) LOG.warn("ACTIVE TEST deletion DLQ delivery observed; bounded recovery attempted, not queue-health evidence.")
         step = TestActiveOwnerDeleteQueueStepV1.JOURNAL
         locator = selected.locator() // Untrusted notification: only the retained concrete reader can mint readback.
         reader?.requireClosed()
         nativeCreating = true
         val native = recipe.reader(this).also { reader = it; nativeCreating = false }
         readback = native.read()
-        recoveryInput = apply.captureRegisteredQueueRecovery(this)
+        when (kind()) {
+            ComplaintJournalDeletionKindV1.OWNER_DELETE -> recoveryInput = apply.captureRegisteredQueueRecovery(this)
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> allRecoveryInput = checkNotNull(allApply).captureRegisteredQueueRecovery(this)
+            ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE ->
+                adminRecoveryInput = checkNotNull(adminApply).captureRegisteredQueueRecovery(this)
+            else -> throw TestActiveOwnerDeleteQueueExceptionV1()
+        }
         native.close(); native.requireClosed() // Every S3/KMS graph/key lease/byte buffer has actually retired before APPLY.
         recover()
         rechecked = execute(TestActiveOwnerDeleteQueueStepV1.RECHECK)
@@ -212,18 +252,44 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
     private fun recover() {
         requireConnectionFree(); requireCurrentRunning(); checkNotNull(reader).requireClosed()
         step = TestActiveOwnerDeleteQueueStepV1.APPLY
-        val selected = deletionOwner.enterTestActiveQueueOwnerDeleteRecovery(this)
+        val selected = when (kind()) {
+            ComplaintJournalDeletionKindV1.OWNER_DELETE -> deletionOwner.enterTestActiveQueueOwnerDeleteRecovery(this)
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> deletionOwner.enterTestActiveQueueOwnerDeleteAllRecovery(this)
+            ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE -> deletionOwner.enterTestActiveQueueAdminDeleteRecovery(this)
+            else -> throw TestActiveOwnerDeleteQueueExceptionV1()
+        }
         var operation: ComplaintOwnerDeleteApplyOperation? = null
+        var allOperation: ComplaintOwnerDeleteAllApplyOperation? = null
+        var adminOperation: ComplaintAdminDeleteApplyOperation? = null
         try {
-            selected.begin(); operation = apply.apply(checkNotNull(recoveryInput))
+            selected.begin()
+            when (kind()) {
+                ComplaintJournalDeletionKindV1.OWNER_DELETE -> operation = apply.apply(checkNotNull(recoveryInput))
+                ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> allOperation = checkNotNull(allApply).apply(checkNotNull(allRecoveryInput))
+                ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE ->
+                    adminOperation = checkNotNull(adminApply).apply(checkNotNull(adminRecoveryInput))
+                else -> throw TestActiveOwnerDeleteQueueExceptionV1()
+            }
             requireRunning(); selected.commit()
         } catch (problem: Throwable) { observeFailure(problem); selected.recordFailure(problem) }
         finally {
             try { runCatching(selected::finish).exceptionOrNull()?.let(::observeFailure) }
             finally { observePhaseCleanup(selected) }
         }
-        throwIfSignalled(); checkNotNull(operation).requireRecovered()
-        requireQueue(operation === recoveryOperation && phase == null && !phaseEntered)
+        throwIfSignalled(); requireRecoveredOperation()
+        requireQueue(operation === recoveryOperation && allOperation === allRecoveryOperation && adminOperation === adminRecoveryOperation &&
+            listOfNotNull(operation, allOperation, adminOperation).size == 1 && phase == null && !phaseEntered)
+    }
+
+    private fun kind() = checkNotNull(readback).event.comparison.eventKind
+    private fun requireRecoveredOperation() {
+        requireQueue(listOfNotNull(recoveryOperation, allRecoveryOperation, adminRecoveryOperation).size == 1)
+        when (kind()) {
+            ComplaintJournalDeletionKindV1.OWNER_DELETE -> checkNotNull(recoveryOperation).requireRecovered()
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> checkNotNull(allRecoveryOperation).requireRecovered()
+            ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE -> checkNotNull(adminRecoveryOperation).requireRecovered()
+            else -> throw TestActiveOwnerDeleteQueueExceptionV1()
+        }
     }
 
     private fun execute(selected: TestActiveOwnerDeleteQueueStepV1): TestActiveOwnerDeleteQueueOperationV1 {
@@ -268,9 +334,17 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
     internal fun journalLocator(selected: TestActiveQueueJournalReaderV1): TestActiveQueueJsonV1.Locator { requireJournalNative(selected); return checkNotNull(locator) }
     internal fun requireDecoded(selected: TestActiveQueueJournalReaderV1, event: TestOwnerDeleteJournalEventV1) {
         requireJournalNative(selected)
-        requireQueue(event.belongsTo(routing) && event.comparison.eventKind === ComplaintJournalDeletionKindV1.OWNER_DELETE &&
-            event.tuple.scope.id == scope && event.tuple.epoch in 1..checkNotNull(captured).current.epoch &&
-            event.complaintIds().size == 1 && event.route.objectKey == checkNotNull(locator).key)
+        val j = routing.journalConfiguration
+        val count = event.complaintIds().size
+        requireQueue(event.belongsTo(routing) && event.comparison.scope.id == scope &&
+            event.comparison.epoch in 1..checkNotNull(captured).current.epoch && event.route.objectKey == checkNotNull(locator).key &&
+            when (event.comparison.eventKind) {
+                ComplaintJournalDeletionKindV1.OWNER_DELETE -> count == 1
+                ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> j.ownerDeleteAll && allApply != null && count in 0..100
+                ComplaintJournalDeletionKindV1.ADMIN_DELETE -> j.registeredAdminDelete && adminApply != null && count == 1
+                ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE -> j.registeredAdminBatchDelete && adminApply != null && count in 1..50
+                else -> false
+            })
     }
     internal fun remainingNativeMillis(ceiling: Int): Int { requireConnectionFree(); requireCurrentRunning(); return budget.remainingMillis(ceiling.toLong()).toInt() }
     internal fun retainPrincipal(owner: EpochSealStsClientOwner) {
@@ -284,7 +358,7 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
     internal fun requireAckInput(selected: TestActiveOwnerDeleteSqsV1, value: TestActiveOwnerDeleteSqsV1.Delivery) {
         requireQueueNative(selected); requireQueue(step === TestActiveOwnerDeleteQueueStepV1.ACK && delivery === value &&
             (if (value.deadLetter) dlqAcked == 0 else primaryAcked == 0))
-        checkNotNull(reader).requireClosed(); checkNotNull(recoveryOperation).requireRecovered()
+        checkNotNull(reader).requireClosed(); requireRecoveredOperation()
         val check = checkNotNull(rechecked); requireQueue(check.step === TestActiveOwnerDeleteQueueStepV1.RECHECK)
         check.requireReleased(); check.current.requireLease(this); requireQueue(principal.get() == null)
     }
@@ -300,12 +374,39 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
         requireQueue(caller === Thread.currentThread() && selected === recipe && process.activeOwnerDeleteQueue === selected)
 
     internal fun ownedRecoveryReadback(store: JdbcComplaintOwnerDeleteApplyStore, selectedGraph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate): TestActiveQueueReadbackV1 {
-        requireConnectionFree(); requireRunning(); requireQueue(store === apply && selectedGraph === graph && jdbc === deletionJdbc &&
-            step === TestActiveOwnerDeleteQueueStepV1.JOURNAL && recoveryInput == null && delivery != null)
+        requireRecoveryCapture(selectedGraph, jdbc)
+        requireQueue(store === apply && kind() === ComplaintJournalDeletionKindV1.OWNER_DELETE)
         return checkNotNull(readback).also { it.requireOriginal(this) }
     }
+    internal fun ownedRecoveryReadback(store: JdbcComplaintOwnerDeleteAllApplyStore, selectedGraph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate): TestActiveQueueReadbackV1 {
+        requireRecoveryCapture(selectedGraph, jdbc)
+        requireQueue(store === allApply && kind() === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL)
+        return checkNotNull(readback).also { it.requireOriginal(this) }
+    }
+    internal fun ownedRecoveryReadback(store: JdbcComplaintAdminDeleteApplyStore, selectedGraph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate): TestActiveQueueReadbackV1 {
+        requireRecoveryCapture(selectedGraph, jdbc)
+        requireQueue(store === adminApply && kind() in setOf(ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE))
+        return checkNotNull(readback).also { it.requireOriginal(this) }
+    }
+    private fun requireRecoveryCapture(selectedGraph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate) {
+        requireConnectionFree(); requireRecoveryPersistence(deletionOwner, jdbc, selectedGraph)
+        requireQueue(step === TestActiveOwnerDeleteQueueStepV1.JOURNAL && recoveryInput == null && allRecoveryInput == null &&
+            adminRecoveryInput == null && delivery != null)
+    }
     internal fun requireRecoveryInput(input: TestOwnerDeleteApplyInputV1) {
-        requireRunning(); requireQueue(step === TestActiveOwnerDeleteQueueStepV1.APPLY && input === recoveryInput && readback != null && delivery != null)
+        requireRunning(); requireQueue(step === TestActiveOwnerDeleteQueueStepV1.APPLY && input === recoveryInput && delivery != null &&
+            kind() === ComplaintJournalDeletionKindV1.OWNER_DELETE && allRecoveryInput == null && adminRecoveryInput == null)
+        checkNotNull(reader).requireClosed()
+    }
+    internal fun requireRecoveryInput(input: OwnerDeleteAllApplyInputV1) {
+        requireRunning(); requireQueue(step === TestActiveOwnerDeleteQueueStepV1.APPLY && input === allRecoveryInput && delivery != null &&
+            kind() === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL && recoveryInput == null && adminRecoveryInput == null)
+        checkNotNull(reader).requireClosed()
+    }
+    internal fun requireRecoveryInput(input: TestAdminDeleteApplyInputV1) {
+        requireRunning(); requireQueue(step === TestActiveOwnerDeleteQueueStepV1.APPLY && input === adminRecoveryInput && delivery != null &&
+            kind() in setOf(ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) &&
+            recoveryInput == null && allRecoveryInput == null)
         checkNotNull(reader).requireClosed()
     }
     internal fun requireRecoveryPersistence(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, selectedGraph: TestOwnerDeleteLocalGraphV1) {
@@ -313,15 +414,34 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
         deletionOwner.requireBoundComplaintDeletion(process.pools); graph.requireDeletion(jdbc)
     }
     internal fun authenticateRecoveryAndControls(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, operation: ComplaintOwnerDeletePhaseOperation) {
-        requireRecoveryPersistence(ownership, jdbc, graph); requireQueue(recoveryOperation == null && !recoveryControls)
+        requireRecoveryAuthentication(ownership, jdbc)
         val selected = operation as? ComplaintOwnerDeleteApplyOperation ?: throw TestActiveOwnerDeleteQueueExceptionV1()
         selected.requireRegisteredQueueRecovery(this); recoveryOperation = selected
         authenticateAs(jdbc, PersistenceJdbcParticipantRole.DELETION)
         TestActiveOwnerDeleteQueueOperationV1.lockRecoveryControls(jdbc, this); recoveryControls = true
     }
+    internal fun authenticateRecoveryAndControls(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, operation: ComplaintOwnerDeleteAllApplyOperation) {
+        requireRecoveryAuthentication(ownership, jdbc)
+        operation.requireRegisteredQueueRecovery(this); allRecoveryOperation = operation
+        authenticateAs(jdbc, PersistenceJdbcParticipantRole.DELETION)
+        TestActiveOwnerDeleteQueueOperationV1.lockRecoveryControls(jdbc, this); recoveryControls = true
+    }
+    internal fun authenticateRecoveryAndControls(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, operation: ComplaintAdminDeletePhaseOperation) {
+        requireRecoveryAuthentication(ownership, jdbc)
+        val selected = operation as? ComplaintAdminDeleteApplyOperation ?: throw TestActiveOwnerDeleteQueueExceptionV1()
+        selected.requireRegisteredQueueRecovery(this); adminRecoveryOperation = selected
+        authenticateAs(jdbc, PersistenceJdbcParticipantRole.DELETION)
+        TestActiveOwnerDeleteQueueOperationV1.lockRecoveryControls(jdbc, this); recoveryControls = true
+    }
+    private fun requireRecoveryAuthentication(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
+        requireRecoveryPersistence(ownership, jdbc, graph)
+        requireQueue(step === TestActiveOwnerDeleteQueueStepV1.APPLY && !recoveryControls &&
+            recoveryOperation == null && allRecoveryOperation == null && adminRecoveryOperation == null)
+    }
     internal fun requireRecoveryHolder(jdbc: JdbcTemplate) {
         requireRecoveryPersistence(deletionOwner, jdbc, graph)
-        requireQueue(step === TestActiveOwnerDeleteQueueStepV1.APPLY && recoveryOperation != null && phase != null && phaseEntered)
+        requireQueue(step === TestActiveOwnerDeleteQueueStepV1.APPLY &&
+            listOfNotNull(recoveryOperation, allRecoveryOperation, adminRecoveryOperation).size == 1 && phase != null && phaseEntered)
     }
     internal fun requireRecoveryControls(jdbc: JdbcTemplate): Long {
         requireRecoveryHolder(jdbc); requireQueue(recoveryControls)
@@ -336,6 +456,14 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
         requireRecoveryHolder(jdbc); requireQueue(operation === recoveryOperation && recoveryControls && recoveryRun)
         TestActiveOwnerDeleteQueueOperationV1.requireRecoveryCurrent(jdbc, this)
     }
+    internal fun requireAppliedCurrent(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate) {
+        requireRecoveryHolder(jdbc); requireQueue(operation === allRecoveryOperation && recoveryControls && recoveryRun)
+        TestActiveOwnerDeleteQueueOperationV1.requireRecoveryCurrent(jdbc, this)
+    }
+    internal fun requireAppliedCurrent(operation: ComplaintAdminDeleteApplyOperation, jdbc: JdbcTemplate) {
+        requireRecoveryHolder(jdbc); requireQueue(operation === adminRecoveryOperation && recoveryControls && recoveryRun)
+        TestActiveOwnerDeleteQueueOperationV1.requireRecoveryCurrent(jdbc, this)
+    }
 
     internal fun requirePersistence(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
         requireRunning(); requireQueue(ownership === coordinator.ownership && jdbc.dataSource === coordinator.dataSource && ownership.manager === coordinator.manager)
@@ -344,7 +472,7 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
     }
     internal fun requirePhaseEntry(ownership: PersistencePhaseOwnership, selected: PersistencePhasePath) {
         requireConnectionFree(); requireRunning(); requireQueue(selected === path && phase == null && !phaseEntered)
-        if (selected === PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY) requireRecoveryPersistence(ownership, deletionJdbc, graph)
+        if (step === TestActiveOwnerDeleteQueueStepV1.APPLY) requireRecoveryPersistence(ownership, deletionJdbc, graph)
         else requireQueue(ownership === coordinator.ownership)
         phaseEntered = true
     }
@@ -368,8 +496,8 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
     }
     internal fun requireMaintenanceGate(ownership: PersistencePhaseOwnership, selected: PersistencePhasePath, gate: PersistenceComplaintMaintenanceGateV1) {
         requireRunning(); requireQueue(selected === path && phaseEntered && phase != null &&
-            ownership === if (selected === PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY) deletionOwner else coordinator.ownership)
-        registration.requireActiveIdentityGate(gate)
+            ownership === if (step === TestActiveOwnerDeleteQueueStepV1.APPLY) deletionOwner else coordinator.ownership)
+        registration.requireActiveDeletionGate(gate)
     }
     private fun requireCurrentRunning() { requireRunning(); requireQueue(leaseToken > 0 && leaseExpiresAt != null && acquired != null) }
     private fun requireRunning() {

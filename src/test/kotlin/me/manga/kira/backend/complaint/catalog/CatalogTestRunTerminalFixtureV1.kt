@@ -75,6 +75,7 @@ internal class CatalogTestRunTerminalFixtureV1(
     val d: TestRunTerminalQuiescenceV1,
     terminalApproval: ByteArray,
     terminalRaw: List<ByteArray>,
+    ordinaryApprovalInput: ByteArray? = null,
 ) : AutoCloseable {
     val process = f.registration.process
     val scope = f.scope
@@ -84,7 +85,9 @@ internal class CatalogTestRunTerminalFixtureV1(
     val limit = f.p.run.installationLimit
     val expected = CatalogTestRunTerminalCanonicalV4.fromRetained(process, limit)
     val prefix = evidence.prefix + f.p.f.envelope // Actual V3 signature from its original durable release.
-    private val ordinaryApproval = f.ordinaryApproval
+    // The A-history fixture signs its wider 1..2 denial once outside the legacy no-A helper.
+    // This is the exact input used by the actual drain, never a substituted admission/result.
+    private val ordinaryApproval = ordinaryApprovalInput?.copyOf() ?: f.ordinaryApproval
     private val ordinaryRaw = f.rawEvidence
     private val terminalApproval = terminalApproval.copyOf()
     private val terminalRaw = terminalRaw.map(ByteArray::copyOf)

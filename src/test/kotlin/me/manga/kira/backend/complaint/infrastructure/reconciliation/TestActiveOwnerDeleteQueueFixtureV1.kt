@@ -1,27 +1,22 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
-import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.common.infrastructure.persistence.DeleteAllCounter
-import me.manga.kira.backend.common.infrastructure.persistence.GuardedJdbcTransactionManager
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
-import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.StepUpPhaseObservation
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
+import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
-import me.manga.kira.backend.complaint.catalog.ComplaintTestNamespaceRegistrationCases
-import me.manga.kira.backend.complaint.catalog.InitialAdmissionFixture
 import me.manga.kira.backend.complaint.catalog.S3CatalogReadbackFixture
 import me.manga.kira.backend.complaint.catalog.SignedActivationObservation
-import me.manga.kira.backend.complaint.catalog.TestActiveOrdinaryRawHttpV1
-import me.manga.kira.backend.complaint.catalog.withInitialAdmission
+import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainFixtureInputsV1
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
-import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -37,47 +32,70 @@ import org.springframework.jdbc.datasource.ConnectionHolder
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.Connection
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 
-/** Protected born-with input -> actual signed PROJECT/registration -> actual initial identity release.
- * No seal/checkpoint/queue health seed; epoch1 remains ACTIVE. SQL/native execution is source-authored
- * for the parent's later approved lane only: NOT_COMPILED / NOT_RUN / NOT_RUNTIME_ACCEPTED.
+/**
+ * Genuine C global predecessor -> fresh TEST root -> enrollment/capture/seal/two-pass checkpoint ->
+ * real CREATE(s) -> A AUTH/native PUT/readback/VERIFY, stopping before APPLY. Queue recipes (and any
+ * terminal-history recipe) are selected before full D. Nothing here fabricates eligibility or a key.
+ * Source-authored only; parent owns compilation/execution and runtime acceptance.
  */
-internal fun withActiveQueueFixture(tls: VersionBoundPersistenceConnectedFixture, action: (TestActiveOwnerDeleteQueueFixtureV1) -> Unit) {
+internal fun withActiveQueueFixture(
+    tls: VersionBoundPersistenceConnectedFixture,
+    family: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE,
+    verifyPublication: Boolean = true,
+    terminalHistory: TestOrdinaryDrainFixtureInputsV1? = null,
+    action: (TestActiveOwnerDeleteQueueFixtureV1) -> Unit,
+) {
     val raw = TestActiveOwnerDeleteQueueRawFixtureV1()
-    val scanner = TestActiveInitialCheckpointHttpInputV1(
-        { error("Queue must not open scanner STS") }, { error("Queue must not open scanner KMS") }, { error("Queue must not open scanner S3") })
-    val factories = TestActiveOrdinaryRawHttpV1(
-        { error("Queue must not open ordinary STS") }, { error("Queue must not open ordinary KMS") }, { error("Queue must not open ordinary S3") },
-        initialCheckpoint = scanner, activeOwnerDeleteQueue = raw.input)
-    withInitialAdmission(tls, activeFirstCut = true, ordinaryRawHttp = factories) { initial ->
-        assertTrue(raw.order.isEmpty() && raw.sqs.requests.isEmpty(), "Registration is not queue autostart.")
-        initial.release()
-        assertTrue(raw.order.isEmpty() && raw.sqs.requests.isEmpty(), "Identity release is not queue autostart.")
-        assertEquals(PersistenceLifecycleObservation.READY, initial.runtime.pools.deletion.prepareDeletion())
-        ComplaintTestNamespaceRegistrationCases.withOrdinaryAudit(initial.runtime) { _, audit ->
-            TestActiveOwnerDeleteQueueFixtureV1(initial, raw, audit).use(action)
-        }
+    withRegisteredInitialCheckpointDeletion(tls, family, queueHttp = raw.input, terminalHistory = terminalHistory) { precursor ->
+        assertTrue(raw.order.isEmpty() && raw.sqs.requests.isEmpty(), "The genuine predecessor is not queue autostart.")
+        val beforeAuthorization = precursor.counters()
+        val event = precursor.authorize()
+        val afterAuthorization = precursor.counters()
+        val record = precursor.publish()
+        assertSame(event, record.event)
+        if (verifyPublication) precursor.verify()
+        precursor.assertReleased()
+        assertEquals(afterAuthorization, precursor.counters(), "Native work and VERIFY do not charge again.")
+        assertTrue(raw.order.isEmpty() && raw.sqs.requests.isEmpty(), "AUTH/VERIFY never polls or acks the queue.")
+        TestActiveOwnerDeleteQueueFixtureV1(precursor, raw, record, beforeAuthorization, afterAuthorization, verifyPublication).use(action)
     }
 }
 
-/** Real coordinator/deletion owners; templates only observe original SQL, holder identity and release. */
+/** The exact registered A deletion owner/template are retained, not replaced by a similar pair. */
 internal class TestActiveOwnerDeleteQueueFixtureV1(
-    val initial: InitialAdmissionFixture,
+    val precursor: TestRegisteredInitialCheckpointDeletionFixtureV1,
     val raw: TestActiveOwnerDeleteQueueRawFixtureV1,
-    private val audit: AuditService,
+    val record: TestRegisteredInitialDeletionNativeRecordV1,
+    val beforeAuthorization: Map<ComplaintCapacityCounter, DeleteAllCounter>,
+    val afterAuthorization: Map<ComplaintCapacityCounter, DeleteAllCounter>,
+    val verifiedPublication: Boolean,
 ) : AutoCloseable {
-    val runtime = initial.runtime
-    val registration = initial.registration
-    val assembly = initial.assembly
-    val process = registration.process
-    val observer = initial.observer
-    val scope = process.consumers.journalConfiguration.scope.id
-    val deletionOwner = PersistencePhaseOwnership.deletion(DeletionPersistenceAdmission(),
-        GuardedJdbcTransactionManager(runtime.pools.deletion), PersistenceNanoClock(initial.native::nanos))
-    val coordinator = TestActiveQueueProbeJdbcV1(this, deletion = false)
-    val deletion = TestActiveQueueProbeJdbcV1(this, deletion = true)
-    val calls = mutableListOf<TestActiveQueueSqlCallV1>()
+    val initial = precursor.initial
+    val family = precursor.family
+    val runtime = precursor.runtime
+    val registration = precursor.registration
+    val assembly = precursor.assembly
+    val process = precursor.process
+    val observer = precursor.observer
+    val scope = precursor.scope
+    val deletionOwner = precursor.deletionOwner
+    val deletion = precursor.deletion
+    val coordinator = TestActiveQueueProbeJdbcV1(this)
+    // Queue-only observations. Prior genuine AUTH/VERIFY phases belong to A, never this queue.
+    val deletionObservations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
+    val calls = CopyOnWriteArrayList<TestActiveQueueSqlCallV1>()
+    val countsBeforeQueue = TABLES.associateWith(::count)
+    val auditsBeforeQueue = audits()
+    val proofBeforeQueue = publicationProof()
+    val receiptBeforeQueue = receiptIdentity()
+    val identitiesBeforeQueue = identityImage()
+    val credentialIdentityBeforeQueue = credentialIdentity()
+    val grantBeforeQueue = grantImage()
+    private val authoritiesBeforeQueue = authorityImage()
+    private val epochPreparation = checkNotNull(process.pools.epochRotation).observePreparation()
     var original: TestActiveOwnerDeleteQueueV1? = null
         private set
     var before: (TestActiveQueueSqlCallV1) -> Unit = {}
@@ -86,6 +104,8 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
     private val field = executor.javaClass.getDeclaredField("jdbc").apply { check(trySetAccessible()) }
     private val actual = field.get(executor) as JdbcTemplate
     private val beforeRead = initial.p.f.http.beforeRead
+    private val beforeDeletion = deletion.before
+    private val afterDeletion = deletion.after
 
     init {
         val author = initial.p.f.rows.evidence.process
@@ -95,15 +115,26 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
         assertEquals(owned.inventory(), projected.inventory()); assertArrayEquals(process.canonicalBytes(), author.canonicalBytes())
         assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { owned.requireRetained(author.consumers.journalRouting, author.pools) }
         assertSame(actual.dataSource, coordinator.dataSource); field.set(executor, coordinator)
-        raw.attach(this)
+        raw.attach(this, record)
+        deletion.before = { call -> beforeDeletion(call); observeDeletion(call) }
+        deletion.after = { call ->
+            afterDeletion(call)
+            val observed = calls.last()
+            assertSame(call.phase, observed.phase); assertEquals(call.sql, observed.sql)
+            after(observed)
+        }
         initial.p.f.http.beforeRead = { beforeRead(); assertProviderBoundary() }
     }
 
     fun begin(): TestActiveOwnerDeleteQueueV1 {
         requireConnectionFree(); assertSqlReleased()
-        coordinator.reset(); deletion.reset(); calls.clear()
-        return TestActiveOwnerDeleteQueueV1.withHttpFixture(registration, assembly, deletionOwner, deletion, audit,
-            initial.p.f.http::readClient, SignedActivationObservation.WALL_CLOCK).also { original = it }
+        coordinator.reset(); deletionObservations.clear(); calls.clear()
+        return TestActiveOwnerDeleteQueueV1.withHttpFixture(registration, assembly, deletionOwner, deletion, precursor.audit,
+            initial.p.f.http::readClient, SignedActivationObservation.WALL_CLOCK).also {
+                original = it
+                assertSame(deletion, ownedCutField(it, "deletionJdbc"))
+                assertSame(deletionOwner, ownedCutField(it, "deletionOwner"))
+            }
     }
     fun poll(selected: TestActiveOwnerDeleteQueueV1 = begin()): TestActiveOwnerDeleteQueueV1.Completed =
         selected.poll(S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials)
@@ -114,35 +145,75 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
         require(table in TABLES)
         return checkNotNull(observer.queryForObject("SELECT count(*) FROM $table WHERE data_scope_id = ?", Long::class.java, scope))
     }
-    fun audits(): Map<String, Long> = observer.query("SELECT action, count(*) AS n FROM audit_log WHERE complaint_data_scope_id = ? GROUP BY action",
-        { row, _ -> row.getString("action") to row.getLong("n") }, scope).toMap()
-    fun counters(): Map<ComplaintCapacityCounter, DeleteAllCounter> = observer.query(
-        "SELECT name, free_units, actual_units, recovery_reserved_units, test_reserved_units, " +
-            "(to_jsonb(c) - ARRAY['free_units','actual_units','recovery_reserved_units','updated_at'])::text AS preserved " +
-            "FROM complaint_capacity_counters c ORDER BY ordinal",
-        { row, _ -> ComplaintCapacityCounter.entries.single { it.storedName == row.getString("name") } to
-            DeleteAllCounter(row.getLong(2), row.getLong(3), row.getLong(4), row.getLong(5), row.getString(6)) }).toMap()
+    fun audits() = precursor.audits()
+    fun counters() = precursor.counters()
     fun image(): Map<String, List<String>> = TABLES.associateWith { table -> observer.queryForList(
         "SELECT jsonb_build_array(to_jsonb(r), r.xmin::text)::text FROM $table r WHERE data_scope_id = ? ORDER BY to_jsonb(r)::text COLLATE \"C\"",
         String::class.java, scope) } + ("audit" to observer.queryForList(
         "SELECT to_jsonb(a)::text FROM audit_log a WHERE complaint_data_scope_id = ? ORDER BY id", String::class.java, scope))
+    fun domainImage() = image() - "complaint_test_active_queue_observations"
+    fun publicationProof(): String = checkNotNull(observer.queryForObject(
+        "SELECT (to_jsonb(p) - ARRAY['state','applied_at'])::text FROM complaint_journal_publications p WHERE event_id = ? AND data_scope_id = ?",
+        String::class.java, record.event.route.eventId, scope))
+    fun receipt() = if (family == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) observer.queryForMap(
+        "SELECT * FROM installation_deletion_receipts WHERE installation_id = ? AND data_scope_id = ?", precursor.actor.id, scope)
+    else observer.queryForMap("SELECT * FROM complaint_idempotency_receipts WHERE idempotency_key = ? AND data_scope_id = ?", precursor.key, scope)
+    fun receiptIdentity(): String {
+        val table = if (family == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) "installation_deletion_receipts" else "complaint_idempotency_receipts"
+        return checkNotNull(observer.queryForObject(
+            "SELECT (to_jsonb(n) - ARRAY['state','outcome','response_status','ack_ids','ack_versions','external_event_id','external_epoch'," +
+                "'external_object_version','external_ciphertext_hash','completed_at','expires_at'])::text FROM $table n WHERE publication_ref = ? AND data_scope_id = ?",
+            String::class.java, record.event.route.eventId, scope))
+    }
+    fun identityImage() = listOf("app_installations", "complaint_installation_ids").associateWith { table -> observer.queryForList(
+        "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = ? ORDER BY id", String::class.java, scope) }
+    fun credentialIdentity(): List<String> = observer.queryForList(
+        "SELECT (to_jsonb(c) - ARRAY['state','credential_version','version','deleted_at','verifier_expires_at','updated_at'])::text " +
+            "FROM app_installations c WHERE data_scope_id = ? ORDER BY id", String::class.java, scope)
+    fun grantImage(): List<String> = precursor.proof?.let { proof -> observer.queryForList(
+        "SELECT jsonb_build_array(to_jsonb(g), g.xmin::text)::text FROM admin_step_up_grants g WHERE id = ?", String::class.java, proof.grantId) } ?: emptyList()
+    private fun authorityImage(): List<String> = observer.queryForList(
+        "SELECT jsonb_build_object('scope', c.data_scope_id, 'history', " +
+            "(SELECT jsonb_object_agg(key, value) FROM jsonb_each(to_jsonb(c)) WHERE key = 'publication_epoch' OR key ~ '^(rotation_|seal_|checkpoint_)'))::text " +
+            "FROM complaint_journal_control c ORDER BY data_scope_id", String::class.java) + observer.queryForList(
+        "SELECT jsonb_build_array(to_jsonb(r), r.xmin::text)::text FROM complaint_test_runs r WHERE data_scope_id = ?", String::class.java, scope)
 
     fun assertSqlReleased() {
+        precursor.assertSqlReleased()
         requireConnectionFree(); assertNull(PersistencePhaseOwnership.current())
         assertTrue(TransactionSynchronizationManager.getResourceMap().isEmpty())
         assertEquals(0, runtime.pools.catalogCoordinator.activeSnapshotOwners())
-        listOf(coordinator, deletion).forEach { probe ->
-            probe.observations.values.forEach { assertTrue(it.lease.completion.quiescent()) }
-            probe.assertNoLostAssertions()
-        }
-        raw.assertNoLostAssertions()
+        (coordinator.observations.values + deletionObservations.values).forEach { assertTrue(it.lease.completion.quiescent()) }
+        coordinator.assertNoLostAssertions(); deletion.assertNoLostAssertions(); raw.assertNoLostAssertions()
     }
     fun assertProviderBoundary() {
         assertSqlReleased()
-        listOf(coordinator, deletion).flatMap { it.observations.keys }.forEach { phase ->
+        (coordinator.observations.keys + deletionObservations.keys).forEach { phase ->
             assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
             assertTrue(phase.testActiveOwnerDeleteQueueCleanupProven(checkNotNull(original)))
         }
+    }
+    private fun observeDeletion(call: TestRegisteredInitialDeletionSqlCallV1) {
+        val owner = checkNotNull(original)
+        assertEquals(TestActiveOwnerDeleteQueueStepV1.APPLY, owner.step)
+        assertEquals(owner.path, call.path)
+        assertEquals(when (family) {
+            ComplaintJournalDeletionKindV1.OWNER_DELETE -> PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY
+            ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE -> PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY
+        }, call.path)
+        val connection = (TransactionSynchronizationManager.getResource(checkNotNull(deletion.dataSource)) as ConnectionHolder).connection
+        assertEquals(setOf(deletion.dataSource), TransactionSynchronizationManager.getResourceMap().keys)
+        assertEquals(Connection.TRANSACTION_READ_COMMITTED, connection.transactionIsolation)
+        assertTrue(initial.p.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
+        assertTrue(initial.p.advisory(connection, "complaint-journal-epoch", "ShareLock"))
+        assertFalse(initial.p.advisory(connection, "complaint-maintenance-v1", "ExclusiveLock"))
+        assertFalse(initial.p.advisory(connection, "complaint-journal-epoch", "ExclusiveLock"))
+        val observed = deletion.observations.getValue(call.phase)
+        assertSame(observed.lease, ownedPoolLease(connection))
+        assertSame(observed, deletionObservations.getOrPut(call.phase) { observed })
+        val captured = TestActiveQueueSqlCallV1(call.phase, owner.step, call.sql)
+        calls.add(captured); before(captured)
     }
     fun assertAckBoundary(deadLetter: Boolean) {
         assertProviderBoundary()
@@ -166,14 +237,16 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
     fun assertReleased() {
         assertSqlReleased(); raw.assertDisposed()
         assertEquals(0L, process.publicationLanes.activeOwners().totalOwners)
-        assertEquals(PersistenceLifecycleObservation.NOT_REQUESTED, checkNotNull(process.pools.epochRotation).observePreparation())
+        assertEquals(PersistenceLifecycleObservation.READY, epochPreparation, "C's genuine capture already prepared E.")
+        assertEquals(epochPreparation, checkNotNull(process.pools.epochRotation).observePreparation())
     }
     fun assertNoAuthority() {
-        assertNull(control()["checkpoint_result"])
-        assertEquals(1L, control()["publication_epoch"])
-        assertNull(control()["rotation_state"])
-        assertEquals(0L, count("complaint_journal_scan_runs")); assertEquals(0L, count("complaint_journal_scan_entries"))
-        assertEquals(0L, count("complaint_test_terminal_intents"))
+        assertEquals(authoritiesBeforeQueue, authorityImage(), "Queue outcomes do not mint or rewrite the genuine checkpoint/rotation/run history.")
+        assertEquals(2L, control()["publication_epoch"])
+        assertEquals("CAPTURED", control()["rotation_state"])
+        listOf("complaint_journal_scan_runs", "complaint_journal_scan_entries", "complaint_test_terminal_intents").forEach {
+            assertEquals(countsBeforeQueue.getValue(it), count(it), it)
+        }
         assertFalse(observation()?.get("state") == "HEALTHY")
     }
     fun assertSameOriginalRefused(selected: TestActiveOwnerDeleteQueueV1) {
@@ -184,25 +257,24 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
     override fun close() {
         before = {}; after = {}; raw.resetFaults()
         initial.p.f.http.beforeRead = beforeRead
+        deletion.before = beforeDeletion; deletion.after = afterDeletion
         assertSame(coordinator, field.get(executor)); field.set(executor, actual)
         raw.detach(this); coordinator.assertNoLostAssertions(); deletion.assertNoLostAssertions(); raw.assertNoLostAssertions()
         requireConnectionFree()
-        // Exact TEST scope teardown AFTER assertions, not product purge/refund or queue completion.
-        listOf("complaint_test_active_queue_observations", "complaint_idempotency_receipts", "complaint_deletion_journal_applied",
-            "complaint_recovery_capacity_reservations", "complaint_journal_publications", "complaint_resource_ids", "complaint_installation_ids")
-            .forEach { observer.update("DELETE FROM $it WHERE data_scope_id = ?", scope) }
-        observer.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_RECOVERY_APPLIED'", scope)
+        // B owns only its observation teardown. A then removes deletion N/P/L; creator/initial
+        // nesting owns its genuine domain/identity history. This is not a product refund/purge.
+        observer.update("DELETE FROM complaint_test_active_queue_observations WHERE data_scope_id = ?", scope)
     }
     companion object {
-        val TABLES = listOf("complaint_idempotency_receipts", "complaint_journal_publications", "complaint_recovery_capacity_reservations",
+        val TABLES = listOf("installation_deletion_receipts", "complaint_idempotency_receipts", "complaint_journal_publications", "complaint_recovery_capacity_reservations",
             "complaint_deletion_journal_applied", "complaint_installation_ids", "app_installations", "complaint_resource_ids", "complaints",
             "complaint_journal_scan_runs", "complaint_journal_scan_entries", "complaint_test_terminal_intents", "complaint_test_active_queue_observations")
     }
 }
 
 /** Passive exact SQL/READ_COMMITTED holder probe. It never returns rows, changes COMMIT, or supplies cleanup. */
-internal class TestActiveQueueProbeJdbcV1(private val f: TestActiveOwnerDeleteQueueFixtureV1, private val deletion: Boolean) :
-    JdbcTemplate(if (deletion) f.runtime.pools.deletion else f.runtime.pools.catalogCoordinator.dataSource) {
+internal class TestActiveQueueProbeJdbcV1(private val f: TestActiveOwnerDeleteQueueFixtureV1) :
+    JdbcTemplate(f.runtime.pools.catalogCoordinator.dataSource) {
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     private val assertion = AtomicReference<AssertionError?>()
     private var observing = false
@@ -218,14 +290,14 @@ internal class TestActiveQueueProbeJdbcV1(private val f: TestActiveOwnerDeleteQu
         try {
             val phase = checkNotNull(PersistencePhaseOwnership.current())
             val path = poolTestField<PersistencePhasePath>(phase, "path")
-            assertEquals(if (deletion) PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY else PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE, path)
+            assertEquals(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE, path)
             assertEquals(sql.count { it == '?' }, args.size)
             val connection = (TransactionSynchronizationManager.getResource(checkNotNull(dataSource)) as ConnectionHolder).connection
             assertEquals(setOf(dataSource), TransactionSynchronizationManager.getResourceMap().keys)
             assertEquals(Connection.TRANSACTION_READ_COMMITTED, connection.transactionIsolation)
             assertTrue(f.initial.p.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
             assertFalse(f.initial.p.advisory(connection, "complaint-maintenance-v1", "ExclusiveLock"))
-            assertEquals(deletion, f.initial.p.advisory(connection, "complaint-journal-epoch", "ShareLock"))
+            assertFalse(f.initial.p.advisory(connection, "complaint-journal-epoch", "ShareLock"))
             assertFalse(f.initial.p.advisory(connection, "complaint-journal-epoch", "ExclusiveLock"))
             val lease = ownedPoolLease(connection)
             val observed = observations.getOrPut(phase) {

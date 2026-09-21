@@ -16,8 +16,10 @@ internal class ComplaintOwnerDeleteReadPhaseExecutor(private val ownership: Pers
     fun preflight(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerDeleteTuple): ComplaintOwnerDeleteObservation = read(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_DELETE_PREFLIGHT)
     fun status(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerDeleteTuple): ComplaintOwnerDeleteObservation = read(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_DELETE_STATUS)
     fun requirePreflight(observation: ComplaintOwnerDeleteObservation, identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerDeleteTuple) = store.requirePreflight(observation, identity, tuple)
+    internal fun requireGraph(graph: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteLocalGraphV1) { check(store.graph === graph) }
     @Suppress("TooGenericExceptionCaught")
     private fun read(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerDeleteTuple?, path: PersistencePhasePath): ComplaintOwnerDeleteObservation {
+        store.requireEntry(ownership, path)
         val phase = when (path) {
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHENTICATION -> ownership.enterComplaintOwnerDeleteAuthentication()
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_PREFLIGHT -> ownership.enterComplaintOwnerDeletePreflight()
@@ -26,6 +28,7 @@ internal class ComplaintOwnerDeleteReadPhaseExecutor(private val ownership: Pers
         }
         var operation: ComplaintOwnerDeleteReadOperation? = null
         try {
+            store.bind(phase)
             phase.begin()
             operation = when (path) {
                 PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHENTICATION -> store.authenticate(identity)

@@ -172,6 +172,7 @@ internal class CatalogTestRunTerminalSnapshotV1(
     val terminal: CatalogTestRunTerminalMutationV1?,
     val run: CatalogTestRunTerminalRunV1,
     val counters: CatalogTestRunActivationProjectionCountersV1,
+    val activeHistory: CatalogTestRunTerminalActiveHistoryV1,
 ) {
     fun requireHead() {
         requireTestTerminalCatalog(activation.operation == "TEST_RUN_ACTIVATION" && scoped.scope == activation.scope &&
@@ -183,6 +184,7 @@ internal class CatalogTestRunTerminalSnapshotV1(
     fun requireCore(other: CatalogTestRunTerminalSnapshotV1) {
         global.requireCore(other.global); scoped.requireSame(other.scoped); activation.requireSame(other.activation); history.requireSame(other.history)
         run.requireCore(other.run)
+        activeHistory.requireSame(other.activeHistory)
         requireHead(); other.requireHead()
     }
     fun requireSame(other: CatalogTestRunTerminalSnapshotV1) {
@@ -209,6 +211,7 @@ internal class CatalogTestRunTerminalRunV1(row: ResultSet, maximumVersions: Long
     private val ordinaryEpoch = row.requiredTestActivationLong("final_ordinary_epoch")
     private val terminalEpoch = row.requiredTestActivationLong("terminal_seal_epoch")
     private val sealRoot = HexFormat.of().formatHex(bytes(row, "generation_seal_root", 32))
+    val sealCount = row.requiredTestActivationLong("generation_seal_count")
     private val core = checkNotNull(row.getString("core_preimage"))
     private val effect: List<Any?> = listOf(
         nullableLong(row, "event_manifest_count"), hexOrNull(row, "event_manifest_root"),
@@ -218,12 +221,13 @@ internal class CatalogTestRunTerminalRunV1(row: ResultSet, maximumVersions: Long
     )
     init {
         requireTestTerminalCatalog(row.requiredTestActivationBoolean("valid") && state in setOf("SEALED", "PURGING") &&
-            core.length in 1..524288 && reserve == plan.originalUnusedReserve && row.requiredTestActivationLong("generation_seal_count") == 2L)
+            core.length in 1..524288 && reserve == plan.originalUnusedReserve && sealCount in 2L..3L)
     }
     fun requireFrozen(input: CatalogTestRunTerminalFrozenV1) {
         val record = input.manifest().terminalRecord
         requireTestTerminalCatalog(scope == input.scope && ordinaryEpoch == input.ordinaryEpoch && terminalEpoch == input.terminalEpoch &&
             sealedAt.epochSecond == record.sealedAtEpochSecond && enrolled == record.installationManifest.summary.installationCount &&
+            sealCount == record.sealSet.records().size.toLong() &&
             progress.contentEquals(input.progressBytes()) && seals.contentEquals(input.sealSetBytes()) &&
             sealRoot == CatalogTestRunTerminalHistoryV1.sealHead(record.sealSet.records()).sha256)
     }

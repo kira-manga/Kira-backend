@@ -3,6 +3,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointDeletionV1
 import java.io.PrintWriter
 import java.sql.Connection
 import java.sql.SQLException
@@ -215,6 +216,14 @@ internal class GuardedDataSource private constructor(
         requireOrdinaryPhaseResource()
         val pools = owner.versionBoundPools
         if (pools != null) pools.requireTestInitialCheckpointCreate(policy)
+        else if (policy != null) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    /** Both original holders refuse lower/default mutation routes on a protected TEST graph. */
+    internal fun requireTestInitialCheckpointDeletion(policy: VersionBoundTestInitialCheckpointDeletionV1?) {
+        if (route === Route.ORDINARY) requireOrdinaryPhaseResource() else requireDeletionPhaseResource()
+        val pools = owner.versionBoundPools
+        if (pools != null) pools.requireTestInitialCheckpointDeletion(policy)
         else if (policy != null) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
     }
 

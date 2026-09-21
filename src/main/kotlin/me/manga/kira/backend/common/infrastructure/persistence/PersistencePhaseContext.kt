@@ -305,6 +305,17 @@ constructor(
     internal val adminStatus: PersistenceComplaintAdminStatus = AdminStatusBoundary()
     internal val adminBatchStatus: PersistenceComplaintAdminBatchStatus = AdminBatchStatusBoundary()
     private var registeredInitialCheckpointCreate: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateV1? = null
+    private var registeredInitialDeletion: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1? = null
+    private var initialDeletionControls = false
+    private var initialOwnerDeleteStore: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore? = null
+    private var initialOwnerDeleteLane: me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1.TestOwnerDeleteReservation? = null
+    private var initialAllDeleteStore: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore? = null
+    private var initialAllDeleteLane: me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1.TestOwnerDeleteAllReservation? = null
+    private var initialAdminDeleteStore: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteStore? = null
+    private var initialAdminDeleteLane: me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1.TestAdminDeleteReservation? = null
+    private var initialOwnerDeleteVerificationInput: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteVerificationInputV1? = null
+    private var initialAllDeleteVerificationInput: me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllVerificationInputV1? = null
+    private var initialAdminDeleteVerificationInput: me.manga.kira.backend.complaint.infrastructure.TestAdminDeleteVerificationInputV1? = null
     internal val ownerOperation: PersistenceOwnerOperation = OwnerOperationBoundary()
     internal val ownerEdit: PersistenceOwnerEdit = OwnerEditBoundary()
     internal val adminDelete: PersistenceAdminDelete = AdminDeleteBoundary()
@@ -1142,7 +1153,8 @@ constructor(
             (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
 
     internal fun testActiveOwnerDeleteQueueCleanupProven(original: TestActiveOwnerDeleteQueueV1): Boolean =
-        caller.isCurrent() && testActiveQueue === original && (path.testActiveOwnerDeleteQueue || path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY) &&
+        caller.isCurrent() && testActiveQueue === original && path in setOf(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE,
+            PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY) &&
             stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
             acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
             (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
@@ -1285,7 +1297,8 @@ constructor(
 
     internal fun registeredActiveQueueControls(graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate): Long? {
         val original = testActiveQueue ?: return null
-        if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY || graph.recoveryRegistration !== original.registration) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
+                PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY) || graph.recoveryRegistration !== original.registration) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         original.requireRecoveryPersistence(ownership, jdbc, graph)
         return original.requireRecoveryControls(jdbc)
     }
@@ -1311,7 +1324,12 @@ constructor(
     }
 
     internal fun requireTestRunOwnerDeleteAllApply(graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate, input: OwnerDeleteAllApplyInputV1) {
-        if (testOrdinaryDrain != null) {
+        if (testActiveQueue != null) {
+            if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY || testOrdinaryDrain != null || testRunOwnerDeleteAll != null ||
+                testRunAdminDelete != null || testRunOwnerDelete != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            testActiveQueue.requireRecoveryPersistence(ownership, jdbc, graph)
+            testActiveQueue.requireRecoveryInput(input)
+        } else if (testOrdinaryDrain != null) {
             if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY || testRunOwnerDeleteAll != null || testRunAdminDelete != null || testRunOwnerDelete != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             testOrdinaryDrain.requireRecoveryPersistence(ownership, jdbc, graph)
             testOrdinaryDrain.requireRecoveryInput(input)
@@ -1343,6 +1361,12 @@ constructor(
     }
 
     internal fun requireTestRunOwnerDeleteAllRun(graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate) {
+        if (testActiveQueue != null) {
+            if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            testActiveQueue.requireRecoveryPersistence(ownership, jdbc, graph)
+            testActiveQueue.requireRecoveryRun(jdbc)
+            return
+        }
         if (testOrdinaryDrain != null) {
             if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             testOrdinaryDrain.requireRecoveryPersistence(ownership, jdbc, graph)
@@ -1367,7 +1391,12 @@ constructor(
     }
 
     internal fun requireTestRunAdminDeleteApply(graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate, input: TestAdminDeleteApplyInputV1) {
-        if (testOrdinaryDrain != null) {
+        if (testActiveQueue != null) {
+            if (path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY || testOrdinaryDrain != null || testRunAdminDelete != null ||
+                testRunOwnerDeleteAll != null || testRunOwnerDelete != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            testActiveQueue.requireRecoveryPersistence(ownership, jdbc, graph)
+            testActiveQueue.requireRecoveryInput(input)
+        } else if (testOrdinaryDrain != null) {
             if (path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY || testRunAdminDelete != null || testRunOwnerDeleteAll != null || testRunOwnerDelete != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             testOrdinaryDrain.requireRecoveryPersistence(ownership, jdbc, graph)
             testOrdinaryDrain.requireRecoveryInput(input)
@@ -1399,6 +1428,12 @@ constructor(
     }
 
     internal fun requireTestRunAdminDeleteRun(graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate) {
+        if (testActiveQueue != null) {
+            if (path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            testActiveQueue.requireRecoveryPersistence(ownership, jdbc, graph)
+            testActiveQueue.requireRecoveryRun(jdbc)
+            return
+        }
         if (testOrdinaryDrain != null) {
             if (path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             testOrdinaryDrain.requireRecoveryPersistence(ownership, jdbc, graph)
@@ -1434,6 +1469,144 @@ constructor(
         return true
     }
 
+    /** Existing PREPARED phases only: a protected pool cannot borrow a desired-only or recovery request route. */
+    private fun bindRegisteredInitialDeletion(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1) {
+        requireCaller()
+        if (stage !== Stage.PREPARED || registeredInitialDeletion != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.requirePhaseOwner(ownership, path)
+        registeredInitialDeletion = original
+    }
+
+    internal fun bindInitialDeletionRead(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1) {
+        if (path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHENTICATION, PersistencePhasePath.COMPLAINT_OWNER_DELETE_PREFLIGHT,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_STATUS, PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT,
+                PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_PREFLIGHT,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
+                PersistencePhasePath.COMPLAINT_ADMIN_DELETE_RELOAD)) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.requireReadAdmission()
+        bindRegisteredInitialDeletion(original)
+    }
+
+    internal fun bindInitialOwnerDeleteAuthorize(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+        store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore, handoff: ComplaintAdmittedOwnerDelete,
+        lane: me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1.TestOwnerDeleteReservation) {
+        if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE || store.graph.initialDeletion !== original) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.requireAdmission(handoff); lane.requireAuthorizing(original, store)
+        bindRegisteredInitialDeletion(original)
+        initialOwnerDeleteStore = store; initialOwnerDeleteLane = lane
+    }
+
+    internal fun bindInitialAllDeleteAuthorize(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+        store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore, handoff: ComplaintAdmittedOwnerDeleteAll,
+        lane: me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1.TestOwnerDeleteAllReservation) {
+        if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE || store.testGraph.initialDeletion !== original) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.requireAdmission(handoff); lane.requireAuthorizing(original, store)
+        bindRegisteredInitialDeletion(original)
+        initialAllDeleteStore = store; initialAllDeleteLane = lane
+    }
+
+    internal fun bindInitialAdminDeleteAuthorize(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+        store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteStore, handoff: ComplaintAdmittedAdminErasure,
+        lane: me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1.TestAdminDeleteReservation) {
+        if (path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE || store.graph.initialDeletion !== original) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.requireAdmission(handoff); lane.requireAuthorizing(original, store)
+        bindRegisteredInitialDeletion(original)
+        initialAdminDeleteStore = store; initialAdminDeleteLane = lane
+    }
+
+    internal fun bindInitialOwnerDeleteVerify(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+        store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteVerificationStore,
+        input: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteVerificationInputV1) {
+        if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        store.requireInitialInput(original, input)
+        bindRegisteredInitialDeletion(original)
+        initialOwnerDeleteVerificationInput = input
+    }
+
+    internal fun bindInitialAllDeleteVerify(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+        store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllVerificationStore,
+        input: me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllVerificationInputV1) {
+        if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        store.requireInitialInput(original, input)
+        bindRegisteredInitialDeletion(original)
+        initialAllDeleteVerificationInput = input
+    }
+
+    internal fun bindInitialAdminDeleteVerify(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1,
+        store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteVerificationStore,
+        input: me.manga.kira.backend.complaint.infrastructure.TestAdminDeleteVerificationInputV1) {
+        if (path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        store.requireInitialInput(original, input)
+        bindRegisteredInitialDeletion(original)
+        initialAdminDeleteVerificationInput = input
+    }
+
+    internal fun requireInitialOwnerDeleteVerificationInput(input: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteVerificationInputV1) {
+        if (registeredInitialDeletion != null && initialOwnerDeleteVerificationInput !== input) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+    internal fun requireInitialAllDeleteVerificationInput(input: me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllVerificationInputV1) {
+        if (registeredInitialDeletion != null && initialAllDeleteVerificationInput !== input) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+    internal fun requireInitialAdminDeleteVerificationInput(input: me.manga.kira.backend.complaint.infrastructure.TestAdminDeleteVerificationInputV1) {
+        if (registeredInitialDeletion != null && initialAdminDeleteVerificationInput !== input) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    /** Caller-selected graphs must be the privately bound graph, even when pool identities happen to match. */
+    internal fun requireRegisteredInitialDeletion(graph: TestOwnerDeleteLocalGraphV1?, jdbc: JdbcTemplate) {
+        requireStepUpResource(jdbc, path)
+        if (graph?.initialDeletion !== registeredInitialDeletion) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        requireInitialDeletionPoolPolicy()
+        registeredInitialDeletion?.let { original ->
+            original.requirePhaseOwner(ownership, path)
+            when (path) {
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE -> checkNotNull(initialOwnerDeleteLane).requireAuthorizing(original, checkNotNull(initialOwnerDeleteStore))
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE -> checkNotNull(initialAllDeleteLane).requireAuthorizing(original, checkNotNull(initialAllDeleteStore))
+                PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE -> checkNotNull(initialAdminDeleteLane).requireAuthorizing(original, checkNotNull(initialAdminDeleteStore))
+                else -> Unit
+            }
+        }
+    }
+
+    internal fun requireInitialOwnerDeleteStore(store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore) {
+        if (registeredInitialDeletion != null && path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE && initialOwnerDeleteStore !== store)
+            refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+    internal fun requireInitialAllDeleteStore(store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore) {
+        if (registeredInitialDeletion != null && path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE && initialAllDeleteStore !== store)
+            refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+    internal fun requireInitialAdminDeleteStore(store: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteStore) {
+        if (registeredInitialDeletion != null && path === PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE && initialAdminDeleteStore !== store)
+            refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    private fun requireInitialDeletionPoolPolicy() {
+        // Existing privately bound recovery/queue owners keep their closed continuation protocol.
+        // They cannot bind an AUTHORIZE path and must still authenticate their graph when retaining work.
+        if (testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testRunAdminDelete != null || testOrdinaryDrain != null || testActiveQueue != null) {
+            if (registeredInitialDeletion != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        } else ownership.dataSource.requireTestInitialCheckpointDeletion(registeredInitialDeletion?.policy)
+    }
+
+    internal fun beginInitialDeletionControls(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1) {
+        if (registeredInitialDeletion !== original || initialDeletionControls || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        requireWork(); initialDeletionControls = true
+    }
+    internal fun requireInitialDeletionControls(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1) {
+        if (registeredInitialDeletion !== original || !initialDeletionControls || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        requireWork()
+    }
+    internal fun initialDeletionGate(original: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1): PersistenceComplaintMaintenanceGateV1 {
+        requireInitialDeletionControls(original)
+        return PersistenceComplaintMaintenanceGateV1.read(connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED))
+    }
+
+    /** Fixed terminal-catalog read choice; keeps path private and validates the original fence/holder. */
+    internal fun terminalCatalogMaintenanceRead(fence: PersistenceComplaintMaintenanceFenceV1, selected: Connection): Boolean {
+        selectedHolder.requireMaintenanceFence(fence, selected)
+        return path.catalogTestRunTerminal || path === PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT
+    }
+
     internal fun requireComplaintMaintenanceGate(
         fence: PersistenceComplaintMaintenanceFenceV1,
         selected: Connection,
@@ -1445,6 +1618,7 @@ constructor(
             // exact claim; a losing receipt claim must remain replayable without a freshness gate.
             // AUTH/receipt SQL separately compares current desired identity in its same row snapshot.
             registeredInitialCheckpointCreate != null -> checkNotNull(registeredInitialCheckpointCreate).requirePhaseOwner(ownership)
+            registeredInitialDeletion != null -> checkNotNull(registeredInitialDeletion).requirePhaseOwner(ownership, path)
             testOrdinaryDrain != null -> testOrdinaryDrain.requireMaintenanceGate(ownership, path, gate)
             testRunOwnerDelete != null -> testRunOwnerDelete.requireMaintenanceGate(ownership, path, gate)
             testRunOwnerDeleteAll != null -> testRunOwnerDeleteAll.requireMaintenanceGate(ownership, path, gate)
@@ -3770,6 +3944,7 @@ constructor(
             if (expected !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE, PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD,
                     PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY)) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             requireStepUpResource(jdbc, expected)
+            requireInitialDeletionPoolPolicy()
             if (issued || entityManagerFactory != null || (expected !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY && !selectedHolder.fenceReady())) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             if (expected === PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE && admission == null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             issued = true
@@ -3862,6 +4037,7 @@ constructor(
             if (expected !in setOf(PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_RELOAD,
                     PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY)) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             requireStepUpResource(jdbc, expected)
+            requireInitialDeletionPoolPolicy()
             if (issued || entityManagerFactory != null || (expected !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY && !selectedHolder.fenceReady())) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             if (expected === PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE && admission == null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             issued = true
@@ -3875,11 +4051,13 @@ constructor(
             retained = operation
             testRunAdminDelete?.authenticateAndControls(ownership, jdbc, operation)
             testOrdinaryDrain?.authenticateRecoveryAndControls(ownership, jdbc, operation)
+            testActiveQueue?.authenticateRecoveryAndControls(ownership, jdbc, operation)
         }
 
         override fun requireRetained(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
             if (retained !== operation || (path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY && !selectedHolder.fenceReady())) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            testActiveQueue?.requireRecoveryHolder(jdbc)
         }
 
         override fun claim(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate, tuple: ComplaintAdminDeleteTuple) {
@@ -3931,6 +4109,7 @@ constructor(
 
         override fun requireCommitted(operation: ComplaintAdminDeletePhaseOperation) {
             if (!caller.isCurrent() || retained !== operation || !completed()) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            if (testActiveQueue != null && !testActiveOwnerDeleteQueueCleanupProven(testActiveQueue)) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
             requireSuccessfulResult()
         }
 
@@ -3946,6 +4125,7 @@ constructor(
             if (expected !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHENTICATION, PersistencePhasePath.COMPLAINT_OWNER_DELETE_PREFLIGHT,
                     PersistencePhasePath.COMPLAINT_OWNER_DELETE_STATUS)) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             requireStepUpResource(jdbc, expected)
+            requireInitialDeletionPoolPolicy()
             if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             issued = true
             installLimits()
@@ -3978,6 +4158,7 @@ constructor(
         override fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
             if (expected !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_PREFLIGHT) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             requireStepUpResource(jdbc, expected)
+            requireInitialDeletionPoolPolicy()
             if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             issued = true
             installLimits()
@@ -4350,6 +4531,7 @@ constructor(
                 refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
             requireStepUpResource(jdbc, expected)
+            requireInitialDeletionPoolPolicy()
             if (issued || entityManagerFactory != null || !selectedHolder.fenceReady()) {
                 refuse(PersistencePhaseFailureCode.WORK_FAILED)
             }
@@ -4448,6 +4630,7 @@ constructor(
 
         override fun requireOperation(jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY)
+            requireInitialDeletionPoolPolicy()
             if (issued || entityManagerFactory != null || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             issued = true
             installLimits()
@@ -4460,11 +4643,13 @@ constructor(
             retained = operation
             testRunOwnerDeleteAll?.authenticateAndControls(ownership, jdbc, operation)
             testOrdinaryDrain?.authenticateRecoveryAndControls(ownership, jdbc, operation)
+            testActiveQueue?.authenticateRecoveryAndControls(ownership, jdbc, operation)
         }
 
         override fun requireRetained(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY)
             if (retained !== operation || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            testActiveQueue?.requireRecoveryHolder(jdbc)
         }
 
         override fun checkCapacity(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate) {
@@ -4485,6 +4670,7 @@ constructor(
 
         override fun requireCommitted(operation: ComplaintOwnerDeleteAllApplyOperation) {
             if (!caller.isCurrent() || retained !== operation || !completed()) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            if (testActiveQueue != null && !testActiveOwnerDeleteQueueCleanupProven(testActiveQueue)) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
             requireSuccessfulResult()
         }
 
@@ -4550,6 +4736,7 @@ constructor(
 
         override fun requireOperation(jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY)
+            requireInitialDeletionPoolPolicy()
             if (issued || entityManagerFactory != null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             issued = true
             installLimits()
@@ -5026,6 +5213,7 @@ constructor(
 
         override fun requireOperation(jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT)
+            requireInitialDeletionPoolPolicy()
             if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             issued = true
             installLimits()

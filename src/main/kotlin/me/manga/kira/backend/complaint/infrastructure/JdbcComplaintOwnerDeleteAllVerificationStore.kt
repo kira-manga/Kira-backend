@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVeri
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationRecordV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalReadbackV1
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
@@ -42,10 +43,12 @@ internal class JdbcComplaintOwnerDeleteAllVerificationStore private constructor(
     }
     private val issuer = Any()
     private val codec = OwnerDeleteAllVerificationCodecV1(routing)
+    internal val initialDeletion get() = authorization.controls.testGraph?.initialDeletion
 
     /** All observation projection/serialization/hash work precedes permit, holder and row locks. */
     fun capture(readback: OwnerDeleteAllJournalReadbackV1): OwnerDeleteAllVerificationInputV1 {
         requireConnectionFree()
+        check(initialDeletion == null)
         val record = codec.observed(readback)
         val bytes = codec.canonicalBytes(record)
         return CapturedOwnerDeleteAllVerification(issuer, routing, readback.event, record, bytes)
@@ -53,16 +56,33 @@ internal class JdbcComplaintOwnerDeleteAllVerificationStore private constructor(
 
     fun capture(readback: TestOwnerDeleteJournalReadbackV1): OwnerDeleteAllVerificationInputV1 {
         requireConnectionFree()
-        check(authorization.testGraph.recoveryRegistration == null)
+        check(authorization.testGraph.recoveryRegistration == null && initialDeletion == null)
         return capturedTest(readback)
+    }
+    internal fun captureInitial(work: CommittedOwnerDeleteAllWork.Prepared, readback: TestOwnerDeleteJournalReadbackV1,
+        lane: JournalPublicationLanesV1.TestOwnerDeleteAllReservation): OwnerDeleteAllVerificationInputV1 {
+        requireConnectionFree()
+        val original = checkNotNull(initialDeletion)
+        original.requireGraph(authorization.testGraph)
+        lane.requireInitialReadback(original, authorization, work, readback)
+        val event = authorization.testPreparedEvent(work)
+        check(event.belongsTo(authorization.testGraph.routing) && readback.event.belongsTo(authorization.testGraph.routing) &&
+            event.route == readback.event.route && event.canonicalBytes().contentEquals(readback.event.canonicalBytes()))
+        return capturedTest(readback, original)
+    }
+    internal fun requireInitialInput(original: TestOwnerDeleteProcessBindingV1, input: OwnerDeleteAllVerificationInputV1) {
+        original.requireGraph(authorization.testGraph)
+        val selected = input as? CapturedOwnerDeleteAllVerification ?: error("Original initial-deletion readback capture required")
+        selected.requireOwned(issuer, routing)
+        check(initialDeletion === original && selected.initial === original)
     }
     internal fun captureRegistered(original: TestRunOwnerDeleteAllContinuationV1, readback: TestOwnerDeleteJournalReadbackV1): OwnerDeleteAllVerificationInputV1 {
         original.requirePublishedReadback(authorization, authorization.testGraph, readback)
         return capturedTest(readback)
     }
-    private fun capturedTest(readback: TestOwnerDeleteJournalReadbackV1): OwnerDeleteAllVerificationInputV1 {
+    private fun capturedTest(readback: TestOwnerDeleteJournalReadbackV1, initial: TestOwnerDeleteProcessBindingV1? = null): OwnerDeleteAllVerificationInputV1 {
         val record = codec.observed(readback)
-        return CapturedOwnerDeleteAllVerification(issuer, routing, routing.fromTest(readback.event), record, codec.canonicalBytes(record))
+        return CapturedOwnerDeleteAllVerification(issuer, routing, routing.fromTest(readback.event), record, codec.canonicalBytes(record), initial)
     }
 
     fun verify(input: OwnerDeleteAllVerificationInputV1): ComplaintOwnerDeleteAllVerificationOperation =
@@ -120,6 +140,7 @@ private class CapturedOwnerDeleteAllVerification(
     val event: OwnerDeleteAllJournalEventV1,
     val record: OwnerDeleteAllVerificationRecordV1,
     bytes: ByteArray,
+    val initial: TestOwnerDeleteProcessBindingV1? = null,
 ) : OwnerDeleteAllVerificationInputV1 {
     val verificationBytes = bytes.copyOf()
     val verificationHash: ByteArray = MessageDigest.getInstance("SHA-256").digest(verificationBytes)
@@ -162,6 +183,7 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
         get() {
             phase.ownerDeleteAllVerification.requireCommitted(this)
             requireConnectionFree()
+            authorization.controls.testGraph?.let { it.initialDeletion?.requireGraph(it) }
             return released ?: checkNotNull(proof).let {
                 ReleasedOwnerDeleteAllVerification(issuer, routing, observed.event, it.record, it.bytes, it.hash)
             }.also { released = it }
@@ -249,7 +271,11 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
         check(publication.eventBytes.contentEquals(observed.eventBytes) && MessageDigest.isEqual(publication.semanticHash, observed.semanticHash))
     }
 
-    private fun requireRetained() = phase.ownerDeleteAllVerification.requireRetained(this, jdbc)
+    private fun requireRetained() {
+        phase.ownerDeleteAllVerification.requireRetained(this, jdbc)
+        phase.requireRegisteredInitialDeletion(authorization.controls.testGraph, jdbc)
+        phase.requireInitialAllDeleteVerificationInput(observed)
+    }
 
     private fun failed(problem: Throwable): Nothing {
         stage = Stage.FAILED
@@ -314,6 +340,9 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
                 phase.ownerDeleteAllVerification.requireOperation(jdbc)
                 val observed = input as? CapturedOwnerDeleteAllVerification ?: error("Private publisher readback capture required")
                 observed.requireOwned(issuer, routing)
+                check(observed.initial === authorization.controls.testGraph?.initialDeletion)
+                phase.requireRegisteredInitialDeletion(authorization.controls.testGraph, jdbc)
+                phase.requireInitialAllDeleteVerificationInput(input)
                 authorization.controls.testGraph?.let { phase.requireTestRunOwnerDeleteAllVerify(it, jdbc, input) }
                 operation = ComplaintOwnerDeleteAllVerificationOperation(phase, jdbc, codec, observed, issuer, routing, authorization)
                 phase.ownerDeleteAllVerification.retain(operation, jdbc)

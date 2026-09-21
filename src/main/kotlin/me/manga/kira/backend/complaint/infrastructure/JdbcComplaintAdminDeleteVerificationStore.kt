@@ -7,6 +7,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseO
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalReadbackV1
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationRecordV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunAdminDeleteContinuationV1
@@ -28,17 +29,34 @@ internal class JdbcComplaintAdminDeleteVerificationStore(
     init { authorization.requireBinding(graph, jdbc); check(graph.routing.journalConfiguration.adminDelete) }
     fun capture(readback: TestOwnerDeleteJournalReadbackV1): TestAdminDeleteVerificationInputV1 {
         requireConnectionFree()
-        check(graph.recoveryRegistration == null) // Generic capture never grants a closed registered continuation.
+        check(graph.recoveryRegistration == null && graph.initialDeletion == null) // Neither closed registered origin accepts generic capture.
         return captureReadback(readback)
+    }
+    /** Only the actual private AUTH work and the original closed lane's released native readback. */
+    internal fun captureInitial(work: CommittedTestAdminDeleteWork.Prepared, readback: TestOwnerDeleteJournalReadbackV1,
+        lane: JournalPublicationLanesV1.TestAdminDeleteReservation): TestAdminDeleteVerificationInputV1 {
+        requireConnectionFree()
+        val original = checkNotNull(graph.initialDeletion)
+        original.requireGraph(graph)
+        lane.requireInitialReadback(original, authorization, work, readback)
+        val event = authorization.preparedEvent(work)
+        check(event.belongsTo(graph.routing) && readback.event.belongsTo(graph.routing) && event.route == readback.event.route &&
+            event.canonicalBytes().contentEquals(readback.event.canonicalBytes()))
+        return captureReadback(readback, original)
+    }
+    internal fun requireInitialInput(original: TestOwnerDeleteProcessBindingV1, input: TestAdminDeleteVerificationInputV1) {
+        original.requireGraph(graph)
+        val selected = input as? CapturedTestAdminDeleteVerification ?: error("Original initial-deletion readback capture required")
+        check(graph.initialDeletion === original && selected.initial === original && selected.issuer === issuer && selected.event.belongsTo(graph.routing))
     }
     internal fun captureRegistered(original: TestRunAdminDeleteContinuationV1, readback: TestOwnerDeleteJournalReadbackV1): TestAdminDeleteVerificationInputV1 {
         original.requirePublishedReadback(authorization, graph, readback)
         return captureReadback(readback)
     }
-    private fun captureReadback(readback: TestOwnerDeleteJournalReadbackV1): TestAdminDeleteVerificationInputV1 {
+    private fun captureReadback(readback: TestOwnerDeleteJournalReadbackV1, initial: TestOwnerDeleteProcessBindingV1? = null): TestAdminDeleteVerificationInputV1 {
         graph.requireUnchanged()
         val record = codec.observed(readback)
-        return CapturedTestAdminDeleteVerification(issuer, readback.event, record, codec.canonicalBytes(record))
+        return CapturedTestAdminDeleteVerification(issuer, readback.event, record, codec.canonicalBytes(record), initial)
     }
     fun verify(input: TestAdminDeleteVerificationInputV1): ComplaintAdminDeleteVerificationOperation =
         ComplaintAdminDeleteVerificationOperation.capture(jdbc, graph, codec, issuer, input)
@@ -72,7 +90,8 @@ internal sealed interface CommittedTestAdminDeleteVerificationV1 {
     fun verificationBytes(): ByteArray
     fun verificationHash(): ByteArray
 }
-private class CapturedTestAdminDeleteVerification(val issuer: Any, val event: TestOwnerDeleteJournalEventV1, val record: TestOwnerDeleteVerificationRecordV1, bytes: ByteArray) : TestAdminDeleteVerificationInputV1 {
+private class CapturedTestAdminDeleteVerification(val issuer: Any, val event: TestOwnerDeleteJournalEventV1, val record: TestOwnerDeleteVerificationRecordV1, bytes: ByteArray,
+    val initial: TestOwnerDeleteProcessBindingV1?) : TestAdminDeleteVerificationInputV1 {
     val bytes = bytes.copyOf()
     val hash: ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
 }
@@ -108,6 +127,7 @@ internal class ComplaintAdminDeleteVerificationOperation private constructor(
     val result: CommittedTestAdminDeleteVerificationV1 get() {
         phase.adminDelete.requireCommitted(this)
         requireConnectionFree()
+        graph.initialDeletion?.requireGraph(graph)
         return released ?: ReleasedTestAdminDeleteVerification(observed.issuer, observed.event, checkNotNull(recorded), checkNotNull(bytes), checkNotNull(hash)).also { released = it }
     }
     internal fun requireRegisteredContinuation(original: TestRunAdminDeleteContinuationV1) = original.requireVerificationInput(observed)
@@ -141,7 +161,11 @@ internal class ComplaintAdminDeleteVerificationOperation private constructor(
         recorded = record; bytes = storedBytes; hash = storedHash
         retained(); completed = true
     }
-    private fun retained() { phase.adminDelete.requireRetained(this, jdbc); graph.requireDeletion(jdbc) }
+    private fun retained() {
+        phase.adminDelete.requireRetained(this, jdbc); graph.requireDeletion(jdbc)
+        phase.requireRegisteredInitialDeletion(graph, jdbc)
+        phase.requireInitialAdminDeleteVerificationInput(observed)
+    }
     companion object {
         internal fun requireColumns(record: TestOwnerDeleteVerificationRecordV1, row: OwnerDeleteRows.Publication) {
             check(record.objectVersion == row.objectVersion && record.ciphertextSha256 == HexFormat.of().formatHex(checkNotNull(row.ciphertextHash)) &&
@@ -155,6 +179,9 @@ internal class ComplaintAdminDeleteVerificationOperation private constructor(
                 phase.requireTestRunAdminDeleteVerify(graph, jdbc, input)
                 val selected = input as? CapturedTestAdminDeleteVerification ?: error("Original provider readback capture required")
                 check(selected.issuer === issuer && selected.event.belongsTo(graph.routing))
+                check(selected.initial === graph.initialDeletion)
+                phase.requireRegisteredInitialDeletion(graph, jdbc)
+                phase.requireInitialAdminDeleteVerificationInput(input)
                 return ComplaintAdminDeleteVerificationOperation(phase, jdbc, graph, codec, selected).also { phase.adminDelete.retain(it, jdbc); it.execute() }
             } catch (problem: Throwable) { phase.recordFailure(problem); throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED) }
         }

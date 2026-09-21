@@ -58,6 +58,7 @@ internal class CatalogTestRunTerminalOperationV1 private constructor(
         if (input.kind === CatalogTestRunTerminalKindV1.ACQUIRE || input.kind === CatalogTestRunTerminalKindV1.RELEASE) {
             val expected = checkNotNull(input.expected)
             global.requireSame(expected.global); scoped.requireSame(expected.scoped)
+            expected.activeHistory.requirePhysical(jdbc, input.original)
             if (input.kind === CatalogTestRunTerminalKindV1.ACQUIRE) {
                 acquired = jdbc.query(CatalogTestRunTerminalSqlV1.acquireLease, { row, _ -> CatalogTestRunActivationLeaseV1.copy(row) },
                     checkNotNull(input.leaseOwner)).single()
@@ -69,6 +70,7 @@ internal class CatalogTestRunTerminalOperationV1 private constructor(
             }
             at(Stage.CONTROLS)
             readControl(GLOBAL, lock = false).requireSame(global); readControl(input.scope, lock = false).requireSame(scoped)
+            expected.activeHistory.requirePhysical(jdbc, input.original)
             stage = Stage.COMPLETE
             return
         }
@@ -82,7 +84,7 @@ internal class CatalogTestRunTerminalOperationV1 private constructor(
         val facts = locked.before(this)
         stage = Stage.RUN
         val run = readRun(prefix.activation, lock = input.kind === CatalogTestRunTerminalKindV1.PREPARE || input.kind === CatalogTestRunTerminalKindV1.PROJECT)
-        val selected = prefix.snapshot(run, facts)
+        val selected = prefix.snapshot(run, facts, CatalogTestRunTerminalActiveHistoryV1.read(jdbc, input.original, prefix.activation))
         requireSnapshot(selected)
         input.expected?.requireSame(selected)
         before = selected
@@ -109,7 +111,8 @@ internal class CatalogTestRunTerminalOperationV1 private constructor(
         at(Stage.WRITING); stage = Stage.REREADING
         // Rereads never reacquire an earlier lock class after the run.
         val repeatedPrefix = readPrefix(readControl(GLOBAL, lock = false), readControl(input.scope, lock = false), lock = false)
-        val after = repeatedPrefix.snapshot(readRun(repeatedPrefix.activation, lock = false), locked.reread(this))
+        val after = repeatedPrefix.snapshot(readRun(repeatedPrefix.activation, lock = false), locked.reread(this),
+            CatalogTestRunTerminalActiveHistoryV1.read(jdbc, input.original, repeatedPrefix.activation))
         selected.requireCore(after); requireSnapshot(after)
         requireTransition(selected, after)
         requireCurrentTime()
@@ -185,6 +188,7 @@ internal class CatalogTestRunTerminalOperationV1 private constructor(
 
     private fun requireSnapshot(snapshot: CatalogTestRunTerminalSnapshotV1) {
         snapshot.requireHead()
+        snapshot.activeHistory.requireRun(snapshot.run)
         requireTestTerminalCatalog(snapshot.activation.scope == input.scope && snapshot.activation.generation == snapshot.scoped.head.generation)
         val terminal = snapshot.terminal
         requireTestTerminalCatalog(terminal == null || terminal.operation == "TEST_RUN_TERMINAL" && terminal.token == input.token &&
@@ -192,7 +196,7 @@ internal class CatalogTestRunTerminalOperationV1 private constructor(
         snapshot.run.requirePayment(terminal != null, terminal?.projectedAt != null)
         input.frozen?.let {
             requireTestTerminalCatalog(it.generation == snapshot.activation.generation + 1L && it.predecessorHash == snapshot.scoped.head.envelopeSha256)
-            snapshot.run.requireFrozen(it); terminal?.requireFrozen(it)
+            snapshot.run.requireFrozen(it); snapshot.activeHistory.requireFrozen(it); terminal?.requireFrozen(it)
         }
         if (terminal?.signed == true && input.signed != null) terminal.requireSigned(input.signed)
         if (terminal?.projectedAt != null && input.frozen != null && input.signed != null) {
@@ -233,8 +237,9 @@ internal class CatalogTestRunTerminalOperationV1 private constructor(
 
     private class Prefix(val global: CatalogTestRunTerminalControlV1, val scoped: CatalogTestRunTerminalControlV1,
         val activation: CatalogTestRunTerminalMutationV1, val history: CatalogTestRunActivationHistoryV1, val terminal: CatalogTestRunTerminalMutationV1?) {
-        fun snapshot(run: CatalogTestRunTerminalRunV1, counters: CatalogTestRunActivationProjectionCountersV1) =
-            CatalogTestRunTerminalSnapshotV1(global, scoped, activation, history, terminal, run, counters)
+        fun snapshot(run: CatalogTestRunTerminalRunV1, counters: CatalogTestRunActivationProjectionCountersV1,
+            activeHistory: CatalogTestRunTerminalActiveHistoryV1) =
+            CatalogTestRunTerminalSnapshotV1(global, scoped, activation, history, terminal, run, counters, activeHistory)
     }
     private fun readPrefix(global: CatalogTestRunTerminalControlV1, scoped: CatalogTestRunTerminalControlV1, lock: Boolean): Prefix {
         retained()
@@ -308,7 +313,7 @@ internal class CatalogTestRunTerminalOperationV1 private constructor(
             ledger.balance.creationLimit == policy.creationLimit && daily.dailyLimit == policy.dailyEnrollmentLimit &&
             ledger.balance.actual[ComplaintCapacityCounter.CATALOG_MUTATIONS] == snapshot.activation.generation + (if (snapshot.terminal == null) 0L else 1L) &&
             ledger.balance.actual[ComplaintCapacityCounter.TEST_RUNS] == 1L && snapshot.run.unused.fitsWithin(ledger.balance.testReserved) && charge.fitsWithin(snapshot.run.unused) &&
-            (snapshot.run.reserve - snapshot.run.unused - TestRunPurgeOperationV1.FUTURE).fitsWithin(ledger.balance.actual) &&
+            (snapshot.run.reserve - snapshot.run.unused - TestRunPurgeOperationV1.FUTURE + snapshot.activeHistory.ordinaryPaid).fitsWithin(ledger.balance.actual) &&
             TestRunPurgeOperationV1.FUTURE.fitsWithin(ledger.balance.recoveryReserved))
         return if (charge.isZero()) ledger else ledger.spendTestReserve(digest, charge, ComplaintCapacityVector.ZERO)
     }

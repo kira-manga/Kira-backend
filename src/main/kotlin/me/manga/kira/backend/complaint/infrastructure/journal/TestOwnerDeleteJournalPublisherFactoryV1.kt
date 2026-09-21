@@ -3,6 +3,7 @@ package me.manga.kira.backend.complaint.infrastructure.journal
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.CommittedTestOwnerDeleteWork
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore
+import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.journalS3UrlConnectionClient
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.ReleasedTestActiveCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
@@ -31,7 +32,8 @@ internal class TestOwnerDeleteJournalPublisherFactoryV1 private constructor(
     private val nanoTime: () -> Long,
 ) : AutoCloseable {
     private sealed interface Owner {
-        class Api(val store: JdbcComplaintOwnerDeleteStore, val original: TestRunOwnerDeleteContinuationV1?) : Owner
+        class Api(val store: JdbcComplaintOwnerDeleteStore, val original: TestRunOwnerDeleteContinuationV1?,
+            val initial: TestOwnerDeleteProcessBindingV1? = null, val recipe: VersionBoundTestActiveCutoffPublicationV1? = null) : Owner
         class Cutoff(val original: TestActiveOrdinarySealV1, val recipe: VersionBoundTestActiveCutoffPublicationV1) : Owner
     }
     private val closed = AtomicBoolean()
@@ -41,6 +43,9 @@ internal class TestOwnerDeleteJournalPublisherFactoryV1 private constructor(
             is Owner.Api -> {
                 requireJournalPublication(selected.store.graph.lanes === lanes && selected.store.graph.routing === routing)
                 requireJournalPublication((selected.original == null) == (selected.store.graph.recoveryRegistration == null))
+                requireJournalPublication((selected.initial == null) == (selected.recipe == null) && selected.initial === selected.store.graph.initialDeletion)
+                requireJournalPublication(selected.initial == null || selected.original == null)
+                selected.initial?.requirePublicationRecipe(checkNotNull(selected.recipe))
                 selected.original?.retainPublisher(this, selected.store)
             }
             is Owner.Cutoff -> selected.original.retainCutoffPublisher(this, selected.recipe)
@@ -51,7 +56,10 @@ internal class TestOwnerDeleteJournalPublisherFactoryV1 private constructor(
     private fun requireOwner() {
         requireJournalPublication(!closed.get())
         when (val selected = owner) {
-            is Owner.Api -> { selected.store.graph.requireUnchanged(); selected.original?.requirePublisher(this, selected.store) }
+            is Owner.Api -> {
+                selected.store.graph.requireUnchanged(); selected.original?.requirePublisher(this, selected.store)
+                selected.initial?.requirePublicationRecipe(checkNotNull(selected.recipe)); selected.recipe?.requireFactory(this)
+            }
             is Owner.Cutoff -> selected.original.requireCutoffPublisher(this, selected.recipe)
         }
     }
@@ -67,6 +75,16 @@ internal class TestOwnerDeleteJournalPublisherFactoryV1 private constructor(
         return reserve().use { it.readExisting(tuple, targetId, routingKeyId) }
     }
     internal fun requireBinding(selected: JdbcComplaintOwnerDeleteStore) { requireJournalPublication(api().store === selected); requireOwner() }
+    internal fun requireInitialBinding(original: TestOwnerDeleteProcessBindingV1, store: JdbcComplaintOwnerDeleteStore) {
+        requireInitialPublishedBinding(original, store)
+        requireBinding(store)
+    }
+    /** Compare a lane's retained completed output; closing a factory cannot forge or erase that output. */
+    internal fun requireInitialPublishedBinding(original: TestOwnerDeleteProcessBindingV1, store: JdbcComplaintOwnerDeleteStore) {
+        val selected = api()
+        requireJournalPublication(selected.initial === original && selected.store === store && store.graph === original.lower)
+        original.requirePublicationRecipe(checkNotNull(selected.recipe))
+    }
     internal fun requireLane(expected: JournalPublicationLanesV1) = requireJournalPublication(lanes === expected)
     internal fun requireCutoffMode() { cutoff() }
     internal fun journalConfiguration() = routing.journalConfiguration
@@ -76,7 +94,7 @@ internal class TestOwnerDeleteJournalPublisherFactoryV1 private constructor(
         selected.original?.requirePublisher(this, selected.store, work)
         requireJournalPublication(selected.store.preparedEvent(work).belongsTo(routing))
     }
-    internal fun requireRecoveryRead() { requireJournalPublication(api().original == null) }
+    internal fun requireRecoveryRead() { requireJournalPublication(api().original == null && api().initial == null) }
     internal fun startAttempt(): TestOwnerDeleteCodecAttemptV1 {
         requireConnectionFree(); val selected = api(); requireOwner()
         return TestOwnerDeleteCodecAttemptV1(routing, nanoTime, selected.original?.budget)
@@ -99,13 +117,22 @@ internal class TestOwnerDeleteJournalPublisherFactoryV1 private constructor(
         attempt: TestOwnerDeleteCodecAttemptV1) {
         requireOwner(); lane.requireConstructing(this, custody, attempt)
         (owner as? Owner.Cutoff)?.recipe?.authenticate(this, custody, attempt)
+        (owner as? Owner.Api)?.recipe?.authenticate(this, custody, attempt)
     }
     override fun close() {
         closed.set(true)
         lanes.closeFactory(this) // Failed physical cleanup remains in the shared registry.
         (owner as? Owner.Cutoff)?.recipe?.release(this)
+        (owner as? Owner.Api)?.recipe?.release(this)
     }
     companion object {
+        /** Unusable until the exact cold recipe retains the returned factory; arbitrary construction cannot reserve. */
+        internal fun initialRegistered(original: TestOwnerDeleteProcessBindingV1, recipe: VersionBoundTestActiveCutoffPublicationV1,
+            store: JdbcComplaintOwnerDeleteStore, credentials: AwsSessionCredentials,
+            s3Http: (remainingMillis: () -> Int) -> SdkHttpClient, kmsHttp: (remainingMillis: () -> Int) -> SdkHttpClient,
+            clock: Clock, nanoTime: () -> Long): TestOwnerDeleteJournalPublisherFactoryV1 =
+            TestOwnerDeleteJournalPublisherFactoryV1(store.graph.lanes, Owner.Api(store, null, original, recipe), store.graph.routing,
+                credentials, s3Http, kmsHttp, clock, nanoTime)
         internal fun activeCutoff(original: TestActiveOrdinarySealV1, recipe: VersionBoundTestActiveCutoffPublicationV1,
             lanes: JournalPublicationLanesV1, routing: TestOwnerDeleteJournalRoutingV1, credentials: AwsSessionCredentials,
             s3Http: (remainingMillis: () -> Int) -> SdkHttpClient, kmsHttp: (remainingMillis: () -> Int) -> SdkHttpClient,

@@ -3,6 +3,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointDeletionV1
 import javax.sql.DataSource
 
 /** One root's fixed cold composition and partial-shell custody. Neither construction nor descriptors grant activation. */
@@ -21,6 +22,7 @@ internal class VersionBoundPersistencePools private constructor(
     private val bindings = listOf(ordinaryBinding, deletionBinding, catalogBinding)
     private var catalog: CatalogCoordinatorPersistence? = null
     private var testCreatePolicy: TestCreatePolicy? = null
+    private var testDeletionPolicy: TestDeletionPolicy? = null
 
     /** One cold policy pin (including absence). No registration or current-content grant is stored here. */
     internal fun retainTestInitialCheckpointCreate(policy: VersionBoundTestInitialCheckpointCreateV1?) {
@@ -39,6 +41,24 @@ internal class VersionBoundPersistencePools private constructor(
     }
 
     private class TestCreatePolicy(val policy: VersionBoundTestInitialCheckpointCreateV1?)
+
+    /** The ordinary and deletion pools share this one cold pin, including declared absence. */
+    internal fun retainTestInitialCheckpointDeletion(policy: VersionBoundTestInitialCheckpointDeletionV1?) {
+        requireConnectionFree()
+        policy?.requirePool(this)
+        synchronized(custody) {
+            requireBinding(state === State.BOUND && !root.shutdown.get())
+            val retained = testDeletionPolicy
+            if (retained == null) testDeletionPolicy = TestDeletionPolicy(policy)
+            else requireBinding(retained.policy === policy)
+        }
+    }
+
+    internal fun requireTestInitialCheckpointDeletion(policy: VersionBoundTestInitialCheckpointDeletionV1?) = synchronized(custody) {
+        requireBinding(testDeletionPolicy?.policy === policy)
+    }
+
+    private class TestDeletionPolicy(val policy: VersionBoundTestInitialCheckpointDeletionV1?)
 
     val ordinary: GuardedDataSource get() = completed { ordinaryBinding.dataSource() }
     val deletion: GuardedDataSource get() = completed { deletionBinding.dataSource() }

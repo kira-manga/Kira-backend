@@ -191,6 +191,12 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
         requireRegistration(gate.matchesOpenProjectedActive(activation.token, activation.scope, activation.unsigned, activation.unsignedHash))
     }
 
+    /** Dedicated privacy comparison only; CREATE and identity admission retain their creation gate. */
+    internal fun requireActiveDeletionGate(gate: PersistenceComplaintMaintenanceGateV1) {
+        requireReleasedIdentityAdmission()
+        requireRegistration(gate.matchesOpenProjectedActiveDeletion(activation.token, activation.scope, activation.unsigned, activation.unsignedHash))
+    }
+
     /** Detached [token, scope, generation, envelopeHash, unsigned, unsignedHash] for a fresh typed raw read. */
     internal fun activeReadbackArguments(): Array<Any?> {
         requireReleasedIdentityAdmission()
@@ -250,6 +256,17 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
         ownerDeleteContinuation.compareAndSet(null, InstallationResources(ownership, jdbc))
         val retained = checkNotNull(ownerDeleteContinuation.get())
         requireRegistration(retained.ownership === ownership && retained.jdbc === jdbc)
+        requireLifetime()
+    }
+
+    /** Initial request use compares the previously pinned deletion pair; never binds from a SQL phase. */
+    internal fun requireInitialDeletionPhaseResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
+        requireInitialMutationAdmission()
+        requireReleasedIdentityAdmission()
+        val retained = ownerDeleteContinuation.get()
+        requireRegistration(retained != null && retained.ownership === ownership && retained.jdbc === jdbc)
+        ownership.requireBoundComplaintDeletion(process.pools)
+        requireRegistration(jdbc.dataSource === process.pools.deletion && ownership.dataSource === jdbc.dataSource)
         requireLifetime()
     }
 

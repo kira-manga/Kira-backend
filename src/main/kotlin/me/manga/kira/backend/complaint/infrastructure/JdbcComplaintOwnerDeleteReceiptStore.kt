@@ -14,9 +14,11 @@ import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.Timestamp
 
 /** Ordinary, read-only current-row authentication and receipt from ONE MVCC statement. */
-internal class JdbcComplaintOwnerDeleteReceiptStore(private val jdbc: JdbcTemplate, private val graph: TestOwnerDeleteLocalGraphV1) {
+internal class JdbcComplaintOwnerDeleteReceiptStore(private val jdbc: JdbcTemplate, internal val graph: TestOwnerDeleteLocalGraphV1) {
     private val issuer = Any()
     init { graph.requireOrdinary(jdbc) }
+    internal fun requireEntry(owner: PersistencePhaseOwnership, path: PersistencePhasePath) { graph.initialDeletion?.requireEntry(owner, path) }
+    internal fun bind(phase: PersistencePhaseContext) { graph.initialDeletion?.let(phase::bindInitialDeletionRead) }
     fun authenticate(identity: ComplaintOwnerOperationIdentity): ComplaintOwnerDeleteReadOperation = capture(identity, null, PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHENTICATION)
     fun preflight(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerDeleteTuple): ComplaintOwnerDeleteReadOperation = capture(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_DELETE_PREFLIGHT)
     fun status(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerDeleteTuple): ComplaintOwnerDeleteReadOperation = capture(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_DELETE_STATUS)
@@ -75,16 +77,22 @@ internal class ComplaintOwnerDeleteReadOperation private constructor(
     val result: ComplaintOwnerDeleteObservation get() {
         phase.ownerDeleteRead.requireCommitted(this)
         requireConnectionFree()
+        graph.initialDeletion?.requireGraph(graph)
         return released ?: ReleasedOwnerDeleteObservation(issuer, identity, tuple, path, platform, receipt, failure, authorized).also { released = it }
     }
     private fun execute() {
         phase.ownerDeleteRead.requireRetained(this, jdbc)
         graph.requireOrdinary(jdbc)
+        phase.requireRegisteredInitialDeletion(graph, jdbc)
         identity.requireCurrent()
         check(identity.installation.scope == graph.routing.journalConfiguration.scope && (tuple == null || tuple.installation == identity.installation))
         val args = actorArguments(identity, graph)
         val selected = tuple
-        jdbc.query(if (selected == null) OwnerDeletePersistenceSql.AUTHENTICATE else OwnerDeletePersistenceSql.OBSERVE, { row, _ ->
+        val sql = if (graph.initialDeletion == null) {
+            if (selected == null) OwnerDeletePersistenceSql.AUTHENTICATE else OwnerDeletePersistenceSql.OBSERVE
+        } else if (selected == null) OwnerDeletePersistenceSql.REGISTERED_AUTHENTICATE else OwnerDeletePersistenceSql.REGISTERED_OBSERVE
+        jdbc.query(sql, { row, _ ->
+            if (graph.initialDeletion != null) check(row.getBoolean("registered_current_identity") && !row.wasNull())
             platform = row.getString("platform")?.let(ComplaintPlatform::valueOf)
             if (platform != null && selected != null && row.getObject("actor_id") != null) {
                 val stored = OwnerDeleteRows.Receipt(row)
@@ -102,13 +110,15 @@ internal class ComplaintOwnerDeleteReadOperation private constructor(
             }
         }, *(if (selected == null) args else args.plus(selected.key))).single()
         phase.ownerDeleteRead.requireRetained(this, jdbc)
+        phase.requireRegisteredInitialDeletion(graph, jdbc)
         completed = true
     }
     companion object {
-        internal fun actorArguments(identity: ComplaintOwnerOperationIdentity, graph: TestOwnerDeleteLocalGraphV1): Array<Any?> = arrayOf(
-            identity.installation.id, identity.installation.scope.id, identity.credentialVersion, Timestamp.from(identity.issuedAt),
-            Timestamp.from(identity.expiresAt), graph.desiredSettings().configurationHashBytes(),
-        )
+        internal fun actorArguments(identity: ComplaintOwnerOperationIdentity, graph: TestOwnerDeleteLocalGraphV1): Array<Any?> {
+            val facts = arrayOf<Any?>(identity.installation.id, identity.installation.scope.id, identity.credentialVersion, Timestamp.from(identity.issuedAt),
+                Timestamp.from(identity.expiresAt), graph.desiredSettings().configurationHashBytes())
+            return graph.initialDeletion?.observationIdentityArguments()?.plus(elements = facts) ?: facts
+        }
         @Suppress("TooGenericExceptionCaught")
         fun capture(jdbc: JdbcTemplate, graph: TestOwnerDeleteLocalGraphV1, issuer: Any, identity: ComplaintOwnerOperationIdentity,
             tuple: ComplaintOwnerDeleteTuple?, path: PersistencePhasePath): ComplaintOwnerDeleteReadOperation {

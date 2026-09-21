@@ -53,6 +53,7 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoun
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveInitialCheckpointV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointDeletionV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOwnerDeleteQueueV1
 import me.manga.kira.backend.security.BoundTestComplaintConsumerFixture
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
@@ -184,6 +185,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         require(!activeFirstCutSuccessor || activeFirstCut)
         require(ordinaryRawHttp?.initialCheckpoint == null || (activeFirstCut && ordinarySealHttp?.protectedIntake == true))
         require(ordinaryRawHttp?.initialCheckpointCreate == null || ordinaryRawHttp.initialCheckpoint != null)
+        require(ordinaryRawHttp?.initialCheckpointDeletion == null || ordinaryRawHttp.initialCheckpoint != null)
         require(ordinaryRawHttp?.shortInitialCheckpointFreshness != true || ordinaryRawHttp.initialCheckpointCreate != null)
         require(ordinaryRawHttp?.activeOwnerDeleteQueue == null || ordinaryRawHttp?.initialCheckpoint != null)
         require(!activeSealRecovery || activeFirstCut)
@@ -238,6 +240,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
     private val projectedCheckpointGraphs = IdentityHashMap<VersionBoundPersistencePools,
         Pair<VersionBoundTestActiveInitialCheckpointV1, VersionBoundTestInitialCheckpointCreateV1?>>()
     private val projectedActiveQueues = mutableListOf<VersionBoundTestActiveOwnerDeleteQueueV1>()
+    private val projectedDeletionPolicies = IdentityHashMap<VersionBoundPersistencePools, VersionBoundTestInitialCheckpointDeletionV1>()
     /** Exact raw fixture inputs only; no acquired secret, target, registration or projection is exported. */
     internal fun coldInputBytes(): ByteArray = checkNotNull(originalIntakeBytes).copyOf()
     internal fun coldSecretObjects(): List<ColdSecretObjectV1> = originalSecretReplies.toList()
@@ -323,6 +326,13 @@ internal class CatalogTestRunActivationEvidenceFixture(
             }
             val checkpoint = checkpointGraph?.first
             val initialCheckpointCreate = checkpointGraph?.second
+            val initialCheckpointDeletion = native.initialCheckpointDeletion?.let { original ->
+                if (pools === native.pools) original else projectedDeletionPolicies.getOrPut(pools) {
+                    VersionBoundTestInitialCheckpointDeletionV1.fromIndependentInputs(
+                        checkNotNull(ordinaryRawHttp?.initialCheckpointDeletion), pools, native.consumers.journalRouting,
+                        checkNotNull(checkpoint), checkNotNull(native.activeCutoffPublication))
+                }
+            }
             val queue = native.activeOwnerDeleteQueue?.let { original ->
                 if (pools === native.pools) original else {
                     val raw = checkNotNull(ordinaryRawHttp?.activeOwnerDeleteQueue)
@@ -337,7 +347,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             return VersionBoundTestNamespaceProcessV1.fromRetained(native.consumers, pools, 1, desiredGeneration,
                 native.databaseIdentity, native.restoreIdentity, native.publicationLanes, native.catalogReadback, selected,
                 native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, activeFirstCutSuccessor = successor, initialCheckpoint = checkpoint, activeOrdinarySealRecovery = sealRecovery, terminalDenial = native.terminalDenial,
-                initialCheckpointCreate = initialCheckpointCreate, activeOwnerDeleteQueue = queue)
+                initialCheckpointCreate = initialCheckpointCreate, activeOwnerDeleteQueue = queue, initialCheckpointDeletion = initialCheckpointDeletion)
         }
         val writer = journal.declaration().writer
         val activation = FullTestCatalogInputs.activation(
@@ -412,6 +422,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             initialCheckpoint = ordinaryRawHttp?.initialCheckpoint?.input,
             activeOrdinarySealRecovery = activeSealRecoveryInput,
             initialCheckpointCreate = ordinaryRawHttp?.initialCheckpointCreate,
+            initialCheckpointDeletion = ordinaryRawHttp?.initialCheckpointDeletion,
             activeOwnerDeleteQueue = ordinaryRawHttp?.activeOwnerDeleteQueue?.input,
         )
         intakeDocument = document

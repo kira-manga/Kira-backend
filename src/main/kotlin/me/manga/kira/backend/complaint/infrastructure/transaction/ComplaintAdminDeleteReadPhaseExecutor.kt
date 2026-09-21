@@ -14,20 +14,23 @@ import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteRe
 internal class ComplaintAdminDeleteReadPhaseExecutor(private val ownership: PersistencePhaseOwnership, private val store: JdbcComplaintAdminDeleteReceiptStore) {
     @Suppress("TooGenericExceptionCaught")
     fun authenticate(identity: ComplaintAdminReadIdentity): ComplaintAdminReadRows {
+        store.requireEntry(ownership, me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
         val phase = ownership.enterComplaintAdminReadAuthentication()
         var operation: ComplaintAdminReadOperation? = null
-        try { phase.begin(); operation = store.authenticate(identity); phase.commit() }
+        try { store.bind(phase); phase.begin(); operation = store.authenticate(identity); phase.commit() }
         catch (problem: Throwable) { phase.recordFailure(problem) }
         finally { phase.finish() }
         return (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).result
     }
     fun requirePreflight(observation: ComplaintAdminDeleteObservation, identity: ComplaintAdminReadIdentity, tuple: ComplaintAdminDeleteTuple) =
         store.requirePreflight(observation, identity, tuple)
+    internal fun requireGraph(graph: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteLocalGraphV1) { check(store.graph === graph) }
     @Suppress("TooGenericExceptionCaught")
     fun preflight(identity: ComplaintAdminReadIdentity, tuple: ComplaintAdminDeleteTuple): ComplaintAdminDeleteObservation {
+        store.requireEntry(ownership, me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath.COMPLAINT_ADMIN_DELETE_PREFLIGHT)
         val phase = ownership.enterComplaintAdminDeletePreflight()
         var operation: ComplaintAdminDeleteReadOperation? = null
-        try { phase.begin(); operation = store.preflight(identity, tuple); phase.commit() }
+        try { store.bind(phase); phase.begin(); operation = store.preflight(identity, tuple); phase.commit() }
         catch (problem: Throwable) { phase.recordFailure(problem) }
         finally { phase.finish() }
         return (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).result

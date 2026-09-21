@@ -164,6 +164,10 @@ internal class PersistencePhaseOwnership private constructor(
         enter(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE, testActiveQueue = original)
     internal fun enterTestActiveQueueOwnerDeleteRecovery(original: TestActiveOwnerDeleteQueueV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, testActiveQueue = original)
+    internal fun enterTestActiveQueueOwnerDeleteAllRecovery(original: TestActiveOwnerDeleteQueueV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY, testActiveQueue = original)
+    internal fun enterTestActiveQueueAdminDeleteRecovery(original: TestActiveOwnerDeleteQueueV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY, testActiveQueue = original)
 
     internal fun enterTestTerminalEpochSeal(original: TestRunTerminalEpochSealV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL, testTerminalEpochSeal = original)
@@ -632,7 +636,8 @@ internal class PersistencePhaseOwnership private constructor(
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         if ((path.testActiveOwnerDeleteQueue && testActiveQueue == null) ||
-            (testActiveQueue != null && (path !in setOf(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY) ||
+            (testActiveQueue != null && (path !in setOf(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY) ||
                 testOrdinaryDrain != null || testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testRunAdminDelete != null))) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }

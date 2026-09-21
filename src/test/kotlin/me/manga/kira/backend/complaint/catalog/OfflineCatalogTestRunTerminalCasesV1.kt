@@ -36,6 +36,16 @@ import java.util.Base64
  */
 internal object OfflineCatalogTestRunTerminalCasesV1 {
     fun canonicalFullHistory(tls: VersionBoundPersistenceConnectedFixture) = withTerminalCatalogRun(tls, enrolled = true) { f ->
+        assertCanonicalFullHistory(f, sealCount = 2)
+    }
+
+    fun canonicalActiveHistory(tls: VersionBoundPersistenceConnectedFixture) = withActiveHistoryTerminalCatalogRun(tls) { h ->
+        val history = h.historyRows()
+        assertCanonicalFullHistory(h.catalog, sealCount = 3)
+        assertEquals(history, h.historyRows())
+    }
+
+    private fun assertCanonicalFullHistory(f: CatalogTestRunTerminalFixtureV1, sealCount: Int) {
         val before = CatalogTestRunTerminalCasesV1.fullImage(f)
         val envelope = sign(f.manifest); val wire = bytes(envelope)
         val parsed = OfflineCatalogTestRunTerminalParser.parse(wire, 4096)
@@ -66,11 +76,11 @@ internal object OfflineCatalogTestRunTerminalCasesV1 {
         assertEquals(Sha256.hexUtf8(CanonicalJson.canonicalize(JsonArray(listOf(record)))), heads.testRunTerminals.sha256)
         assertEquals(1L, heads.installationManifests.count)
         assertEquals(Sha256.hexUtf8(CanonicalJson.canonicalize(manifestRecords)), heads.installationManifests.sha256)
-        assertEquals(2L, heads.epochSeals.count); assertEquals(Sha256.hexUtf8(CanonicalJson.canonicalize(sealRecords)), heads.epochSeals.sha256)
+        assertEquals(sealCount.toLong(), heads.epochSeals.count); assertEquals(Sha256.hexUtf8(CanonicalJson.canonicalize(sealRecords)), heads.epochSeals.sha256)
         listOf(heads.expiredRestoreSources, heads.retirementAuthorizations, heads.retirementCompletions).forEach {
             assertEquals(0L, it.count); assertEquals("4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", it.sha256)
         }
-        assertEquals(1L, f.record.purge.document.preTerminalSeals.count)
+        assertEquals(sealCount - 1L, f.record.purge.document.preTerminalSeals.count)
         assertNotEquals(f.record.purge.document.preTerminalSeals.sha256, heads.epochSeals.sha256)
         assertNotEquals(f.d.fullSealSetSha256, heads.epochSeals.sha256, "Contextual history is not the full ordered-seal list or contextual seal-set blob.")
         assertEquals(1, f.record.installationManifest.chunks.size); assertEquals(2, f.record.progress.installationReads().size)
@@ -84,6 +94,34 @@ internal object OfflineCatalogTestRunTerminalCasesV1 {
                 f.evidence.current, f.process.catalogReadback.chainPolicy, f.expected.activation)
         }
         assertEquals(before, CatalogTestRunTerminalCasesV1.fullImage(f)); assertNoEEffects(f)
+    }
+
+    fun strictActiveOrder(tls: VersionBoundPersistenceConnectedFixture) = withActiveHistoryTerminalCatalogRun(tls) { h ->
+        val f = h.catalog; val before = h.fullImage()
+        val wire = bytes(sign(f.manifest)); val root = Json.parseToJsonElement(wire.decodeToString()).jsonObject
+        val record = root.getValue("manifest").jsonObject.getValue("terminalRecord").jsonObject
+        val seals = record.getValue("sealSet").jsonObject.getValue("records") as JsonArray
+        assertEquals(3, seals.size)
+        val variants = listOf(
+            JsonArray(seals.reversed()), JsonArray(seals.drop(1)), JsonArray(seals.dropLast(1)),
+            JsonArray(seals + seals.first()), JsonArray(listOf(seals[0], seals[2], seals[1])),
+            JsonArray(listOf(seals[0], change(seals[1].jsonObject, listOf("precedingSealSha256"), JsonPrimitive("0".repeat(64))), seals[2])),
+            JsonArray(listOf(change(seals[0].jsonObject, listOf("epochEndInclusive"), JsonPrimitive(2)), seals[1], seals[2])),
+            JsonArray(listOf(seals[0], change(seals[1].jsonObject, listOf("epochEndInclusive"), JsonPrimitive(3)), seals[2])),
+            JsonArray(listOf(seals[0], change(seals[1].jsonObject, listOf("writerGeneration"), JsonPrimitive("ffffffff-ffff-4fff-8fff-ffffffffffff")), seals[2])),
+        ).map { change(root, listOf("manifest", "terminalRecord", "sealSet", "records"), it) } + listOf(
+            change(root, listOf("manifest", "terminalRecord", "purge", "document", "finalOrdinarySeal"), seals[0]),
+            change(root, listOf("manifest", "terminalRecord", "purge", "document", "preTerminalSeals", "count"), JsonPrimitive(1)),
+            change(root, listOf("manifest", "history", "epochSeals", "count"), JsonPrimitive(2)),
+            change(root, listOf("manifest", "terminalRecord", "closure", "finalOrdinaryEpoch"), JsonPrimitive(3)),
+        )
+        variants.forEach { variant ->
+            val encoded = jsonBytes(variant)
+            assertThrows<OfflineTrustBundleException> { OfflineCatalogTestRunTerminalParser.parse(encoded, 4096) }
+            assertThrows<OfflineTrustBundleException> { verify(f, f.prefix + encoded) }
+        }
+        assertArrayEquals(wire, verify(f, f.prefix + wire).canonicalEnvelopeBytes)
+        assertEquals(before, h.fullImage()); assertNoEEffects(f)
     }
 
     fun strictFieldsHistoryAndLinks(tls: VersionBoundPersistenceConnectedFixture) = withTerminalCatalogRun(tls) { f ->

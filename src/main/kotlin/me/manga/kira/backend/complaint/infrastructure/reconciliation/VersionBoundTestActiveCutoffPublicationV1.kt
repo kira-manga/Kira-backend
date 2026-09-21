@@ -5,6 +5,14 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintEffectiveEpochSealAcquisitionV1
+import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteStore
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteAllJournalPublisherFactoryV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteAllJournalPublisherV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestAdminDeleteJournalPublisherFactoryV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestAdminDeleteJournalPublisherV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.EpochSealDeploymentMappingV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalPublisherV1
@@ -51,6 +59,8 @@ internal class VersionBoundTestActiveCutoffPublicationV1 private constructor(
     private val callerArn = principal.callerArn(ordinarySessionName)
     private val callerUserId = principal.callerUserId(ordinarySessionName)
     private val factories = HashSet<TestOwnerDeleteJournalPublisherFactoryV1>()
+    private val allFactories = HashSet<TestOwnerDeleteAllJournalPublisherFactoryV1>()
+    private val adminFactories = HashSet<TestAdminDeleteJournalPublisherFactoryV1>()
 
     init {
         requireConnectionFree()
@@ -86,15 +96,66 @@ internal class VersionBoundTestActiveCutoffPublicationV1 private constructor(
         return factory
     }
 
+    /** Only the born-with registered deletion binding can select these privacy-family alternatives. */
+    internal fun ownerPublisher(original: TestOwnerDeleteProcessBindingV1, store: JdbcComplaintOwnerDeleteStore): TestOwnerDeleteJournalPublisherFactoryV1 {
+        requireConnectionFree(); original.requirePublicationRecipe(this); requireRetained(routing, lanes)
+        check(store.graph === original.lower)
+        val factory = TestOwnerDeleteJournalPublisherFactoryV1.initialRegistered(original, this, store, checkNotNull(material.get()), s3, kms, clock, nanoTime)
+        synchronized(factories) { requireActiveSeal(!stopped.get()); factories.add(factory) }
+        return factory
+    }
+    internal fun allPublisher(original: TestOwnerDeleteProcessBindingV1, store: JdbcComplaintOwnerDeleteAllStore): TestOwnerDeleteAllJournalPublisherFactoryV1 {
+        requireConnectionFree(); original.requirePublicationRecipe(this); requireRetained(routing, lanes)
+        check(store.testGraph === original.lower)
+        val factory = TestOwnerDeleteAllJournalPublisherFactoryV1.initialRegistered(original, this, store, checkNotNull(material.get()), s3, kms, clock, nanoTime)
+        synchronized(allFactories) { requireActiveSeal(!stopped.get()); allFactories.add(factory) }
+        return factory
+    }
+    internal fun adminPublisher(original: TestOwnerDeleteProcessBindingV1, store: JdbcComplaintAdminDeleteStore): TestAdminDeleteJournalPublisherFactoryV1 {
+        requireConnectionFree(); original.requirePublicationRecipe(this); requireRetained(routing, lanes)
+        check(store.graph === original.lower)
+        val factory = TestAdminDeleteJournalPublisherFactoryV1.initialRegistered(original, this, store, checkNotNull(material.get()), s3, kms, clock, nanoTime)
+        synchronized(adminFactories) { requireActiveSeal(!stopped.get()); adminFactories.add(factory) }
+        return factory
+    }
+    internal fun requireFactory(factory: TestOwnerDeleteJournalPublisherFactoryV1) {
+        requireRetained(routing, lanes); synchronized(factories) { requireActiveSeal(factory in factories && !stopped.get()) }
+    }
+    internal fun requireFactory(factory: TestOwnerDeleteAllJournalPublisherFactoryV1) {
+        requireRetained(routing, lanes); synchronized(allFactories) { requireActiveSeal(factory in allFactories && !stopped.get()) }
+    }
+    internal fun requireFactory(factory: TestAdminDeleteJournalPublisherFactoryV1) {
+        requireRetained(routing, lanes); synchronized(adminFactories) { requireActiveSeal(factory in adminFactories && !stopped.get()) }
+    }
+
     /** Native STS is charged to the SAME <=5s publication/real renewal window as S3 and KMS. */
     internal fun authenticate(factory: TestOwnerDeleteJournalPublisherFactoryV1, custody: TestOwnerDeleteJournalPublisherV1.Construction, attempt: TestOwnerDeleteCodecAttemptV1) {
-        requireConnectionFree(); requireRetained(routing, lanes)
-        synchronized(factories) { requireActiveSeal(factory in factories && !stopped.get()) }
+        requireConnectionFree(); requireFactory(factory)
+        val (owner, acquisition) = principalOwner(attempt)
+        custody.retainPrincipalCheck(owner) // Before open: failed close continues to occupy the original native lane.
+        authenticatePrincipal(owner, acquisition, attempt)
+    }
+    internal fun authenticate(factory: TestOwnerDeleteAllJournalPublisherFactoryV1, custody: TestOwnerDeleteAllJournalPublisherV1.Construction,
+        attempt: TestOwnerDeleteCodecAttemptV1) {
+        requireConnectionFree(); requireFactory(factory)
+        val (owner, acquisition) = principalOwner(attempt)
+        custody.retainPrincipalCheck(owner)
+        authenticatePrincipal(owner, acquisition, attempt)
+    }
+    internal fun authenticate(factory: TestAdminDeleteJournalPublisherFactoryV1, custody: TestAdminDeleteJournalPublisherV1.Construction,
+        attempt: TestOwnerDeleteCodecAttemptV1) {
+        requireConnectionFree(); requireFactory(factory)
+        val (owner, acquisition) = principalOwner(attempt)
+        custody.retainPrincipalCheck(owner)
+        authenticatePrincipal(owner, acquisition, attempt)
+    }
+    private fun principalOwner(attempt: TestOwnerDeleteCodecAttemptV1): Pair<EpochSealStsClientOwner, EpochSealStsAcquisition> {
         attempt.requireOwner(routing)
         val acquisition = EpochSealStsAcquisition(attempt, nanoTime)
-        val owner = EpochSealStsClientOwner(Region.of(routing.journalConfiguration.declaration().journalLocation.region),
-            checkNotNull(material.get()), limits, acquisition, sts)
-        custody.retainPrincipalCheck(owner) // Retain before open: failed native close continues to occupy its original lane.
+        return EpochSealStsClientOwner(Region.of(routing.journalConfiguration.declaration().journalLocation.region),
+            checkNotNull(material.get()), limits, acquisition, sts) to acquisition
+    }
+    private fun authenticatePrincipal(owner: EpochSealStsClientOwner, acquisition: EpochSealStsAcquisition, attempt: TestOwnerDeleteCodecAttemptV1) {
         withEpochSealStsCleanup({
             owner.open()
             val call = EpochSealStsCall("GetCallerIdentity", emptyMap(), acquisition, limits.requestTimeoutMillis, nanoTime)
@@ -108,10 +169,13 @@ internal class VersionBoundTestActiveCutoffPublicationV1 private constructor(
     }
 
     internal fun release(factory: TestOwnerDeleteJournalPublisherFactoryV1) { synchronized(factories) { factories.remove(factory) } }
+    internal fun release(factory: TestOwnerDeleteAllJournalPublisherFactoryV1) { synchronized(allFactories) { allFactories.remove(factory) } }
+    internal fun release(factory: TestAdminDeleteJournalPublisherFactoryV1) { synchronized(adminFactories) { adminFactories.remove(factory) } }
     override fun close() {
         requireConnectionFree()
         stopped.set(true)
-        val owned = synchronized(factories) { factories.toList() }
+        val owned: List<AutoCloseable> = synchronized(factories) { factories.toList() } +
+            synchronized(allFactories) { allFactories.toList() } + synchronized(adminFactories) { adminFactories.toList() }
         var failure: Throwable? = null
         try {
             owned.forEach { factory -> runCatching(factory::close).exceptionOrNull()?.let { if (failure == null || it is Error) failure = it } }

@@ -20,6 +20,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityCharg
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProfileV1
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceTargetV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceSourceV1
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteRows
 import me.manga.kira.backend.complaint.parsing.catalog.OfflineCatalogTestRunTerminalParser
 import me.manga.kira.backend.security.TestTerminalCodecKindV1
@@ -119,6 +120,7 @@ internal class CatalogTestRunTerminalFrozenV1 private constructor(
     val createdAt: Instant = Instant.ofEpochSecond(stored.creation.createdAtEpochSecond)
     val prepareCharge: ComplaintCapacityVector = TestTerminalCapacityChargesV1.SCOPED_CATALOG
     val projectionCharge: ComplaintCapacityVector = TestTerminalCapacityChargesV1.AUDIT
+    val hasActiveHistory: Boolean = stored.terminalRecord.sealSet.records().size == 3
     val targets: List<TestTerminalQuiescenceTargetV1> = buildList {
         stored.terminalRecord.installationManifest.chunks.forEach {
             add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.INSTALLATION_MANIFEST, it.chunkIndex, it.eventId, terminalEpoch, terminalEpoch, it.objectRef))
@@ -126,8 +128,10 @@ internal class CatalogTestRunTerminalFrozenV1 private constructor(
         add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.TEST_RUN_PURGE, 0, stored.terminalRecord.purge.document.eventId,
             terminalEpoch, terminalEpoch, stored.terminalRecord.purge.objectRef))
         stored.terminalRecord.sealSet.records().forEachIndexed { index, seal ->
-            add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.EPOCH_SEAL, index, seal.sealId,
-                seal.epochStartInclusive, seal.epochEndInclusive, seal.objectRef))
+            val active = hasActiveHistory && index == 0
+            add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.EPOCH_SEAL, if (active) 0 else index - (if (hasActiveHistory) 1 else 0), seal.sealId,
+                seal.epochStartInclusive, seal.epochEndInclusive, seal.objectRef,
+                if (active) TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL else TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT))
         }
     }.sortedBy { it.objectRef.objectKey }
     private val arguments: Array<Any?> = arrayOf(token, scope, generation - 1, hex(predecessorHash), generation, catalogWriter,

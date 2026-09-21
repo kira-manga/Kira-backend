@@ -16,14 +16,28 @@ import org.springframework.jdbc.core.JdbcTemplate
 import java.time.Instant
 
 /** Fixed read-only comparison producer. No session refresh, enabled bean, admission or deletion writer. */
-internal class JdbcComplaintInstallationDeletionPreflightStore(private val jdbc: JdbcTemplate, private val process: OwnerDeleteAllProcessBinding? = null) {
+internal class JdbcComplaintInstallationDeletionPreflightStore(private val jdbc: JdbcTemplate, private val process: OwnerDeleteAllProcessBinding? = null,
+    internal val testGraph: TestOwnerDeleteLocalGraphV1? = null) {
     private val issuer = Any()
+    init {
+        check(process == null || testGraph == null)
+        check(testGraph?.recoveryRegistration == null)
+        testGraph?.requireOrdinary(jdbc)
+        val source = jdbc.dataSource
+        if (source is me.manga.kira.backend.common.infrastructure.persistence.GuardedDataSource)
+            source.requireTestInitialCheckpointDeletion(testGraph?.initialDeletion?.policy)
+    }
+    internal fun requireEntry(owner: PersistencePhaseOwnership) {
+        testGraph?.initialDeletion?.requireEntry(owner, me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT)
+    }
+    internal fun bind(phase: PersistencePhaseContext) { testGraph?.initialDeletion?.let(phase::bindInitialDeletionRead) }
 
     fun read(candidate: InstallationDeletionCandidate): ComplaintInstallationDeletionPreflightOperation =
-        ComplaintInstallationDeletionPreflightOperation.capture(jdbc, issuer, candidate, process)
+        ComplaintInstallationDeletionPreflightOperation.capture(jdbc, issuer, candidate, process, testGraph)
 
     fun requireOwned(comparison: InstallationDeletionPreflightTuple, ownerIdentity: Any) {
         process?.requireOrdinary(jdbc)
+        testGraph?.requireOrdinary(jdbc)
         ComplaintInstallationDeletionPreflightOperation.requireOwned(comparison, issuer, ownerIdentity)
     }
 
@@ -33,6 +47,7 @@ internal class JdbcComplaintInstallationDeletionPreflightStore(private val jdbc:
         routing: VersionBoundComplaintJournalRouting,
         codec: OwnerDeleteAllJournalCodecV1,
     ): BoundOwnerDeleteAllReplayV1 {
+        check(testGraph == null) // The LIVE replay binder is not a registered TEST APPLY route.
         process?.requireOrdinary(jdbc)
         process?.requireInputs(process.desired, routing)
         return ComplaintInstallationDeletionPreflightOperation.bindReplay(comparison, issuer, ownerIdentity, routing, codec)
@@ -48,6 +63,7 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
     private val issuer: Any,
     private val candidate: InstallationDeletionCandidate,
     private val process: OwnerDeleteAllProcessBinding?,
+    private val testGraph: TestOwnerDeleteLocalGraphV1?,
 ) {
     private var stage = Stage.PREPARED
     private var ownerIdentity: Any? = null
@@ -63,6 +79,7 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
             phase.installationDeletionPreflight.requireCommitted(this)
             requireConnectionFree()
             process?.requireOrdinary(jdbc)
+            testGraph?.requireOrdinary(jdbc)
             // Private continuation objects do not even exist before known commit + actual owned release.
             return released ?: release(checkNotNull(comparison), checkNotNull(ownerIdentity)).also { released = it }
         }
@@ -72,15 +89,18 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
         check(stage === Stage.PREPARED)
         ownerIdentity = phase.installationDeletionPreflight.ownerIdentity(this, jdbc)
         process?.requireOrdinary(jdbc)
+        testGraph?.let { it.requireOrdinary(jdbc); phase.requireRegisteredInitialDeletion(it, jdbc) }
         stage = Stage.READING
+        val initial = testGraph?.initialDeletion
+        val args = arrayOf<Any?>(candidate.installation.id, candidate.installation.scope.id)
         val snapshot = jdbc.query(
-            InstallationDeletionPreflightSnapshot.SQL,
+            if (initial == null) InstallationDeletionPreflightSnapshot.SQL else InstallationDeletionPreflightSnapshot.REGISTERED_SQL,
             { row, _ ->
+                if (initial != null) check(row.getBoolean("registered_current_identity") && !row.wasNull())
                 process?.requireSnapshot(row)
                 InstallationDeletionPreflightSnapshot.read(row, candidate.installation)
             },
-            candidate.installation.id,
-            candidate.installation.scope.id,
+            *(initial?.observationIdentityArguments()?.plus(elements = args) ?: args),
         ).single() // The bounded two-row sentinel refuses multiple receipts/applied versions; it never chooses one.
         requireRetained()
         process?.requireOrdinary(jdbc)
@@ -89,7 +109,11 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
         stage = Stage.COMPLETE
     }
 
-    private fun requireRetained() = phase.installationDeletionPreflight.requireRetained(this, jdbc)
+    private fun requireRetained() {
+        phase.installationDeletionPreflight.requireRetained(this, jdbc)
+        testGraph?.requireOrdinary(jdbc)
+        phase.requireRegisteredInitialDeletion(testGraph, jdbc)
+    }
 
     private fun release(value: InstallationDeletionPreflightSnapshot.Comparison, owner: Any): InstallationDeletionPreflightResult = when (value) {
         is InstallationDeletionPreflightSnapshot.Comparison.Rejected -> ReleasedRejection(value.reason)
@@ -180,12 +204,14 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
             issuer: Any,
             candidate: InstallationDeletionCandidate,
             process: OwnerDeleteAllProcessBinding?,
+            testGraph: TestOwnerDeleteLocalGraphV1? = null,
         ): ComplaintInstallationDeletionPreflightOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             var operation: ComplaintInstallationDeletionPreflightOperation? = null
             try {
                 phase.installationDeletionPreflight.requireOperation(jdbc)
-                operation = ComplaintInstallationDeletionPreflightOperation(phase, jdbc, issuer, candidate, process)
+                phase.requireRegisteredInitialDeletion(testGraph, jdbc)
+                operation = ComplaintInstallationDeletionPreflightOperation(phase, jdbc, issuer, candidate, process, testGraph)
                 phase.installationDeletionPreflight.retain(operation, jdbc)
                 operation.read()
                 return operation

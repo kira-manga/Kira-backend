@@ -75,6 +75,11 @@ internal class JdbcComplaintOwnerDeleteAllStore private constructor(
     internal val testGraph get() = checkNotNull(controls.testGraph)
     private val issuer = Any()
 
+    internal fun requireInitialIssuer(selected: Any, selectedJdbc: JdbcTemplate) {
+        check(selected === issuer && selectedJdbc === jdbc)
+        testGraph.requireDeletion(selectedJdbc)
+    }
+
     internal fun lockBoundVerification(selected: JdbcTemplate) {
         check(selected.dataSource === jdbc.dataSource)
         controls.testGraph?.requireDeletion(selected)
@@ -89,7 +94,7 @@ internal class JdbcComplaintOwnerDeleteAllStore private constructor(
 
     private fun capture(candidate: InstallationDeletionCandidate, preflight: InstallationDeletionPreflightTuple, path: PersistencePhasePath): ComplaintOwnerDeleteAllOperation {
         check(controls.testGraph?.recoveryRegistration == null)
-        return ComplaintOwnerDeleteAllOperation.capture(jdbc, capacity, audit, controls, routing, policy, issuer, candidate, preflight, path)
+        return ComplaintOwnerDeleteAllOperation.capture(jdbc, capacity, audit, controls, routing, policy, issuer, candidate, preflight, path, source = this)
     }
 
     internal fun reloadRegistered(original: TestRunOwnerDeleteAllContinuationV1): ComplaintOwnerDeleteAllOperation =
@@ -102,12 +107,14 @@ internal class JdbcComplaintOwnerDeleteAllStore private constructor(
     /** Custody only: future provider composition must additionally own actual runtime authority and its disjoint lane. */
     fun preparedEvent(work: CommittedOwnerDeleteAllWork.Prepared): OwnerDeleteAllJournalEventV1 {
         requireConnectionFree()
+        controls.testGraph?.requireUnchanged()
         return ComplaintOwnerDeleteAllOperation.preparedEvent(work, issuer, routing)
     }
 
     /** Exact private reload custody; the fixed VERIFY consumer must still strictly validate its retained proof. */
     fun recordedEvent(work: CommittedOwnerDeleteAllWork.RecordedVerified): OwnerDeleteAllJournalEventV1 {
         requireConnectionFree()
+        controls.testGraph?.requireUnchanged()
         return ComplaintOwnerDeleteAllOperation.recordedEvent(work, issuer, routing)
     }
 
@@ -157,6 +164,9 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
     private val comparison: InstallationDeletionPreflightTuple get() = checkNotNull(preflight)
     private var stage = Stage.RETAINED
     private var newAuthorization = false
+    private var initialRecoveryInserted = false
+    private var initialRoute: ComplaintJournalRoutingCandidateV1? = null
+    private var checkpointTime: Instant? = null
     private var allocation: JdbcComplaintCapacityStore.LockedOwnerDeleteAll? = null
     private var canonical: OwnerDeleteAllJournalEventV1? = null
     private var authorizationTime: Instant? = null
@@ -173,6 +183,7 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         get() {
             phase.ownerDeleteAll.requireCommitted(this)
             requireConnectionFree()
+            controls.testGraph?.let { it.initialDeletion?.requireGraph(it) }
             original?.requireReleasedReload()
             return released ?: (
                 if (prepared) {
@@ -209,12 +220,15 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
                 ) == 1,
             )
             newAuthorization = true
+            checkInitialCheckpoint() // Only this newly inserted receipt, not replay or a supplied snapshot.
             authorizeNew(capacity, audit, control)
         } else {
+            requireInitialReplayObservation(receipts.single())
             reloadExisting(capacity, control, receipts.single())
         }
         requireRetained()
         check(checkNotNull(allocation).completedFor(this))
+        checkInitialCheckpoint()
         stage = Stage.COMPLETE
     }
 
@@ -291,6 +305,7 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         val tuple = journalTuple(control.epoch)
         val routes = routing.derive(tuple)
         val active = routing.active(tuple)
+        initialRoute = active
         // No locking of an existing publication in the new-receipt path. Occupied retained candidates
         // without their exact receipt require recovery, never another active-key/epoch assignment.
         routes.forEach { route ->
@@ -309,6 +324,8 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         stage = Stage.RESERVING
         checkWrite()
         check(jdbc.update(sql.INSERT_RECOVERY, active.eventId, active.eventId, recoveryArray()) == 1)
+        initialRecoveryInserted = true
+        checkInitialCheckpoint()
         stage = Stage.DOMAIN
         lockInstallation("ACTIVE")
         // Existing state index; intentionally conservative for this dormant slice. No JSON owner scan,
@@ -397,6 +414,7 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         }, request.installation.id).singleOrNull() == true
         requireRetained()
         check(reservation && credential)
+        checkInitialCheckpoint() // DB time after run/reservation/credential waits, never a pre-wait projection.
     }
 
     private fun lockTargets(): List<UUID> {
@@ -418,7 +436,41 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         }, targetArray)
         check(content == targets)
         requireRetained()
+        checkInitialCheckpoint()
         return targets
+    }
+
+    private fun requireInitialReplayObservation(receipt: Receipt) {
+        val initial = controls.testGraph?.initialDeletion ?: return
+        val args = initial.observationIdentityArguments().plus(elements = arrayOf<Any?>(request.installation.id, request.installation.scope.id))
+        val observed = jdbc.query(InstallationDeletionPreflightSnapshot.REGISTERED_SQL, { row, _ ->
+            check(row.getBoolean("registered_current_identity") && !row.wasNull())
+            InstallationDeletionPreflightSnapshot.read(row, request.installation)
+        }, *args).single().compare(request)
+        check(observed is InstallationDeletionPreflightSnapshot.Comparison.Authorized && observed.publicationReference == receipt.publication)
+    }
+
+    internal fun initialCheckpointArguments(original: TestOwnerDeleteProcessBindingV1): Array<Any?> {
+        requireRetained()
+        check(controls.testGraph?.initialDeletion === original && newAuthorization && this.original == null &&
+            path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE && stage in setOf(Stage.RECEIPT, Stage.COUNTERS,
+                Stage.RESERVING, Stage.DOMAIN, Stage.RESOURCES, Stage.PENDING, Stage.PUBLICATION, Stage.AUDIT))
+        val current = canonical
+        val route = current?.route ?: initialRoute
+        return arrayOf("OWNER_DELETE_ALL", request.installation.id, request.operationKey, comparison.fingerprint.bytes(),
+            request.credentialVersion, current?.complaintIds().orEmpty().joinToString(",", "{", "}"),
+            route?.eventId, route?.objectKey, route?.routingKeyId, current?.canonicalBytes(),
+            current?.semanticSha256?.let(HexFormat.of()::parseHex), recoveryArray(), initialRecoveryInserted,
+            authorizationTime?.let(Timestamp::from), null, null, null)
+    }
+
+    private fun checkInitialCheckpoint() {
+        if (!newAuthorization) return
+        controls.testGraph?.initialDeletion?.let { initial ->
+            val now = initial.checkCurrent(this)
+            check(checkpointTime?.let { !now.isBefore(it) } != false)
+            checkpointTime = now
+        }
     }
 
     internal fun beginCounterLock(selected: JdbcTemplate): Boolean {
@@ -433,6 +485,7 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         check(stage === Stage.COUNTERS && policy.digestBytes().contentEquals(ledger.configuration.digestBytes()))
         check(policy.hardLimit == ledger.balance.hardLimit && policy.creationLimit == ledger.balance.creationLimit)
         registeredRecovery?.let { check(it.fitsWithin(ledger.balance.recoveryReserved)) }
+        checkInitialCheckpoint() // Already locked counters; no backward control acquisition or budget restart.
         phase.ownerDeleteAll.checkCapacity(this, selected, ledger)
     }
 
@@ -492,6 +545,8 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
 
     private fun requireRetained() {
         phase.ownerDeleteAll.requireRetained(this, jdbc)
+        controls.testGraph?.requireDeletion(jdbc)
+        phase.requireRegisteredInitialDeletion(controls.testGraph, jdbc)
         original?.let { phase.requireTestRunOwnerDeleteAllReload(it, checkNotNull(controls.testGraph), jdbc) }
     }
     private fun requireAt(expected: Stage) {
@@ -608,11 +663,16 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
             preflight: InstallationDeletionPreflightTuple?,
             path: PersistencePhasePath,
             original: TestRunOwnerDeleteAllContinuationV1? = null,
+            source: JdbcComplaintOwnerDeleteAllStore? = null,
         ): ComplaintOwnerDeleteAllOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             var operation: ComplaintOwnerDeleteAllOperation? = null
             try {
                 phase.ownerDeleteAll.requireOperation(jdbc, path)
+                if (controls.testGraph?.initialDeletion != null) {
+                    checkNotNull(source).requireInitialIssuer(issuer, jdbc)
+                    phase.requireInitialAllDeleteStore(source)
+                }
                 original?.let { phase.requireTestRunOwnerDeleteAllReload(it, checkNotNull(controls.testGraph), jdbc) }
                 operation = ComplaintOwnerDeleteAllOperation(phase, jdbc, controls, routing, policy, issuer, candidate, preflight, path, original)
                 phase.ownerDeleteAll.retain(operation, jdbc)

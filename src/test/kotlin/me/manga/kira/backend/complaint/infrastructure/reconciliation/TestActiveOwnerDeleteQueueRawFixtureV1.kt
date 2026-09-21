@@ -1,11 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
-import me.manga.kira.backend.common.infrastructure.persistence.NeverOwnerDeleteAllDataKeys
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.catalog.S3CatalogReply
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealHttpFixtureV1
@@ -16,16 +12,13 @@ import me.manga.kira.backend.complaint.journal.JournalPublisherObject
 import me.manga.kira.backend.complaint.journal.journalPublisherRawAssertSigned
 import me.manga.kira.backend.complaint.journal.journalPublisherRawGetReply
 import me.manga.kira.backend.complaint.journal.journalPublisherRawHttpClient
-import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
-import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
-import me.manga.kira.backend.security.TestOwnerDeleteJournalTupleV1
-import me.manga.kira.backend.security.TestTerminalCryptoReferenceV1
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.JournalKmsHttpReply
 import me.manga.kira.backend.security.aws.JournalKmsHttpRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.ExecutableHttpRequest
@@ -33,14 +26,9 @@ import software.amazon.awssdk.http.HttpExecuteRequest
 import software.amazon.awssdk.http.SdkHttpClient
 import java.net.URLEncoder
 import java.security.MessageDigest
-import java.time.temporal.ChronoUnit
-import java.util.Base64
 import java.util.HexFormat
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
-import javax.crypto.Cipher
 import javax.crypto.Mac
-import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /** Immutable TEST raw recipes chosen before protected intake/full D. No SQL or admitted result seam. */
@@ -61,8 +49,9 @@ internal class TestActiveOwnerDeleteQueueHttpInputV1(
 
 /**
  * Real SDK/SigV4 + bounded MAIN native transport + codec/decrypt, substituted public HTTP SPI only.
- * The synthetic external object has NO local N/P/L or authority handle. Its JCE wire framing and
- * KMS-context expectation are independent of MAIN encryption. No real AWS/two-process claim.
+ * Positive input is A's original actual native PUT, after real released AUTH and before APPLY.
+ * Decrypt delegates its original wrapped-key map after independently checking queue SigV4/context.
+ * No producer re-encryption, copied plaintext key, supplied proof, real AWS or two-process claim.
  */
 internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
     private var fixture: TestActiveOwnerDeleteQueueFixtureV1? = null
@@ -93,8 +82,7 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
         private set
     lateinit var stored: JournalPublisherObject
         private set
-    private var context = emptyMap<String, String>()
-    private val wrapped = AwsJournalKmsFixture.wrappedBytes()
+    private lateinit var originalRecord: TestRegisteredInitialDeletionNativeRecordV1
     private val mapper = ObjectMapper()
     val input = TestActiveOwnerDeleteQueueHttpInputV1(
         { remaining -> native("STS", remaining, sts::httpClient) },
@@ -124,54 +112,23 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
             boundary(); signed(request, "kms"); order.add("DECRYPT")
             assertEquals(AwsJournalKmsFixture.DECRYPT_TARGET, request.target(), "Queue recovery cannot generate a key or PUT a journal.")
             val fields = request.fields()
-            assertEquals(context, fields["EncryptionContext"].fields().asSequence().associate { it.key to it.value.textValue() })
-            assertEquals(Base64.getEncoder().encodeToString(wrapped), fields["CiphertextBlob"].textValue())
+            assertEquals(originalRecord.kmsContext, fields["EncryptionContext"].fields().asSequence().associate { it.key to it.value.textValue() })
             val key = checkNotNull(fixture).process.consumers.journalConfiguration.declaration().encryption.keyArn
             assertEquals(key, fields["KeyId"].textValue())
-            JournalKmsHttpReply(AwsJournalKmsFixture.decryptDocument(key, AwsJournalKmsFixture.keyBytes()))
+            originalRecord.decrypt(request) // The original raw producer owns the exact CiphertextBlob mapping.
         } }
         sqs.respond = { request -> checked { sqsReply(request) } }
     }
 
-    fun attach(f: TestActiveOwnerDeleteQueueFixtureV1) { check(fixture == null); fixture = f; externalObject() }
-    fun detach(f: TestActiveOwnerDeleteQueueFixtureV1) { check(fixture === f); fixture = null }
-    fun resetFaults() { beforeSqs = {}; changeSqs = { _, _ -> }; changeS3 = { _, _ -> }; wrongPrincipal = false; onNativeClose = {} }
-
-    /** Synthetic provider input, not a current-state seed or a verification/APPLY issuer. */
-    fun externalObject(kind: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE) {
-        val f = checkNotNull(fixture)
-        val routing = f.process.consumers.journalRouting
-        val j = routing.journalConfiguration
-        val tuple = TestOwnerDeleteJournalTupleV1(1, UUID.randomUUID(), 1, UUID.randomUUID(), ByteArray(32) { (it + 1).toByte() }, j.scope, kind)
-        event = TestOwnerDeleteJournalCodecV1(routing, NeverOwnerDeleteAllDataKeys()).canonicalize(tuple, listOf(UUID.randomUUID()))
-        val d = j.declaration()
-        val nonce = ByteArray(12) { (it + 11).toByte() }
-        val fields = AwsJournalKmsFixture.testOwnerDeleteFields(j, event.route.objectKey, event.route.eventId,
-            tuple.epoch, event.route.routingKeyId, AwsJournalKmsFixture.url(nonce)).toMutableList().apply { this[5] = kind.name }
-        context = mapOf(AwsJournalKmsFixture.CONTEXT_KEY to AwsJournalKmsFixture.url(AwsJournalKmsFixture.frame(fields)))
-        val names = listOf("envelopeSchemaVersion", "payloadSchemaVersion", "canonicalizerId", "objectKind", "encryptionAlgorithm", "dataKeyMode",
-            "kmsKeyId", "kmsKeyArn", "bucket", "objectKey", "writerGeneration", "ordinaryPrefix", "dataScopeKind", "dataScopeId",
-            "publicationEpoch", "routingKeyId", "eventId", "nonce")
-        val values = fields.drop(2)
-        val header = CanonicalJson.canonicalize(JsonObject(names.zip(values).associate { (name, value) ->
-            name to if (name in setOf("envelopeSchemaVersion", "payloadSchemaVersion", "publicationEpoch")) JsonPrimitive(value.toLong()) else JsonPrimitive(value)
-        })).toByteArray()
-        val plaintext = event.canonicalBytes()
-        val aad = AwsJournalKmsFixture.frame(listOf("kira-complaint-journal-aad-v1", "1", "KJEV", "1", header.size.toString()) + values +
-            listOf(wrapped.size.toString(), AwsJournalKmsFixture.url(wrapped), (plaintext.size + 16).toString()))
-        val key = AwsJournalKmsFixture.keyBytes()
-        val wire = try {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce)); cipher.updateAAD(aad)
-            TestTerminalCryptoReferenceV1.pack(header, wrapped, cipher.doFinal(plaintext))
-        } finally { plaintext.fill(0); key.fill(0); nonce.fill(0); aad.fill(0); header.fill(0) }
-        val at = f.initial.native.now().minusSeconds(5).truncatedTo(ChronoUnit.SECONDS)
-        val until = at.plusSeconds(d.limits.retention.ordinaryRetentionSeconds + 60)
-        stored = JournalPublisherObject(event.route.objectKey, "synthetic-active-queue-opaque-version", wire, at, until,
-            mapOf("kira-journal-schema" to "1", "kira-journal-event-id" to event.route.eventId,
-                "kira-journal-ciphertext-sha256" to Sha256.hex(wire), "kira-journal-retain-until" to until.toString()))
+    fun attach(f: TestActiveOwnerDeleteQueueFixtureV1, record: TestRegisteredInitialDeletionNativeRecordV1) {
+        check(fixture == null); fixture = f
+        originalRecord = record; event = record.event; stored = record.stored
+        assertSame(checkNotNull(f.precursor.event), event)
+        assertSame(checkNotNull(f.precursor.record).stored, stored)
         primaryBody = notification(); dlqBody = null
     }
+    fun detach(f: TestActiveOwnerDeleteQueueFixtureV1) { check(fixture === f); fixture = null }
+    fun resetFaults() { beforeSqs = {}; changeSqs = { _, _ -> }; changeS3 = { _, _ -> }; wrongPrincipal = false; onNativeClose = {} }
 
     fun notification(): String {
         val d = checkNotNull(fixture).process.consumers.journalConfiguration.declaration()
@@ -189,6 +146,7 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
         ))))
     }
 
+    /** Adversarial raw metadata only, never a claim that another native PUT occurred. */
     fun differentOpaqueVersion() {
         stored = stored.copy(version = "synthetic-active-queue-other-opaque-version")
         primaryBody = notification()

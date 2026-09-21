@@ -1716,6 +1716,38 @@ internal class ComplaintIngressAdmission(
             owner.locked { owner.requireCreateState(selected) }
         }
 
+        internal fun requireOwnerDeleteOwner(handoff: ComplaintAdmittedOwnerDelete, owner: ComplaintIngressAdmission) {
+            val selected = handoff as? AdmittedDelete ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            if (selected.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            owner.locked { owner.requireDeleteState(selected) }
+        }
+
+        internal fun requireOwnerDeleteAllOwner(handoff: ComplaintAdmittedOwnerDeleteAll, owner: ComplaintIngressAdmission) {
+            val selected = handoff as? AdmittedDeleteAll ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            if (selected.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            owner.locked { owner.requireDeleteAllState(selected) }
+        }
+
+        internal fun requireAdminErasureOwner(handoff: ComplaintAdmittedAdminErasure, owner: ComplaintIngressAdmission) {
+            when (handoff) {
+                is AdmittedAdminDelete -> {
+                    if (handoff.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                    owner.locked { owner.requireAdminDeleteState(handoff) }
+                }
+                is AdmittedAdminBatchDelete -> {
+                    if (handoff.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                    owner.locked { owner.requireAdminBatchDeleteState(handoff) }
+                }
+                else -> refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
+        }
+
+        /** Compare the original thread's live ingress; do not start, renew or charge a read. */
+        internal fun requireInitialDeletionReadOwner(owner: ComplaintIngressAdmission) {
+            val context = current.get() ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            owner.locked { owner.state(context) }
+        }
+
         /** Local live-registry comparison at PREPARED read entry, before checkout. No admission is started, charged or renewed. */
         internal fun requireOwnerOperationReadOwner(context: ComplaintIngressContext, owner: ComplaintIngressAdmission) {
             owner.locked { owner.state(context) }

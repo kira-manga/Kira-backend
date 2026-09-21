@@ -60,7 +60,7 @@ internal class JdbcComplaintAdminDeleteStore(
         capture(identity, candidate, null, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_RELOAD)
     private fun capture(identity: ComplaintAdminReadIdentity, candidate: ComplaintAdminDeleteCandidate, proof: String?, path: PersistencePhasePath): ComplaintAdminDeleteAuthorizationOperation {
         check(graph.recoveryRegistration == null)
-        return ComplaintAdminDeleteAuthorizationOperation.capture(jdbc, capacity, audit, graph, checkNotNull(codec), issuer, identity, candidate, proof, path)
+        return ComplaintAdminDeleteAuthorizationOperation.capture(jdbc, capacity, audit, graph, checkNotNull(codec), issuer, identity, candidate, proof, path, this)
     }
 
     internal fun reloadRegistered(original: TestRunAdminDeleteContinuationV1): ComplaintAdminDeleteRegisteredReloadOperation =
@@ -76,8 +76,11 @@ internal class JdbcComplaintAdminDeleteStore(
         graph.requireUnchanged()
         return ComplaintAdminDeleteAuthorizationOperation.owned(work, issuer, graph.routing)
     }
+    internal fun requireInitialIssuer(selected: Any, selectedJdbc: JdbcTemplate) {
+        check(selected === issuer); requireBinding(graph, selectedJdbc)
+    }
     fun requireBinding(selected: TestOwnerDeleteLocalGraphV1, selectedJdbc: JdbcTemplate) {
-        check(selected === graph && selectedJdbc.dataSource === jdbc.dataSource)
+        check(selected === graph && selectedJdbc.dataSource === jdbc.dataSource && (graph.initialDeletion == null || selectedJdbc === jdbc))
         graph.requireDeletion(selectedJdbc)
     }
 }
@@ -137,6 +140,8 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
     private val tuple = candidate.tuple
     private var stage = Stage.RETAINED
     private var fresh = false
+    private var initialRecoveryInserted = false
+    private var checkpointTime: Instant? = null
     private var consumedGrantId: UUID? = null
     private var ownerByTarget: Map<UUID, UUID> = emptyMap()
     private var requiredRecovery = if (tuple.family == ComplaintAdminDeleteFamily.SINGLE) OwnerDeleteCapacityCharges.RECOVERY
@@ -154,6 +159,7 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
     val result: TestAdminDeleteAuthorizationV1 get() {
         phase.adminDelete.requireCommitted(this)
         requireConnectionFree()
+        graph.initialDeletion?.requireGraph(graph)
         return released ?: (receipt?.let { TestAdminDeleteAuthorizationV1.Completed(it) } ?: run {
             val selected = checkNotNull(event)
             val known = recorded
@@ -171,6 +177,7 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         stage = Stage.RECEIPT
         if (path === PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE && claim()) {
             fresh = true
+            checkInitialCheckpoint() // Only the winning exact receipt claim; receipt loss never enters this gate.
             consumeGrant()
             // Discovery is nonauthoritative. Lock ordering later rechecks the exact owner/resource before authorization.
             ownerByTarget = tuple.targetIds().mapNotNull { target ->
@@ -185,7 +192,9 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
             event?.let { primary ->
                 check(jdbc.update(AdminDeletePersistenceSql.INSERT_RECOVERY, primary.route.eventId, tuple.scope.id, primary.route.eventId,
                     OwnerDeleteRows.array(requiredRecovery)) == 1)
+                initialRecoveryInserted = true
             }
+            checkInitialCheckpoint()
             stage = Stage.DOMAIN
             lockCurrentAdmin()
             controls.lockRun(jdbc, true)
@@ -225,6 +234,7 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
             }
         }
         requireRetained()
+        checkInitialCheckpoint() // Includes this original's exact N/P/L/canonical/accounting after its writes/audit.
         stage = Stage.COMPLETE
     }
     private fun prepareEvent(control: TestOwnerDeleteControlBindingV1.Locked) {
@@ -300,6 +310,7 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         checkWrite()
         event?.let { check(jdbc.update(AdminDeletePersistenceSql.DROP_PROVISIONAL_RECOVERY, it.route.eventId, tuple.scope.id,
             OwnerDeleteRows.array(requiredRecovery)) == 1) }
+        initialRecoveryInserted = false
         allocation.keepReceiptOnly(this)
         checkWrite()
         check(jdbc.update(AdminDeletePersistenceSql.REJECT_RECEIPT, code.status, code.name, consumedGrantId, tuple.actor, tuple.key, tuple.scope.id,
@@ -328,9 +339,15 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         val consumed = jdbc.query(AdminDeletePersistenceSql.CONSUME_GRANT, { row, _ -> row.getObject("id", UUID::class.java) }, grants.single(), identity.actor, hash)
         if (consumed != grants) rejectAdminDelete(ComplaintAdminDeleteFailure.STEP_UP_REQUIRED)
         consumedGrantId = checkNotNull(consumed.single())
+        checkInitialCheckpoint() // Fresh DB time after the real grant wait/consume, without reclaiming it.
     }
     private fun requireCurrentObservation() {
-        val verdict = jdbc.queryForObject(AdminDeletePersistenceSql.AUTHENTICATE, String::class.java, *ComplaintAdminDeleteReadOperation.actorArguments(identity))
+        val actor = ComplaintAdminDeleteReadOperation.actorArguments(identity)
+        val args = graph.initialDeletion?.observationIdentityArguments()?.plus(elements = actor) ?: actor
+        val verdict = jdbc.queryForObject(if (graph.initialDeletion == null) AdminDeletePersistenceSql.AUTHENTICATE else AdminDeletePersistenceSql.REGISTERED_AUTHENTICATE, { row, _ ->
+            if (graph.initialDeletion != null) check(row.getBoolean("registered_current_identity") && !row.wasNull())
+            row.getString("verdict")
+        }, *args)
         when (verdict) {
             "UNAUTHORIZED" -> rejectAdminDelete(ComplaintAdminDeleteFailure.UNAUTHORIZED)
             "FORBIDDEN" -> rejectAdminDelete(ComplaintAdminDeleteFailure.FORBIDDEN)
@@ -368,6 +385,28 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         requireRetained()
         if (jdbc.queryForObject(AdminDeletePersistenceSql.TOKEN_TIME, Boolean::class.java, identity.validFrom?.let(Timestamp::from), Timestamp.from(identity.validUntil)) != true)
             rejectAdminDelete(ComplaintAdminDeleteFailure.UNAUTHORIZED)
+        checkInitialCheckpoint()
+    }
+    /** Detached comparison arguments only; the private binding calls this on its exact retained new-claim operation. */
+    internal fun initialCheckpointArguments(original: TestOwnerDeleteProcessBindingV1): Array<Any?> {
+        requireRetained()
+        check(graph.initialDeletion === original && fresh && path === PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE &&
+            stage in setOf(Stage.RECEIPT, Stage.COUNTERS, Stage.RESERVING, Stage.DOMAIN, Stage.WRITING, Stage.AUDIT, Stage.REJECTING))
+        val current = event
+        val rejection = receipt as? ComplaintAdminDeleteReceipt.Rejected
+        return arrayOf(tuple.operation, tuple.actor, tuple.key, tuple.fingerprintBytes(), null, AdminDeleteRows.array(tuple.targetIds()),
+            current?.route?.eventId, current?.route?.objectKey, current?.route?.routingKeyId,
+            current?.canonicalBytes(), current?.semanticSha256?.let(HexFormat.of()::parseHex),
+            OwnerDeleteRows.array(requiredRecovery), initialRecoveryInserted, authorizationTime?.let(Timestamp::from), consumedGrantId,
+            rejection?.problemCode, rejection?.status)
+    }
+    private fun checkInitialCheckpoint() {
+        if (!fresh) return
+        graph.initialDeletion?.let { original ->
+            val now = original.checkCurrent(this)
+            check(checkpointTime?.let { !now.isBefore(it) } != false)
+            checkpointTime = now
+        }
     }
     internal fun authorizationCharge() = if (tuple.family == ComplaintAdminDeleteFamily.SINGLE) OwnerDeleteCapacityCharges.AUTHORIZATION
         else AdminBatchDeleteCapacityCharges.authorization(tuple.targetIds().size)
@@ -383,6 +422,7 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         requireSelected(selected)
         check(stage === Stage.COUNTERS && graph.policy.digestBytes().contentEquals(ledger.configuration.digestBytes()))
         check(graph.policy.hardLimit == ledger.balance.hardLimit && graph.policy.creationLimit == ledger.balance.creationLimit)
+        checkInitialCheckpoint() // After all locked counters, before charging the unchanged P policy.
         phase.adminDelete.checkCapacity(this, selected, ledger)
     }
     internal fun retainCapacity(allocation: JdbcComplaintCapacityStore.LockedAdminDelete, selected: JdbcTemplate) {
@@ -405,7 +445,10 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         check(fresh && paid === allocation && stage === Stage.AUDIT && allocation.settledFor(this))
         checkWrite()
     }
-    private fun requireRetained() { phase.adminDelete.requireRetained(this, jdbc); graph.requireDeletion(jdbc); identity.requireCurrent() }
+    private fun requireRetained() {
+        phase.adminDelete.requireRetained(this, jdbc); graph.requireDeletion(jdbc); identity.requireCurrent()
+        phase.requireRegisteredInitialDeletion(graph, jdbc)
+    }
     private fun requireSelected(selected: JdbcTemplate) { requireRetained(); check(selected === jdbc) }
     private fun checkWrite() = phase.adminDelete.checkWrite(this, jdbc)
     internal fun failed(problem: Throwable): Nothing {
@@ -450,10 +493,14 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         @Suppress("TooGenericExceptionCaught")
         fun capture(jdbc: JdbcTemplate, capacity: JdbcComplaintCapacityStore, audit: AuditService, graph: TestOwnerDeleteLocalGraphV1,
             codec: TestOwnerDeleteJournalCodecV1, issuer: Any, identity: ComplaintAdminReadIdentity, candidate: ComplaintAdminDeleteCandidate,
-            proof: String?, path: PersistencePhasePath): ComplaintAdminDeleteAuthorizationOperation {
+            proof: String?, path: PersistencePhasePath, source: JdbcComplaintAdminDeleteStore? = null): ComplaintAdminDeleteAuthorizationOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
                 phase.adminDelete.requireOperation(jdbc, path)
+                if (graph.initialDeletion != null) {
+                    checkNotNull(source).requireInitialIssuer(issuer, jdbc)
+                    phase.requireInitialAdminDeleteStore(source)
+                }
                 return ComplaintAdminDeleteAuthorizationOperation(phase, jdbc, graph, codec, issuer, identity, candidate, proof, path).also {
                     phase.adminDelete.retain(it, jdbc); it.execute(capacity, audit)
                 }

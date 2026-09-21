@@ -39,9 +39,10 @@ internal class JdbcComplaintAdminReadStore(private val jdbc: JdbcTemplate, priva
     }
 
     /** Current normal ADMIN only: a historical content receipt must not require an ACTIVE run. */
-    fun authenticateContentIdentity(identity: ComplaintAdminReadIdentity): ComplaintAdminReadOperation {
+    fun authenticateContentIdentity(identity: ComplaintAdminReadIdentity, initialDeletion: TestOwnerDeleteProcessBindingV1? = null): ComplaintAdminReadOperation {
         require(identity.scope == testScope) { "Admin content scope refused." }
-        return ComplaintAdminReadOperation.contentAuthentication(jdbc, identity)
+        initialDeletion?.lower?.requireOrdinary(jdbc)
+        return ComplaintAdminReadOperation.contentAuthentication(jdbc, identity, initialDeletion)
     }
 
     fun search(identity: ComplaintAdminReadIdentity, query: ComplaintAdminSearchQuery, position: ComplaintAdminReadPosition?): ComplaintAdminReadOperation {
@@ -101,6 +102,7 @@ internal class ComplaintAdminReadOperation private constructor(
     private val jdbc: JdbcTemplate,
     private val path: PersistencePhasePath,
     private val currentAdminOnly: Boolean,
+    private val initialDeletion: TestOwnerDeleteProcessBindingV1?,
 ) {
     private var completed = false
     private var captured: ComplaintAdminReadRows? = null
@@ -112,12 +114,28 @@ internal class ComplaintAdminReadOperation private constructor(
         get() {
             phase.adminRead.requireCommitted(this)
             requireConnectionFree()
+            initialDeletion?.lower?.requireOrdinary(jdbc)
             return checkNotNull(captured)
         }
 
     private fun execute(identity: ComplaintAdminReadIdentity, query: ComplaintAdminSearchQuery?, position: ComplaintAdminReadPosition?, id: UUID?) {
         phase.adminRead.requireRetained(this, jdbc)
         identity.requireCurrent()
+        if (initialDeletion != null) {
+            check(currentAdminOnly && path === PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
+            phase.requireRegisteredInitialDeletion(initialDeletion.lower, jdbc)
+            check(identity.scope == initialDeletion.lower.routing.journalConfiguration.scope)
+            val args = initialDeletion.observationIdentityArguments().plus(elements = ComplaintAdminDeleteReadOperation.actorArguments(identity))
+            captured = jdbc.query(AdminDeletePersistenceSql.REGISTERED_AUTHENTICATE, { row, _ ->
+                check(row.getBoolean("registered_current_identity") && !row.wasNull())
+                ComplaintAdminReadRows(ComplaintAdminReadVerdict.valueOf(checkNotNull(row.getString("verdict"))), emptyList())
+            }, *args).single()
+            phase.adminRead.requireRetained(this, jdbc)
+            phase.requireRegisteredInitialDeletion(initialDeletion.lower, jdbc)
+            identity.requireCurrent()
+            completed = true
+            return
+        }
         val sql = when (path) {
             PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION -> if (currentAdminOnly) CONTENT_AUTH_SQL else AUTH_SQL
             PersistencePhasePath.COMPLAINT_ADMIN_SEARCH -> searchSql(checkNotNull(query), position)
@@ -205,8 +223,10 @@ internal class ComplaintAdminReadOperation private constructor(
             capture(jdbc, identity, null, null, null, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
 
         /** Comparison-only authentication observation, never the private Admin-read adapter handoff. */
-        fun contentAuthentication(jdbc: JdbcTemplate, identity: ComplaintAdminReadIdentity): ComplaintAdminReadOperation =
-            capture(jdbc, identity, null, null, null, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION, currentAdminOnly = true)
+        fun contentAuthentication(jdbc: JdbcTemplate, identity: ComplaintAdminReadIdentity,
+            initialDeletion: TestOwnerDeleteProcessBindingV1? = null): ComplaintAdminReadOperation =
+            capture(jdbc, identity, null, null, null, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
+                currentAdminOnly = true, initialDeletion = initialDeletion)
 
         fun search(jdbc: JdbcTemplate, identity: ComplaintAdminReadIdentity, query: ComplaintAdminSearchQuery, position: ComplaintAdminReadPosition?): ComplaintAdminReadOperation =
             capture(jdbc, identity, query, position, null, PersistencePhasePath.COMPLAINT_ADMIN_SEARCH)
@@ -226,10 +246,18 @@ internal class ComplaintAdminReadOperation private constructor(
             id: UUID?,
             path: PersistencePhasePath,
             currentAdminOnly: Boolean = false,
+            initialDeletion: TestOwnerDeleteProcessBindingV1? = null,
         ): ComplaintAdminReadOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
                 check(!currentAdminOnly || path === PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
+                check(initialDeletion == null || currentAdminOnly)
+                if (currentAdminOnly) {
+                    val source = jdbc.dataSource
+                    if (source is me.manga.kira.backend.common.infrastructure.persistence.GuardedDataSource)
+                        source.requireTestInitialCheckpointDeletion(initialDeletion?.policy)
+                    else check(initialDeletion == null)
+                }
                 when (path) {
                     PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION -> phase.adminRead.requireAuthentication(jdbc)
                     PersistencePhasePath.COMPLAINT_ADMIN_SEARCH -> phase.adminRead.requireSearch(jdbc)
@@ -237,7 +265,7 @@ internal class ComplaintAdminReadOperation private constructor(
                     PersistencePhasePath.COMPLAINT_ADMIN_STATS -> phase.adminRead.requireStats(jdbc)
                     else -> error("Admin read phase refused.")
                 }
-                val operation = ComplaintAdminReadOperation(phase, jdbc, path, currentAdminOnly)
+                val operation = ComplaintAdminReadOperation(phase, jdbc, path, currentAdminOnly, initialDeletion)
                 phase.adminRead.retain(operation, jdbc)
                 operation.execute(identity, query, position, id)
                 return operation

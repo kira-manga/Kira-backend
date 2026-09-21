@@ -19,9 +19,11 @@ internal class ComplaintInstallationDeletionPreflightPhaseExecutor(
 ) {
     @Suppress("TooGenericExceptionCaught")
     fun preflight(candidate: InstallationDeletionCandidate): InstallationDeletionPreflightResult {
+        store.requireEntry(ownership)
         val phase = ownership.enterComplaintInstallationDeletionPreflight()
         var operation: ComplaintInstallationDeletionPreflightOperation? = null
         try {
+            store.bind(phase)
             phase.begin()
             operation = store.read(candidate)
             phase.commit()
@@ -42,6 +44,8 @@ internal class ComplaintInstallationDeletionPreflightPhaseExecutor(
         requireConnectionFree()
         store.requireOwned(comparison, ownership.installationDeletionIdentity)
     }
+
+    internal fun requireGraph(graph: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteLocalGraphV1) { check(store.testGraph === graph) }
 
     /**
      * Local same-J binding of this owner's original committed/released Completed snapshot only.

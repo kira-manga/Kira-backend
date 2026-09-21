@@ -24,6 +24,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalObjectRefV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalPurgeV1
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteRows
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutIdentityV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.CatalogPrimaryPutAcknowledgementV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OrdinaryJournalRetentionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOrdinaryInventoryReadbackV1
@@ -34,10 +35,12 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.AdmittedCatalogOr
 import me.manga.kira.backend.complaint.infrastructure.terminal.AdmittedCatalogTerminalDenialV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenialAuthorityPolicyV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainPersistenceV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainActiveHistoryV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalQuiescenceV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalDenialAuthorityPolicyV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceTargetV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceSourceV1
 import me.manga.kira.backend.security.EpochSealFramesV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import me.manga.kira.backend.security.TestPostTerminalInventoryFoldV1
@@ -144,7 +147,7 @@ internal class CatalogTestRunTerminalV1 private constructor(
     private var ordinaryReadback: TestOrdinaryInventoryReadbackV1? = null
     private var terminalTarget: TestTerminalQuiescenceTargetV1? = null
     private var predecessorControl: List<Any?>? = null
-    private val predecessorBindings = linkedMapOf<Pair<TestTerminalDurableKindV1, Int>, TestTerminalDurableBindingV1>()
+    private val predecessorBindings = linkedMapOf<Triple<TestTerminalQuiescenceSourceV1, TestTerminalDurableKindV1, Int>, TestTerminalDurableBindingV1>()
     private val initialPublications = linkedMapOf<String, PublicationFacts>()
     private var initialPurgeBinding: TestTerminalDurableBindingV1? = null
     private var native: CatalogTestRunTerminalAssemblyV1? = null
@@ -228,6 +231,7 @@ internal class CatalogTestRunTerminalV1 private constructor(
             if (recovery != null) freeze(checkNotNull(checkNotNull(snapshot).terminal).unsignedBytes())
             requireTestTerminalCatalog(checkNotNull(frozen).token == selectedToken())
             checkNotNull(snapshot).run.requireFrozen(checkNotNull(frozen))
+            checkNotNull(snapshot).activeHistory.requireFrozen(checkNotNull(frozen))
             checkNotNull(snapshot).terminal?.requireFrozen(checkNotNull(frozen))
             requireInitialLineage()
             stage = Stage.EVIDENCE
@@ -493,6 +497,7 @@ internal class CatalogTestRunTerminalV1 private constructor(
     internal fun stageTerminalInventoryVersion(reader: TestTerminalInventoryReaderV1, pass: Int, value: TestTerminalInventoryReadbackV1) {
         requireTerminalInventoryReader(reader); value.requireCatalog(this)
         requireTestTerminalCatalog(pass == terminalPass && terminalTargets().any { it.objectRef == value.entry.objectRef && it.kind == value.entry.kind })
+        checkNotNull(snapshot).activeHistory.requireNative(value.entry)
     }
     internal fun completeOrdinaryInventoryPass(reader: TestOrdinaryInventoryReaderV1, pass: Int, at: Instant, count: Long, ciphertextBytes: Long) {
         requireOrdinaryInventoryReader(reader); reader.requireCompletedCatalogPass(this, pass)
@@ -561,7 +566,7 @@ internal class CatalogTestRunTerminalV1 private constructor(
             value.databaseIdentity == process.databaseIdentity.toString() && value.restoreIdentity == process.restoreIdentity.toString() &&
             value.epochStartInclusive == 1L && value.epochEndInclusive == epoch && value.sealTerminalPrefix == journal.sealTerminalPrefix &&
             value.bucket == declaration.journalLocation.bucket && value.accountId == declaration.journalLocation.accountId && value.region == declaration.journalLocation.region &&
-            value.sealedCandidate.completedTerminalSeal == record.sealSet.records()[1] &&
+            value.sealedCandidate.completedTerminalSeal == record.sealSet.records().last() &&
             value.sealedCandidate.completeSealSetSha256 == Sha256.hex(checkNotNull(frozen).sealSetBytes()) && value.sealedCandidate.purge == record.purge.objectRef &&
             value.roleId == role.roleId && value.policy.policyId == role.policy.policyId && value.policy.version == role.policy.version && value.policy.sha256 == role.policy.sha256 &&
             value.evidenceRetainUntilEpochSecond > sampleWallTime().epochSecond)
@@ -603,10 +608,19 @@ internal class CatalogTestRunTerminalV1 private constructor(
             d.control.captureId, d.control.cutoff, d.control.captureFence, d.control.capturedAt, d.control.historyHash)) }
         predecessorControl?.let { requireTestTerminalCatalog(it == fields) } ?: run { predecessorControl = fields }
     }
-    internal fun requirePredecessorSidecar(operation: CatalogTestRunTerminalPreflightOperationV1, binding: TestTerminalDurableBindingV1) {
+    internal fun requirePredecessorSidecar(operation: CatalogTestRunTerminalPreflightOperationV1, target: TestTerminalQuiescenceTargetV1,
+        binding: TestTerminalDurableBindingV1) {
         requirePreflightOperation(operation)
+        requireTestTerminalCatalog(target in checkNotNull(frozen).targets && target.kind.name == binding.objectKind.name &&
+            target.ordinal == binding.objectOrdinal && target.id == binding.objectId && target.objectRef.objectKey == binding.objectKey)
         predecessor?.let { d ->
-            when (binding.objectKind) {
+            if (target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL) {
+                val history = checkNotNull(d.control.initialHistory)
+                requireTestTerminalCatalog(binding.objectKind === TestTerminalDurableKindV1.EPOCH_SEAL && binding.objectOrdinal == 0 &&
+                    binding.operationToken == history.operationToken.toString() && target.objectRef == history.reference.objectRef &&
+                    binding.objectId == history.reference.sealId && binding.epochStartInclusive == 1L && binding.epochEndInclusive == 1L &&
+                    binding.createdAt <= history.checkpointCompletedAt)
+            } else when (binding.objectKind) {
                 TestTerminalDurableKindV1.INSTALLATION_MANIFEST -> requireTestTerminalCatalog(binding.preparingFencingToken in (d.drain.leaseToken + 1)..d.manifest.preparation.leaseToken &&
                     binding.createdAt == checkNotNull(initialPublications[binding.objectId]).createdAt)
                 TestTerminalDurableKindV1.TEST_RUN_PURGE -> requireTestTerminalCatalog(binding == initialPurgeBinding)
@@ -616,8 +630,33 @@ internal class CatalogTestRunTerminalV1 private constructor(
                     binding.preparingFencingToken == d.terminalSeal.leaseToken)
             }
         }
-        val key = binding.objectKind to binding.objectOrdinal
+        val key = Triple(target.source, binding.objectKind, binding.objectOrdinal)
         predecessorBindings[key]?.let { requireTestTerminalCatalog(it == binding) } ?: run { predecessorBindings[key] = binding }
+    }
+
+    /** Historical comparison only inside one of this original's fixed holders; never a new lease. */
+    internal fun requireHistoryRead(jdbc: JdbcTemplate) {
+        requireRunning()
+        requireTestTerminalCatalog(phaseEntered && phase != null && (selectedPhase != null || selectedPreflight != null) &&
+            (catalogJdbc === jdbc || preflightJdbc === jdbc))
+    }
+    internal fun requirePredecessorActiveHistory(jdbc: JdbcTemplate) {
+        requireHistoryRead(jdbc)
+        // Bind D's private A preimage on the initial CAPTURE, before E can move the global head.
+        // Later reads compare that exact E snapshot; D's old activation-head predicate is not
+        // reinterpreted as authority after E's COMPLETE has installed the terminal head.
+        if (snapshot == null) predecessor?.let { TestOrdinaryDrainActiveHistoryV1.requireCurrent(jdbc, it.drain, it.control.initialHistory) }
+    }
+    internal fun requirePredecessorGlobal(generation: Long, hash: ByteArray?) {
+        requireRunning(); requireTestTerminalCatalog(phaseEntered && phase != null)
+        predecessor?.let { d ->
+            val identity = TestActiveFirstCutIdentityV1.fromRegistration(d.registration)
+            val expected = identity.globalConfigurationHash()
+            try { requireTestTerminalCatalog(generation == identity.globalDesiredGeneration && hash.contentEquals(expected)) }
+            finally { expected?.fill(0) }
+        }
+        // Fresh PREPARED recovery is comparison-only until its existing E custody binds the exact
+        // captured global core (including B). It never invents an initial RELEASE registration.
     }
     internal fun requirePredecessorPublication(operation: CatalogTestRunTerminalPreflightOperationV1, id: String, ref: TestTerminalObjectRefV1,
         createdAt: Instant, objectCreatedAt: Instant, retainUntil: Instant, verifiedAt: Instant, verificationSha256: String) {
@@ -897,7 +936,7 @@ internal class CatalogTestRunTerminalV1 private constructor(
         requireConnectionFree(); requireNoPhase(); throwIfSignalled()
         requireTestTerminalCatalog(caller === Thread.currentThread() && closed && cleanupProven && !cleanupUncertain && (lease == null || leaseReleased))
     }
-    override fun toString(): String = "CatalogTestRunTerminalV1(original-only,first-history,PURGING-only,redacted)"
+    override fun toString(): String = "CatalogTestRunTerminalV1(original-only,bounded-history,PURGING-only,redacted)"
 
     private enum class Stage { NEW, FREEZE, EVIDENCE, ORDINARY_INVENTORY, TERMINAL_INVENTORY, CUSTODY, OBSERVATION,
         PREPARE_ARM, SIGN_ARM, SIGN, SIGN_RETURN, SIGNATURE_ARM, PUBLICATION_ARM, PUT, ACKNOWLEDGEMENT, DUAL, CLOSE_NATIVE, COMPLETE_ARM, PROJECT_ARM, CLOSED }

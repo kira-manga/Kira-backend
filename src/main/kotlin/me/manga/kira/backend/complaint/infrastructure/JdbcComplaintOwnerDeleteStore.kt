@@ -36,7 +36,7 @@ import java.time.Instant
 import java.util.HexFormat
 import java.util.UUID
 
-/** Dormant request producer plus fixed registered primary reload; no request-authorizing runtime issuer or bean. */
+/** Closed registered initial request producer or historical lower/recovery store; no route or enabled bean. */
 internal class JdbcComplaintOwnerDeleteStore(
     private val jdbc: JdbcTemplate,
     private val capacity: JdbcComplaintCapacityStore,
@@ -52,7 +52,7 @@ internal class JdbcComplaintOwnerDeleteStore(
         capture(identity, candidate, platform, PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD)
     private fun capture(identity: ComplaintOwnerOperationIdentity, candidate: ComplaintOwnerDeleteCandidate, platform: ComplaintPlatform, path: PersistencePhasePath): ComplaintOwnerDeleteAuthorizationOperation {
         check(graph.recoveryRegistration == null) // The registered recovery graph can never become request authorization.
-        return ComplaintOwnerDeleteAuthorizationOperation.capture(jdbc, capacity, audit, graph, checkNotNull(codec), issuer, identity, candidate, platform, path)
+        return ComplaintOwnerDeleteAuthorizationOperation.capture(jdbc, capacity, audit, graph, checkNotNull(codec), issuer, identity, candidate, platform, path, this)
     }
 
     internal fun reloadRegistered(original: TestRunOwnerDeleteContinuationV1): ComplaintOwnerDeleteRegisteredReloadOperation =
@@ -71,8 +71,11 @@ internal class JdbcComplaintOwnerDeleteStore(
         graph.requireUnchanged()
         return ComplaintOwnerDeleteAuthorizationOperation.owned(work, issuer, graph.routing)
     }
+    internal fun requireInitialIssuer(selected: Any, selectedJdbc: JdbcTemplate) {
+        check(selected === issuer); requireBinding(graph, selectedJdbc)
+    }
     fun requireBinding(selected: TestOwnerDeleteLocalGraphV1, selectedJdbc: JdbcTemplate) {
-        check(selected === graph && selectedJdbc.dataSource === jdbc.dataSource)
+        check(selected === graph && selectedJdbc.dataSource === jdbc.dataSource && (graph.initialDeletion == null || selectedJdbc === jdbc))
         graph.requireDeletion(selectedJdbc)
     }
 }
@@ -128,6 +131,8 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
     private val tuple = candidate.tuple
     private var stage = Stage.RETAINED
     private var fresh = false
+    private var initialRecoveryInserted = false
+    private var checkpointTime: Instant? = null
     private var requiredRecovery = OwnerDeleteCapacityCharges.RECOVERY
     private var paid: JdbcComplaintCapacityStore.LockedOwnerDelete? = null
     private var event: TestOwnerDeleteJournalEventV1? = null
@@ -142,6 +147,7 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
     val result: TestOwnerDeleteAuthorizationV1 get() {
         phase.ownerDelete.requireCommitted(this)
         requireConnectionFree()
+        graph.initialDeletion?.requireGraph(graph)
         return released ?: (receipt?.let { TestOwnerDeleteAuthorizationV1.Completed(it) } ?: run {
             val selected = checkNotNull(event)
             val known = recorded
@@ -159,6 +165,7 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
         stage = Stage.RECEIPT
         if (path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE && claim()) {
             fresh = true
+            checkInitialCheckpoint() // Only the winning exact receipt claim; receipt loss never enters this gate.
             prepareEvent(control)
             stage = Stage.COUNTERS_READY
             val allocation = capacity.lockForOwnerDelete(this)
@@ -167,6 +174,8 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
             val primary = checkNotNull(event)
             check(jdbc.update(OwnerDeletePersistenceSql.INSERT_RECOVERY, primary.route.eventId, tuple.installation.scope.id, primary.route.eventId,
                 OwnerDeleteRows.array(OwnerDeleteCapacityCharges.RECOVERY)) == 1)
+            initialRecoveryInserted = true
+            checkInitialCheckpoint()
             stage = Stage.DOMAIN
             lockActor(authorizing = true)
             authorizeNew(allocation, audit)
@@ -203,6 +212,7 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
             }
         }
         requireRetained()
+        checkInitialCheckpoint() // Includes this original's exact N/P/L/canonical/accounting after its writes/audit.
         stage = Stage.COMPLETE
     }
     private fun prepareEvent(control: TestOwnerDeleteControlBindingV1.Locked) {
@@ -259,6 +269,7 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
         checkWrite()
         check(jdbc.update(OwnerDeletePersistenceSql.DROP_PROVISIONAL_RECOVERY, checkNotNull(event).route.eventId, tuple.installation.scope.id,
             OwnerDeleteRows.array(OwnerDeleteCapacityCharges.RECOVERY)) == 1)
+        initialRecoveryInserted = false
         allocation.keepReceiptOnly(this)
         checkWrite()
         check(jdbc.update(OwnerDeletePersistenceSql.REJECT_RECEIPT, code.status, code.name, tuple.installation.id, tuple.key, tuple.installation.scope.id,
@@ -274,7 +285,10 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
         }
     }
     private fun requireCurrentObservation() {
-        val current = jdbc.queryForObject(OwnerDeletePersistenceSql.AUTHENTICATE, { row, _ -> row.getString("platform") }, *ComplaintOwnerDeleteReadOperation.actorArguments(identity, graph))
+        val current = jdbc.queryForObject(if (graph.initialDeletion == null) OwnerDeletePersistenceSql.AUTHENTICATE else OwnerDeletePersistenceSql.REGISTERED_AUTHENTICATE, { row, _ ->
+            if (graph.initialDeletion != null) check(row.getBoolean("registered_current_identity") && !row.wasNull())
+            row.getString("platform")
+        }, *ComplaintOwnerDeleteReadOperation.actorArguments(identity, graph))
         if (current != platform.name) rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
     }
     private fun lockActor(authorizing: Boolean) {
@@ -293,6 +307,28 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
         requireRetained()
         if (jdbc.queryForObject(OwnerDeletePersistenceSql.TOKEN_TIME, Boolean::class.java, Timestamp.from(identity.issuedAt), Timestamp.from(identity.expiresAt)) != true)
             rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
+        checkInitialCheckpoint()
+    }
+    /** Detached comparison arguments only; the private binding calls this on its exact retained new-claim operation. */
+    internal fun initialCheckpointArguments(original: TestOwnerDeleteProcessBindingV1): Array<Any?> {
+        requireRetained()
+        check(graph.initialDeletion === original && fresh && path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE &&
+            stage in setOf(Stage.RECEIPT, Stage.COUNTERS, Stage.RESERVING, Stage.DOMAIN, Stage.WRITING, Stage.AUDIT, Stage.REJECTING))
+        val current = event
+        val rejection = receipt as? ComplaintOwnerDeleteReceipt.Rejected
+        return arrayOf("OWNER_DELETE", tuple.installation.id, tuple.key, tuple.fingerprintBytes(), identity.credentialVersion, "{${tuple.targetId}}",
+            current?.route?.eventId, current?.route?.objectKey, current?.route?.routingKeyId,
+            current?.canonicalBytes(), current?.semanticSha256?.let(HexFormat.of()::parseHex),
+            OwnerDeleteRows.array(OwnerDeleteCapacityCharges.RECOVERY), initialRecoveryInserted, authorizationTime?.let(Timestamp::from), null,
+            rejection?.problemCode, rejection?.status)
+    }
+    private fun checkInitialCheckpoint() {
+        if (!fresh) return
+        graph.initialDeletion?.let { original ->
+            val now = original.checkCurrent(this)
+            check(checkpointTime?.let { !now.isBefore(it) } != false)
+            checkpointTime = now
+        }
     }
     internal fun requiredRecovery() = requiredRecovery
     internal fun beginCounterLock(selected: JdbcTemplate): Boolean {
@@ -305,6 +341,7 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
         requireSelected(selected)
         check(stage === Stage.COUNTERS && graph.policy.digestBytes().contentEquals(ledger.configuration.digestBytes()))
         check(graph.policy.hardLimit == ledger.balance.hardLimit && graph.policy.creationLimit == ledger.balance.creationLimit)
+        checkInitialCheckpoint() // After all locked counters, before charging the unchanged P policy.
         phase.ownerDelete.checkCapacity(this, selected, ledger)
     }
     internal fun retainCapacity(allocation: JdbcComplaintCapacityStore.LockedOwnerDelete, selected: JdbcTemplate) {
@@ -327,7 +364,10 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
         check(fresh && paid === allocation && stage === Stage.AUDIT && allocation.settledFor(this))
         checkWrite()
     }
-    private fun requireRetained() { phase.ownerDelete.requireRetained(this, jdbc); graph.requireDeletion(jdbc); identity.requireCurrent() }
+    private fun requireRetained() {
+        phase.ownerDelete.requireRetained(this, jdbc); graph.requireDeletion(jdbc); identity.requireCurrent()
+        phase.requireRegisteredInitialDeletion(graph, jdbc)
+    }
     private fun requireSelected(selected: JdbcTemplate) { requireRetained(); check(selected === jdbc) }
     private fun checkWrite() = phase.ownerDelete.checkWrite(this, jdbc)
     internal fun failed(problem: Throwable): Nothing {
@@ -371,10 +411,14 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
         @Suppress("TooGenericExceptionCaught")
         fun capture(jdbc: JdbcTemplate, capacity: JdbcComplaintCapacityStore, audit: AuditService, graph: TestOwnerDeleteLocalGraphV1,
             codec: TestOwnerDeleteJournalCodecV1, issuer: Any, identity: ComplaintOwnerOperationIdentity, candidate: ComplaintOwnerDeleteCandidate,
-            platform: ComplaintPlatform, path: PersistencePhasePath): ComplaintOwnerDeleteAuthorizationOperation {
+            platform: ComplaintPlatform, path: PersistencePhasePath, source: JdbcComplaintOwnerDeleteStore? = null): ComplaintOwnerDeleteAuthorizationOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
                 phase.ownerDelete.requireOperation(jdbc, path)
+                if (graph.initialDeletion != null) {
+                    checkNotNull(source).requireInitialIssuer(issuer, jdbc)
+                    phase.requireInitialOwnerDeleteStore(source)
+                }
                 return ComplaintOwnerDeleteAuthorizationOperation(phase, jdbc, graph, codec, issuer, identity, candidate, platform, path).also {
                     phase.ownerDelete.retain(it, jdbc); it.execute(capacity, audit)
                 }

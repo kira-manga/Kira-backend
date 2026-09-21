@@ -56,7 +56,15 @@ internal class TestActiveOwnerDeleteQueueColdInputsV1Test {
         assertEquals("1", inventory.getValue("maximumObservationRowsPerScope").jsonPrimitive.content)
         assertEquals("1", inventory.getValue("longPollSeconds").jsonPrimitive.content)
         assertEquals("1", inventory.getValue("maximumMessagesPerQueue").jsonPrimitive.content)
-        assertEquals("OWNER_DELETE_ONLY", inventory.getValue("family").jsonPrimitive.content)
+        assertEquals("EXACT_REGISTERED_ORDINARY_DELETIONS_V1", inventory.getValue("family").jsonPrimitive.content)
+        val families = inventory.getValue("supportedFamilies").jsonObject
+        assertEquals(setOf("OWNER_DELETE", "OWNER_DELETE_ALL", "ADMIN_DELETE", "ADMIN_BATCH_DELETE"), families.keys)
+        listOf("OWNER_DELETE", "ADMIN_DELETE", "ADMIN_BATCH_DELETE").forEach {
+            assertEquals("NATIVE_RECOVERY_FOUR_RETAINED_KEYS_ONE_VERSION_PER_KEY", families.getValue(it).jsonPrimitive.content)
+        }
+        assertEquals("EXACT_RETAINED_VERIFIED_PRIMARY_OR_UNEXPIRED_APPLIED_REPLAY", families.getValue("OWNER_DELETE_ALL").jsonPrimitive.content)
+        assertEquals("MISSING_NPL_PREPARED_WITHOUT_VERIFY_MISSING_PAIR_ALIASES_POST_REPLAY_DOMAIN_REPAIR",
+            inventory.getValue("allRecoveryUnfinished").jsonPrimitive.content)
         assertEquals("NO_CHECKPOINT_NO_CAPABILITY_NO_HEALTHY_NO_AUTOSTART", inventory.getValue("authority").jsonPrimitive.content)
         assertFalse(bytes.decodeToString().contains(queue.credentials.accessKeyId()))
         assertFalse(bytes.decodeToString().contains(TestActiveOwnerDeleteQueueHttpInputV1.SESSION))

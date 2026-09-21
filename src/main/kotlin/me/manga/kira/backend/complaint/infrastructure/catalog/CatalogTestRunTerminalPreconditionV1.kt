@@ -36,6 +36,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalEpoch
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalEpochSealSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceTargetV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceSourceV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalSqlRowV1
 import me.manga.kira.backend.security.EpochSealFramesV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
@@ -54,8 +55,8 @@ import java.util.UUID
 
 /**
  * Detached scalar comparison owned by the exact released preflight, NOT a portable proof ticket.
- * The protected digest includes complete physical P/L, APPLIED and V21 row identities and both
- * actual source passes. It excludes only the separately compared run/counter/catalog transitions.
+ * The protected digest includes complete physical P/L, APPLIED, V21, optional V26/V29 identities
+ * and both actual source passes. Run/counter/catalog transitions are separately compared.
  */
 internal class CatalogTestRunTerminalPreconditionV1 private constructor(
     private val original: CatalogTestRunTerminalV1,
@@ -138,6 +139,7 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
         val run = readRun(lock = true)
         expected.run.requireSame(run); run.requireFrozen(input)
         run.requirePayment(expected.terminal != null, expected.terminal?.projectedAt != null)
+        requireActiveHistory(run)
         requireRelations(); requireCounts()
         val applied = readApplied()
         requirePrimaryMembership(applied)
@@ -149,6 +151,7 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
         requireTestTerminalCatalog(applied == readApplied())
         requireSidecarIdentities()
         readRun(lock = false).requireSame(run)
+        requireActiveHistory(run)
         requireControls(lock = false)
         requireTestTerminalCatalog(kind !== CatalogTestRunTerminalPreflightKindV1.ORDINARY_VERSION || matchedNativePublication && matchedNativeApplied)
         requireTestTerminalCatalog((kind === CatalogTestRunTerminalPreflightKindV1.TERMINAL_ROW) == (returnedRow != null))
@@ -157,7 +160,8 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
         pairs.forEach { bytes = append(digest, bytes, listOf("P/L", it)) }
         applied.forEach { bytes = append(digest, bytes, listOf("APPLIED", it.physicalSha256)) }
         sidecars.forEach { bytes = append(digest, bytes, listOf("V21", it)) }
-        append(digest, bytes, listOf("INSTALLATIONS", checkNotNull(sourceHash)))
+        bytes = append(digest, bytes, listOf("INSTALLATIONS", checkNotNull(sourceHash)))
+        expected.activeHistory.commitments().forEach { bytes = append(digest, bytes, it) }
         stage = Stage.RESULT
         result = CatalogTestRunTerminalPreconditionV1.fromOperation(this, TestTerminalFramesV1.finish(digest), applied)
         at(Stage.RESULT); stage = Stage.COMPLETE
@@ -172,20 +176,27 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
         }
         val ordinary = record.progress.completedCuts()[0]
         val terminal = record.progress.completedCuts()[1]
-        jdbc.query(CatalogTestRunTerminalPreflightSqlV1.control, { row, _ ->
+        expected.activeHistory.requireFrozen(input)
+        val sql = if (input.hasActiveHistory) CatalogTestRunTerminalPreflightSqlV1.controlWithActiveHistory else CatalogTestRunTerminalPreflightSqlV1.control
+        jdbc.query(sql, { row, _ ->
             requireTestTerminalCatalog(row.requiredTestActivationBoolean("valid") && row.requiredTestActivationBoolean("scan_requested") &&
                 row.requiredTestActivationLong("publication_epoch") == Math.addExact(input.terminalEpoch, 1L) &&
-                row.requiredTestActivationLong("rotation_sequence") == 1L && row.getObject("rotation_id", UUID::class.java) != null &&
+                row.requiredTestActivationLong("rotation_sequence") == (if (input.hasActiveHistory) 2L else 1L) && row.getObject("rotation_id", UUID::class.java) != null &&
                 row.requiredTestActivationLong("rotation_epoch_before") == input.ordinaryEpoch &&
                 row.requiredTestActivationLong("rotation_capture_token") in 1..ordinary.fencingToken &&
                 row.requiredTestActivationLong("lease_token") == terminal.fencingToken &&
                 checkNotNull(row.getTimestamp("rotation_captured_at")).toInstant().epochSecond <= ordinary.denial.firstInventory.startedAtEpochSecond &&
-                row.getObject("seal_epoch") == null) // First-history only: no prior ACTIVE/checkpoint seal.
+                (if (input.hasActiveHistory) row.requiredTestActivationLong("seal_epoch") == 1L else row.getObject("seal_epoch") == null))
             original.requirePredecessorControl(this, row)
         }, input.scope).single()
-        requireTestTerminalCatalog(jdbc.query(CatalogTestRunTerminalPreflightSqlV1.noActiveHistory,
-            { row, _ -> row.requiredTestActivationBoolean("valid") }, input.scope, journal.sealTerminalPrefix + "%").single())
+        expected.activeHistory.requirePhysical(jdbc, original)
         retained()
+    }
+
+    private fun requireActiveHistory(run: CatalogTestRunTerminalRunV1) {
+        retained()
+        val current = CatalogTestRunTerminalActiveHistoryV1.read(jdbc, original, expected.activation)
+        expected.activeHistory.requireSame(current); current.requireRun(run); current.requireFrozen(input)
     }
 
     private fun readPairs(lock: Boolean) {
@@ -379,7 +390,9 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
     private fun requireSidecars(source: TestInstallationManifestSourceV1.Observation, applied: List<CatalogTestRunTerminalAppliedV1>) {
         val roots = TestTerminalRootsV1(journal, expected.run.installationLimit, TestTerminalSyntaxV1.chunkCount(expected.run.installationLimit))
         val chunks = source.startChunks(input.terminalEpoch)
-        val expectedOrdinaryRoot = ordinaryManifest(applied)
+        val fullOrdinaryRoot = ordinaryManifest(applied) // Keep the whole 1..cutoff denial commitment.
+        requireTestTerminalCatalog(!input.hasActiveHistory || applied.none { it.epoch == 1L })
+        val expectedOrdinaryRoot = if (input.hasActiveHistory) ordinaryManifest(applied, 2, input.ordinaryEpoch) else fullOrdinaryRoot
         val expectedTerminalRoot = TestTerminalEpochSealManifestV1.Builder(journal, input.terminalEpoch, record.installationManifest.chunks.size)
         repeat(2) { pass ->
             if (pass == 1) expectedTerminalRoot.beginSecond()
@@ -390,18 +403,18 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
         }
         val terminalManifest = expectedTerminalRoot.finish()
         val preterminalSeals = TestTerminalSealSetV1.create(original.runContext.dataScopeId, original.runContext.activationCatalogGeneration,
-            original.runContext.activationCatalogSha256, record.sealSet.records().take(1))
+            original.runContext.activationCatalogSha256, record.sealSet.records().dropLast(1))
         requireTestTerminalCatalog(roots.preTerminalSeals(preterminalSeals) == record.purge.document.preTerminalSeals)
         val inventory = roots.preTerminalInventory(original.runContext, preterminalSeals)
         val preterminal = applied.map { TestTerminalInventoryEntryV1(original.writer, it.kind, it.epoch, it.epoch, it.objectRef()) } +
-            record.sealSet.records().take(1).map { TestTerminalInventoryEntryV1(it.writerGeneration, "EPOCH_SEAL", it.epochStartInclusive, it.epochEndInclusive, it.objectRef) }
+            record.sealSet.records().dropLast(1).map { TestTerminalInventoryEntryV1(it.writerGeneration, "EPOCH_SEAL", it.epochStartInclusive, it.epochEndInclusive, it.objectRef) }
         val sorted = preterminal.sortedWith { a, b ->
             val scalar = compareValuesBy(a, b, { it.epochStartInclusive }, { it.epochEndInclusive }, { it.objectKind }, { it.objectRef.objectKey })
             if (scalar != 0) scalar else TestTerminalFramesV1.compareUtf8(a.objectRef.objectVersion, b.objectRef.objectVersion)
         }
         sorted.forEach(inventory::firstPass); inventory.beginSecondPass(); sorted.forEach(inventory::secondPass)
         requireTestTerminalCatalog(inventory.finish() == record.purge.document.preTerminalInventory)
-        val targets = input.targets.sortedWith(compareBy<TestTerminalQuiescenceTargetV1> { it.kind.name }.thenBy { it.ordinal })
+        val targets = sidecarTargets()
         val selected = original.preflightTerminalTarget(this)
         for (target in targets) {
             retained()
@@ -422,8 +435,10 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
                         TestTerminalCodecKindV1.EPOCH_SEAL -> {
                             val seal = json.epochSeal(bytes)
                             requireSeal(seal, loaded, target)
-                            requireTestTerminalCatalog(seal.eventCount == if (target.ordinal == 0) applied.size.toLong() else terminalManifest.count)
-                            requireTestTerminalCatalog(seal.eventManifestSha256 == if (target.ordinal == 0) expectedOrdinaryRoot else terminalManifest.sha256)
+                            val active = target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL
+                            val count = if (active) 0L else if (target.ordinal == 0) applied.size.toLong() else terminalManifest.count
+                            val root = if (active) ordinaryManifest(emptyList(), 1, 1) else if (target.ordinal == 0) expectedOrdinaryRoot else terminalManifest.sha256
+                            requireTestTerminalCatalog(seal.eventCount == count && seal.eventManifestSha256 == root)
                         }
                     }
                 } finally { bytes.fill(0) }
@@ -436,6 +451,11 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
     }
 
     private fun loadSidecar(target: TestTerminalQuiescenceTargetV1): TestTerminalDurableRowV1 {
+        if (target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL) {
+            val loaded = expected.activeHistory.frozenInitial(jdbc, original, expected.activation, target)
+            try { original.requirePredecessorSidecar(this, target, loaded.binding); return loaded }
+            catch (problem: Throwable) { loaded.close(); throw problem }
+        }
         val (sql, args) = when (target.kind) {
             TestTerminalCodecKindV1.INSTALLATION_MANIFEST -> CatalogTestRunTerminalPreflightSqlV1.manifest to arrayOf<Any?>(input.scope, target.ordinal)
             TestTerminalCodecKindV1.TEST_RUN_PURGE -> CatalogTestRunTerminalPreflightSqlV1.purge to arrayOf<Any?>(input.scope)
@@ -461,7 +481,7 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
                     binding.createdAt <= sampledAt && binding.epochStartInclusive == target.startEpoch && binding.epochEndInclusive == target.endEpoch &&
                     binding.preparingFencingToken in 1 until record.progress.completedCuts()[1].fencingToken &&
                     binding.retentionFloor >= original.acquisition.retention.lastPreRunRestoreHorizon.plusSeconds(31 * 86400L))
-                original.requirePredecessorSidecar(this, binding)
+                original.requirePredecessorSidecar(this, target, binding)
                 val loaded = TestTerminalSqlRowV1.restore(row, binding, sampledAt).also(allocated::add)
                 requireTestTerminalCatalog(loaded.state === TestTerminalDurableStateV1.WIRE_FROZEN && loaded.canonicalSha256 == target.objectRef.canonicalSha256 &&
                     loaded.wireSha256 == target.objectRef.ciphertextSha256)
@@ -478,7 +498,7 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
     }
 
     private fun requireSidecarIdentities() {
-        val targets = input.targets.sortedWith(compareBy<TestTerminalQuiescenceTargetV1> { it.kind.name }.thenBy { it.ordinal })
+        val targets = sidecarTargets().filter { it.source === TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT }
         requireTestTerminalCatalog(sidecars.size == targets.size)
         targets.forEachIndexed { index, target ->
             retained()
@@ -486,7 +506,11 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
                 { row, _ -> hash(row, "physical_hash") }, input.scope, target.kind.name, target.ordinal).single()
             requireTestTerminalCatalog(current == sidecars[index])
         }
+        expected.activeHistory.requirePhysical(jdbc, original)
     }
+
+    private fun sidecarTargets(): List<TestTerminalQuiescenceTargetV1> = input.targets.sortedWith(
+        compareBy<TestTerminalQuiescenceTargetV1> { it.kind.name }.thenBy { it.source.name }.thenBy { it.ordinal })
 
     private fun restore(kind: String, bytes: ByteArray, routingKey: String): TestOwnerDeleteJournalEventV1 = when (kind) {
         "OWNER_DELETE", "OWNER_DELETE_ALL" -> TestOwnerDeleteJournalCodecV1.restoreCanonical(original.routing, bytes, routingKey)
@@ -496,24 +520,28 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
     }
 
     private fun requireSeal(seal: TestTerminalEpochSealV1, row: TestTerminalDurableRowV1, target: TestTerminalQuiescenceTargetV1) {
-        val reference = record.sealSet.records()[target.ordinal]
+        val reference = record.sealSet.records().single { it.sealId == target.id && it.objectRef == target.objectRef &&
+            it.epochStartInclusive == target.startEpoch && it.epochEndInclusive == target.endEpoch }
         requireTestTerminalCatalog(seal.sealId == reference.sealId && seal.writerGeneration == reference.writerGeneration && seal.dataScopeKind == "TEST" &&
             seal.dataScopeId == input.scope.toString() && seal.epochStartInclusive == reference.epochStartInclusive && seal.epochEndInclusive == reference.epochEndInclusive &&
             seal.precedingSealSha256 == reference.precedingSealSha256 && seal.preparingFencingToken == row.binding.preparingFencingToken)
     }
-    private fun ordinaryManifest(applied: List<CatalogTestRunTerminalAppliedV1>): String {
+    private fun ordinaryManifest(applied: List<CatalogTestRunTerminalAppliedV1>, start: Long = 1, end: Long = input.ordinaryEpoch): String {
+        requireTestTerminalCatalog(start in 1..end && end <= input.ordinaryEpoch && applied.all { it.epoch in start..end })
         val hash = MessageDigest.getInstance("SHA-256")
         var bytes = EpochSealFramesV1.update(hash, listOf(EpochSealFramesV1.DOMAIN, "1", "manifest", original.writer,
-            journal.ordinaryPrefix, "TEST", input.scope.toString(), "1", input.ordinaryEpoch.toString(), applied.size.toString()))
+            journal.ordinaryPrefix, "TEST", input.scope.toString(), start.toString(), end.toString(), applied.size.toString()))
         applied.forEach { entry -> bytes = Math.addExact(bytes, EpochSealFramesV1.update(hash, listOf(entry.key, entry.version, entry.ciphertextSha256))) }
         val cut = record.progress.completedCuts()[0]
         val result = TestTerminalFramesV1.finish(hash)
-        requireTestTerminalCatalog(bytes <= maximumBytes && bytes == cut.framedByteCount && result == cut.denial.firstInventory.sha256)
+        requireTestTerminalCatalog(bytes <= maximumBytes)
+        if (start == 1L && end == input.ordinaryEpoch) requireTestTerminalCatalog(bytes == cut.framedByteCount && result == cut.denial.firstInventory.sha256)
         return result
     }
     private fun requireRelations() {
         retained()
-        requireTestTerminalCatalog(jdbc.query(TestTerminalQuiescenceSqlV1.relation, { row, _ -> row.requiredTestActivationBoolean("valid") }, input.scope,
+        val sql = if (input.hasActiveHistory) TestTerminalQuiescenceSqlV1.relationWithActiveHistory else TestTerminalQuiescenceSqlV1.relation
+        requireTestTerminalCatalog(jdbc.query(sql, { row, _ -> row.requiredTestActivationBoolean("valid") }, input.scope,
             journal.ordinaryPrefix + "%", journal.sealTerminalPrefix + "%", input.writer, input.ordinaryEpoch, input.terminalEpoch,
             journal.ownerDeleteAll, journal.registeredAdminDelete, journal.registeredAdminBatchDelete, OwnerDeleteRows.array(TestRunPurgeOperationV1.FUTURE)).single())
     }
