@@ -78,6 +78,8 @@ internal fun withTerminalCatalogRun(tls: VersionBoundPersistenceConnectedFixture
                         throw problem
                     }
                     fixture.use { actual ->
+                        // PROJECT cleanup leaves its global DB lease intact; wait before E owns a fresh budget.
+                        actual.awaitRealLeaseExpiry()
                         try { action(actual) }
                         catch (problem: CatalogTestRunTerminalExceptionV1) {
                             try { System.err.println("TEST_CATALOG_TERMINAL_FIXTURE_FAILURE stage=ACTION category=TERMINAL") }
@@ -221,7 +223,7 @@ internal class CatalogTestRunTerminalFixtureV1(
         }
     }
 
-    /** Lost-ack tests wait for ACTUAL DB-clock expiry. No fixture UPDATE/refund/replacement release. */
+    /** Setup/recovery waits for ACTUAL DB-clock expiry. No fixture UPDATE/refund/replacement release. */
     fun awaitRealLeaseExpiry() {
         released()
         val deadline = System.nanoTime() + 35_000_000_000L
