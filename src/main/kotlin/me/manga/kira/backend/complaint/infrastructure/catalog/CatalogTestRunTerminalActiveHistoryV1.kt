@@ -20,6 +20,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProfileV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalRunContextV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSealRefV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSealRoleV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainActiveHistoryV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceSourceV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceTargetV1
@@ -37,7 +38,7 @@ import java.util.HexFormat
 import java.util.UUID
 
 /**
- * One bounded A/V26 initial-empty history and optional permanent B/V29 SETTLED observation.
+ * Complete bounded A original-source history and optional permanent B/V29 SETTLED observation.
  * Detached exact comparisons only: no registration, checkpoint, drain, lease or recovery authority.
  * In particular a fresh E recovery uses its own retained process/activation and existing custody;
  * it does not fabricate a registration in order to call the original-bound D materializer.
@@ -45,38 +46,55 @@ import java.util.UUID
 internal class CatalogTestRunTerminalActiveHistoryV1 private constructor(
     val initial: InitialSeal?,
     private val queueFingerprint: String?,
+    val recurrent: TestOrdinaryDrainActiveHistoryV1? = null,
 ) {
-    val ordinaryPaid: ComplaintCapacityVector = ComplaintCapacityVector.units(ComplaintCapacityCounter.STORAGE_BYTES,
-        (if (initial == null) 0L else 2_097_152L) + (if (queueFingerprint == null) 0L else 8_192L))
+    val activeCount: Int = recurrent?.count ?: if (initial == null) 0 else 1
+    val references: List<TestTerminalSealRefV1> = recurrent?.records?.map { it.reference } ?: listOfNotNull(initial?.reference)
+    val ordinaryPaid: ComplaintCapacityVector = (recurrent?.ordinaryPaid ?: ComplaintCapacityVector.units(ComplaintCapacityCounter.STORAGE_BYTES,
+        if (initial == null) 0L else 2_097_152L)) + ComplaintCapacityVector.units(ComplaintCapacityCounter.STORAGE_BYTES,
+        if (queueFingerprint == null) 0L else 8_192L)
 
     fun requireSame(other: CatalogTestRunTerminalActiveHistoryV1) {
-        requireTestTerminalCatalog((initial == null) == (other.initial == null) && queueFingerprint == other.queueFingerprint)
-        initial?.requireSame(checkNotNull(other.initial))
+        requireTestTerminalCatalog((initial == null) == (other.initial == null) && (recurrent == null) == (other.recurrent == null) && queueFingerprint == other.queueFingerprint)
+        initial?.requireSame(checkNotNull(other.initial)); recurrent?.requireSame(other.recurrent)
     }
-    fun requireRun(run: CatalogTestRunTerminalRunV1) = requireTestTerminalCatalog(run.sealCount == if (initial == null) 2L else 3L)
+    fun requireRun(run: CatalogTestRunTerminalRunV1) = requireTestTerminalCatalog(run.sealCount == activeCount.toLong() + 2L)
     fun requireFrozen(input: CatalogTestRunTerminalFrozenV1) {
-        requireTestTerminalCatalog(input.hasActiveHistory == (initial != null))
-        initial?.let { requireTestTerminalCatalog(input.manifest().terminalRecord.sealSet.records().first() == it.reference) }
+        requireTestTerminalCatalog(input.activeHistoryCount == activeCount &&
+            input.manifest().terminalRecord.sealSet.records().dropLast(2) == references)
     }
     /** Empty histories append no bytes, keeping the previous two-seal custody digest unchanged. */
     fun commitments(): List<List<String>> = buildList {
         initial?.let { add(listOf("V26", it.slotFingerprint, it.historyFingerprint, it.verificationSha256)) }
+        recurrent?.let { addAll(it.commitments()) }
         queueFingerprint?.let { add(listOf("V29", it)) }
     }
     fun requirePhysical(jdbc: JdbcTemplate, original: CatalogTestRunTerminalV1) {
         original.requireHistoryRead(jdbc)
         val scope = original.scope
         val journal = original.routing.journalConfiguration
-        val seals = jdbc.query(CatalogTestRunTerminalActiveHistorySqlV1.sealIdentity,
-            { row, _ -> hash(row, "fingerprint") }, scope, journal.sealTerminalPrefix + "%")
+        if (recurrent == null) {
+            TestOrdinaryDrainActiveHistoryV1.requireNoRecurrentForCatalog(jdbc, original)
+            val seals = jdbc.query(CatalogTestRunTerminalActiveHistorySqlV1.sealIdentity,
+                { row, _ -> hash(row, "fingerprint") }, scope, journal.sealTerminalPrefix + "%")
+            requireTestTerminalCatalog(seals == listOfNotNull(initial?.slotFingerprint))
+        } else recurrent.requirePhysical(jdbc, original)
         val queue = jdbc.query(CatalogTestRunTerminalActiveHistorySqlV1.queueIdentity,
             { row, _ -> hash(row, "fingerprint") }, scope, original.process.configurationHashBytes(), terminalCatalogHex(journal.sha256))
-        requireTestTerminalCatalog(seals == listOfNotNull(initial?.slotFingerprint) && queue == listOfNotNull(queueFingerprint))
+        requireTestTerminalCatalog(queue == listOfNotNull(queueFingerprint))
         original.requireHistoryRead(jdbc)
     }
     fun frozenInitial(jdbc: JdbcTemplate, original: CatalogTestRunTerminalV1,
         activation: CatalogTestRunTerminalMutationV1, target: TestTerminalQuiescenceTargetV1): TestTerminalDurableRowV1 {
         original.requireHistoryRead(jdbc)
+        recurrent?.let { history ->
+            val record = history.record(target.ordinal)
+            requireTestTerminalCatalog(target.kind === TestTerminalCodecKindV1.EPOCH_SEAL &&
+                target.source === (if (record.binding.objectOrdinal == 0) TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL else TestTerminalQuiescenceSourceV1.V31_ACTIVE_RECURRENT_SEAL) &&
+                target.id == record.reference.sealId && target.objectRef == record.reference.objectRef &&
+                target.startEpoch == record.reference.epochStartInclusive && target.endEpoch == record.reference.epochEndInclusive)
+            return history.frozenForCatalog(jdbc, original, activation, record)
+        }
         val expected = checkNotNull(initial)
         requireTestTerminalCatalog(target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL &&
             target.kind === TestTerminalCodecKindV1.EPOCH_SEAL && target.ordinal == 0 && target.id == expected.reference.sealId &&
@@ -87,6 +105,14 @@ internal class CatalogTestRunTerminalActiveHistoryV1 private constructor(
     }
     fun requireNative(entry: TestPostTerminalInventoryEntryV1) {
         initial?.takeIf { it.reference.objectRef.objectKey == entry.objectRef.objectKey }?.requireNative(entry)
+        recurrent?.records?.singleOrNull { it.reference.objectRef.objectKey == entry.objectRef.objectKey }?.requireNative(entry)
+    }
+    fun requireManifest(target: TestTerminalQuiescenceTargetV1, count: Long, root: String, framedBytes: Long) {
+        recurrent?.let { history ->
+            val record = history.record(target.ordinal)
+            requireTestTerminalCatalog(record.reference.objectRef == target.objectRef && record.eventCount == count &&
+                record.manifestSha256 == root && record.manifestFramedBytes == framedBytes)
+        }
     }
 
     internal class InitialSeal(
@@ -116,12 +142,13 @@ internal class CatalogTestRunTerminalActiveHistoryV1 private constructor(
     companion object {
         fun read(jdbc: JdbcTemplate, original: CatalogTestRunTerminalV1, activation: CatalogTestRunTerminalMutationV1): CatalogTestRunTerminalActiveHistoryV1 {
             original.requireHistoryRead(jdbc)
-            val initial = materializeInitial(jdbc, original, activation)?.let { it.row.use { _ -> it.history } }
+            val recurrent = TestOrdinaryDrainActiveHistoryV1.readRecurrentForCatalog(jdbc, original, activation)
+            val initial = if (recurrent == null) materializeInitial(jdbc, original, activation)?.let { it.row.use { _ -> it.history } } else null
             val queue = jdbc.query(CatalogTestRunTerminalActiveHistorySqlV1.queue, { row, _ ->
                 requireTestTerminalCatalog(row.requiredTestActivationBoolean("valid")); hash(row, "fingerprint")
             }, *arguments(original, activation))
             requireTestTerminalCatalog(queue.size <= 1)
-            if (initial != null || queue.isNotEmpty()) {
+            if (initial != null || recurrent != null || queue.isNotEmpty()) {
                 jdbc.query(CatalogTestRunTerminalActiveHistorySqlV1.globalIdentity, { row, _ ->
                     requireTestTerminalCatalog(row.requiredTestActivationBoolean("valid"))
                     val hash = row.getBytes("configuration_hash")
@@ -130,10 +157,10 @@ internal class CatalogTestRunTerminalActiveHistoryV1 private constructor(
                 }).single()
                 // For the genuine child only, preserve D's complete original A slot fingerprint as
                 // well as its reference. The fresh recovery has no old D/registration authority.
-                if (initial != null) original.requirePredecessorActiveHistory(jdbc)
+                if (initial != null || recurrent != null) original.requirePredecessorActiveHistory(jdbc)
             }
             original.requireHistoryRead(jdbc)
-            return CatalogTestRunTerminalActiveHistoryV1(initial, queue.singleOrNull())
+            return CatalogTestRunTerminalActiveHistoryV1(initial, queue.singleOrNull(), recurrent)
         }
         private class Materialized(val history: InitialSeal, val row: TestTerminalDurableRowV1)
         private fun materializeInitial(jdbc: JdbcTemplate, original: CatalogTestRunTerminalV1,

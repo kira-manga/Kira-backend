@@ -148,10 +148,10 @@ internal object OfflineCatalogTestRunTerminalSyntaxV4 {
             closure.sealTerminalPrefix == TestTerminalSyntaxV1.sealTerminalPrefix(closure.writerGeneration, context.dataScopeId))
         val seals = record.sealSet
         val records = seals.records()
-        // Exactly the old first range OR A's initial EMPTY 1..1, one 2..2 successor and terminal 3.
-        // This is declaration grammar, not evidence that A's seal/checkpoint or empty prefix exists.
+        // Declaration grammar only: up to fourteen ACTIVE ranges plus exactly two new seals.
+        // Original-source SQL, native readback, and payment remain independently required by E.
         requireOfflineTrustBundle(seals.dataScopeId == context.dataScopeId && seals.activationCatalogGeneration == context.activationCatalogGeneration &&
-            seals.activationCatalogSha256 == context.activationCatalogSha256 && records.size in 2..3 &&
+            seals.activationCatalogSha256 == context.activationCatalogSha256 && records.size in 2..16 &&
             records.all { it.writerGeneration == closure.writerGeneration })
         val ordinary = records.dropLast(1)
         val terminal = records.last()
@@ -160,6 +160,9 @@ internal object OfflineCatalogTestRunTerminalSyntaxV4 {
             ordinary.last().epochEndInclusive == closure.finalOrdinaryEpoch &&
             terminal.role == TestTerminalSealRoleV1.TERMINAL && terminal.epochStartInclusive == closure.terminalEpoch &&
             terminal.epochEndInclusive == closure.terminalEpoch && terminal.precedingSealSha256 == ordinary.last().objectRef.canonicalSha256)
+        if (records.size > 3) requireOfflineTrustBundle(ordinary.first().epochEndInclusive == 1L &&
+            ordinary.zipWithNext().all { (prior, next) -> next.epochStartInclusive == TestTerminalSyntaxV1.nextEpoch(prior.epochEndInclusive) &&
+                next.precedingSealSha256 == prior.objectRef.canonicalSha256 })
         if (records.size == 3) requireOfflineTrustBundle(closure.finalOrdinaryEpoch == 2L &&
             ordinary[0].epochEndInclusive == 1L && ordinary[1].epochStartInclusive == 2L &&
             ordinary[1].precedingSealSha256 == ordinary[0].objectRef.canonicalSha256)

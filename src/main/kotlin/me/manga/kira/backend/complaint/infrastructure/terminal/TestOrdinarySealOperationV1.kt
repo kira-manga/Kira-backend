@@ -57,7 +57,7 @@ internal class TestOrdinarySealOperationV1 private constructor(
         private set
     internal var row: TestTerminalDurableRowV1? = null
         private set
-    internal var activeHistoryRow: TestTerminalDurableRowV1? = null
+    internal var activeHistoryRows: List<TestTerminalDurableRowV1> = emptyList()
         private set
     private var stage = Stage.NEW
     private var counters: JdbcComplaintCapacityStore.LockedTestOrdinarySeal? = null
@@ -174,7 +174,7 @@ internal class TestOrdinarySealOperationV1 private constructor(
         requireDrain((row == null) == (sidecars == 0L))
         checkNotNull(closedCut).requireSidecar(row)
         if (step === TestOrdinarySealStepV1.CAPTURE) {
-            activeHistoryRow = checkNotNull(closedCut).control.initialHistory?.let { original.ownRow(it.frozen(jdbc, drain)) }
+            activeHistoryRows = checkNotNull(closedCut).control.initialHistory?.frozenRows(jdbc, drain)?.map { original.ownRow(it) } ?: emptyList()
         }
         stage = Stage.MANIFEST
         manifest = readClosedManifest()
@@ -230,8 +230,9 @@ internal class TestOrdinarySealOperationV1 private constructor(
         val bytes = candidate.canonicalBytes()
         try {
             val sql = if (control.initialHistory == null) TestOrdinarySealSqlV1.insert else TestClosedOrdinarySealSqlV1.insertActiveTail
+            val epochs = if (control.initialHistory == null) arrayOf(b.epochEndInclusive) else arrayOf(b.epochStartInclusive, b.epochEndInclusive)
             requireDrain(jdbc.update(sql, b.operationToken, b.run.dataScopeId, b.objectId, b.objectKey, b.routingKeyId,
-                b.writerGeneration, b.epochEndInclusive, b.preparingFencingToken, b.run.activationCatalogGeneration,
+                b.writerGeneration, *epochs, b.preparingFencingToken, b.run.activationCatalogGeneration,
                 TestOrdinarySealRowsV1.hex(b.run.activationCatalogSha256), TestOrdinarySealRowsV1.hex(b.run.configurationSha256),
                 TestOrdinarySealRowsV1.hex(b.journalConfigurationSha256), TestOrdinarySealRowsV1.hex(b.run.terminalEncodingSha256),
                 bytes, TestOrdinarySealRowsV1.hex(candidate.canonicalSha256), Timestamp.from(b.retentionFloor), Timestamp.from(b.createdAt)) == 1)
@@ -251,7 +252,9 @@ internal class TestOrdinarySealOperationV1 private constructor(
         val at = now()
         requireDrain(!proof.verifiedAt.isAfter(at) && !proof.lastModified.isAfter(at) && proof.retainUntil.isAfter(at))
         checkNotNull(closedCut).control.initialHistory?.let { history ->
-            history.frozen(jdbc, drain).use { fresh -> original.requireHistoryProof(this, history, fresh, at) }
+            val fresh = history.frozenRows(jdbc, drain)
+            try { fresh.forEach { row -> original.requireHistoryProof(this, history.record(row.binding.objectOrdinal), row, at) } }
+            finally { fresh.forEach { it.close() } }
         }
         if (checkNotNull(closedCut).existing != null) {
             checkNotNull(closedCut).requireProof(durable, proof)

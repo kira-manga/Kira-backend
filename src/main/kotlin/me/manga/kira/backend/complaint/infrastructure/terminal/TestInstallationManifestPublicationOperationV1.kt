@@ -319,7 +319,7 @@ internal class TestInstallationManifestPublicationOperationV1 private constructo
             val page = TestInstallationManifestAppliedPageV1.page(jdbc, this, after)
             if (page.isEmpty()) break
             page.forEach { value ->
-                requireManifest(value.epoch in original.control.ordinaryStart..original.control.cutoff &&
+                requireManifest(value.epoch in 1..original.control.cutoff &&
                     count < expected.versionCount && after?.let { TestOrdinaryDrainRowsV1.compare(it, value.locator) < 0 } != false)
                 framed = Math.addExact(framed, EpochSealFramesV1.update(hash, listOf(value.key, value.version, value.ciphertext)))
                 requireManifest(framed <= original.drain.maximumFramedBytes)

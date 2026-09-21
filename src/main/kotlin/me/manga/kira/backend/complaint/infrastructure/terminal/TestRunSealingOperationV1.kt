@@ -126,7 +126,7 @@ internal class TestRunSealingOperationV1 private constructor(
             *original.registration.sealingControlArguments()).single())
         val active = checkNotNull(history)
         val before = jdbc.query(TestOrdinaryDrainSqlV1.controlWithActiveHistory, { row, _ -> TestOrdinaryDrainRowsV1.Control(row, active) }, scope).single()
-        requireSealing(before.needsCapture && before.epoch == 2L && before.sequence == 1L &&
+        requireSealing(before.needsCapture && before.epoch == Math.addExact(active.reference.epochEndInclusive, 1L) && before.sequence == active.count.toLong() &&
             !active.checkpointCompletedAt.isAfter(original.priorSealedAt()))
         requireAt(Stage.CONTROLS)
         requireSealing(jdbc.update(TestRunSealingSqlV1.closeActiveHistoryGates, scope) == 2)

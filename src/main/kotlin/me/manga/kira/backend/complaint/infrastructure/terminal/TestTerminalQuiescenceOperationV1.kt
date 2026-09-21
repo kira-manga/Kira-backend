@@ -249,12 +249,14 @@ internal class TestTerminalQuiescenceOperationV1 private constructor(
     private fun loadSidecar(target: TestTerminalQuiescenceTargetV1): TestTerminalDurableRowV1 {
         val at = now()
         requireQuiescence(original.targets.any { it === target })
-        val loaded = if (target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL) {
+        val loaded = if (target.source !== TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT) {
             val history = checkNotNull(original.control.initialHistory)
-            requireQuiescence(target.kind === TestTerminalCodecKindV1.EPOCH_SEAL && target.ordinal == 0 &&
-                target.objectRef == history.reference.objectRef && target.startEpoch == 1L && target.endEpoch == 1L)
-            // A remains ordinary-paid V26 provenance. Never fall back to or alias V21 ordinal zero.
-            history.frozen(jdbc, original.drain)
+            val record = history.record(target.ordinal)
+            requireQuiescence(target.kind === TestTerminalCodecKindV1.EPOCH_SEAL &&
+                (target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL) == (record.binding.objectOrdinal == 0) &&
+                target.objectRef == record.reference.objectRef && target.startEpoch == record.reference.epochStartInclusive && target.endEpoch == record.reference.epochEndInclusive)
+            // Each A source remains ordinary-paid. No fallback to or alias of a V21 ordinal.
+            history.frozen(jdbc, original.drain, record)
         } else when (target.kind) {
             TestTerminalCodecKindV1.INSTALLATION_MANIFEST -> oneSidecar(TestInstallationManifestSqlV1.sidecar, { value ->
                 TestInstallationManifestPublicationRowsV1.manifest(value, original.manifest, run.sealedAt, at, target.ordinal)
