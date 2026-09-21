@@ -19,6 +19,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.infrastructure.AdminDeletePersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllPersistenceSql
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllVerificationSql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.AfterAll
@@ -186,6 +187,43 @@ class TestActiveOwnerDeleteQueueIT {
             assertEquals(1, f.raw.order.count { it == "GET" }); assertEquals(1, f.raw.order.count { it == "DECRYPT" })
             assertAllNoopReplay(f)
         }
+
+    @Test fun allPreparedPrimaryStaysPendingWhileProtocolHistoryAppliesAndOnlyItsOwnPutCompletesIt() =
+        withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, verifyPublication = false, action = ::assertHistoricalAllSequence)
+
+    @Test fun allVerifiedPrimaryKeepsItsProofWhileProtocolHistoryAppliesAndOnlyItsOwnPutCompletesIt() =
+        withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, action = ::assertHistoricalAllSequence)
+
+    @Test fun allAuthenticatedProtocolHistoryWithWrongTargetsOrAnotherVersionAtTheSameKeyRemainsUnacked() {
+        listOf("targets", "version").forEach { cut -> withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
+            val native = f.precursor.native.counts()
+            val alias = if (cut == "targets") f.raw.protocolHistoricalAllObject(targets = listOf(UUID.randomUUID().also {
+                assertFalse(it in f.record.event.complaintIds())
+            })) else f.raw.protocolHistoricalAllObject()
+            if (cut == "version") {
+                val before = f.counters(); val pending = allPrimaryImage(f) - "complaint_deletion_journal_applied"
+                f.raw.selectHistorical(alias); f.expectAppliedObjects(alias.stored)
+                assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased()
+                assertRecoveryCharge(f, before, f.counters()); f.assertOnlyAuthorizedReportsErased()
+                assertEquals(pending, allPrimaryImage(f) - "complaint_deletion_journal_applied")
+                f.raw.selectHistorical(alias.withAdversarialOpaqueVersion("synthetic-protocol-history-hostile-other-version"))
+            } else {
+                f.raw.selectHistorical(alias); f.expectAppliedObjects()
+            }
+            val rows = f.domainImage(); val before = f.counters(); val acknowledgements = f.raw.ackRequests.toList()
+            val nativeStart = f.raw.order.size; val original = f.begin()
+            assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { f.poll(original) }
+            f.assertReleased(); f.assertNoAuthority(); f.assertExpectedAppliedObjects()
+            assertEquals(rows, f.domainImage(), "Authenticated but conflicting history cannot mutate domain/N/P/L/E/audit.")
+            if (cut == "version") assertEquals(before, f.counters()) else assertObservationCharge(before, f.counters())
+            val fresh = f.raw.order.drop(nativeStart)
+            assertEquals(1, fresh.count { it == "GET" }); assertEquals(1, fresh.count { it == "DECRYPT" })
+            assertTrue(f.deletionObservations.isNotEmpty(), "Valid AEAD reached the actual semantic/history SQL gate.")
+            assertFalse(fresh.any { it.startsWith("DeleteMessage:") }); assertEquals(acknowledgements, f.raw.ackRequests)
+            assertEquals(0, original.primaryAcked); assertEquals(native, f.precursor.native.counts())
+            f.assertSameOriginalRefused(original)
+        } }
+    }
 
     @Test fun allMissingReceiptReservationOrWholeBookkeepingIsChargedWithoutResettingAnyUnattributedBalance() {
         listOf("n", "l", "npl").forEach { cut -> withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
@@ -729,6 +767,112 @@ class TestActiveOwnerDeleteQueueIT {
 
     private fun allPrimaryImage(f: TestActiveOwnerDeleteQueueFixtureV1) = f.domainImage().filterKeys {
         it in setOf("installation_deletion_receipts", "complaint_journal_publications", "complaint_deletion_journal_applied")
+    }
+
+    /** One real producer plus labeled protocol-history bytes; never a two-AUTH/PUT history. */
+    private fun assertHistoricalAllSequence(f: TestActiveOwnerDeleteQueueFixtureV1) {
+        assertAuthorizationCharge(f)
+        val before = f.counters(); val native = f.precursor.native.counts(); val setup = f.domainImage()
+        val pending = allPrimaryImage(f) - "complaint_deletion_journal_applied"
+        val reservation = allReservationIdentity(f)
+        val alias = f.raw.protocolHistoricalAllObject()
+        val originalEvent = f.record.event; val other = alias.event
+        assertTrue(other.route in f.process.consumers.journalRouting.derive(originalEvent.tuple).candidates())
+        assertFalse(other.route.routingKeyId == originalEvent.route.routingKeyId)
+        assertFalse(other.route.objectKey == originalEvent.route.objectKey); assertFalse(other.route.eventId == originalEvent.route.eventId)
+        assertEquals(originalEvent.tuple.scope, other.tuple.scope); assertEquals(originalEvent.tuple.eventKind, other.tuple.eventKind)
+        assertEquals(originalEvent.tuple.actorKind, other.tuple.actorKind); assertEquals(originalEvent.tuple.actorId, other.tuple.actorId)
+        assertEquals(originalEvent.tuple.credentialVersion, other.tuple.credentialVersion); assertEquals(originalEvent.tuple.epoch, other.tuple.epoch)
+        assertEquals(originalEvent.tuple.operationKey, other.tuple.operationKey); assertEquals(originalEvent.tuple.encodedFingerprint(), other.tuple.encodedFingerprint())
+        assertEquals(originalEvent.complaintIds(), other.complaintIds())
+        assertFalse(originalEvent.canonicalBytes().contentEquals(other.canonicalBytes()), "Route-dependent eventId is part of the canonical payload.")
+        assertFalse(originalEvent.semanticSha256 == other.semanticSha256)
+        assertSame(f.record.stored, f.raw.stored); assertSame(originalEvent, f.raw.event)
+        assertEquals(setup, f.domainImage()); assertEquals(before, f.counters()); assertEquals(native, f.precursor.native.counts())
+
+        val sql = OwnerDeleteAllApplySql.test(f.precursor.dataScope)
+        val verifySql = OwnerDeleteAllVerificationSql.test(f.precursor.dataScope).RECORD_VERIFIED
+        f.raw.selectHistorical(alias); f.expectAppliedObjects(alias.stored)
+        val aliasPoll = f.begin(); val first = f.poll(aliasPoll)
+        assertEquals(1, first.primaryAcknowledged); assertEquals(0, first.dlqAcknowledged)
+        f.assertReleased(); f.assertNoAuthority(); f.assertExpectedAppliedObjects(); f.assertOnlyAuthorizedReportsErased()
+        assertEquals(pending, allPrimaryImage(f) - "complaint_deletion_journal_applied", "Alias never updates the original N/P, even xmin.")
+        assertEquals(f.proofBeforeQueue, f.publicationProof())
+        assertEquals(if (f.verifiedPublication) "VERIFIED" else "PREPARED", f.precursor.publication()["state"])
+        assertEquals("AUTHORIZED_DELETE", f.receipt()["state"]); assertNull(f.receipt()["external_event_id"])
+        assertFalse(f.calls.any { it.sql in setOf(verifySql, sql.COMPLETE_RECEIPT, sql.MARK_APPLIED) })
+        assertEquals(1, f.calls.count { it.sql == sql.INSERT_APPLIED })
+        assertRecoveryCharge(f, before, f.counters()); assertHistoricalReservation(f, reservation, materialized(f))
+        assertRecoveryAuditDelta(f.auditsBeforeQueue, f.audits(), f.precursor.reports.size.toLong())
+        assertHistoricalSummaries(f, mapOf(other.route.eventId to f.precursor.reports.size))
+        listOf("installation_deletion_receipts", "complaint_journal_publications", "complaint_recovery_capacity_reservations",
+            "complaint_installation_ids", "app_installations", "complaint_resource_ids").forEach {
+            assertEquals(f.countsBeforeQueue.getValue(it), f.count(it), "No new bookkeeping, credential or reservation: $it")
+        }
+        assertEquals("DELETED", f.observer.queryForObject("SELECT state FROM complaint_installation_ids WHERE id = ?", String::class.java, f.precursor.actor.id))
+        assertEquals(f.precursor.reports.size.toLong(), f.observer.queryForObject("SELECT count(*) FROM complaint_resource_ids WHERE data_scope_id = ? AND state = 'DELETED'", Long::class.java, f.scope))
+        val credential = f.observer.queryForMap("SELECT * FROM app_installations WHERE id = ?", f.precursor.actor.id)
+        assertEquals("DELETED", credential["state"]); assertEquals(originalEvent.tuple.credentialVersion + 1, credential["credential_version"])
+        listOf("platform", "owner_reference", "last_authenticated_at").forEach { assertNull(credential[it], it) }
+        assertEquals(f.credentialIdentityBeforeQueue, f.credentialIdentity())
+        assertEquals((credential["deleted_at"] as Timestamp).toInstant().plus(Duration.ofHours(192)), (credential["verifier_expires_at"] as Timestamp).toInstant())
+        val erased = f.domainImage().filterKeys { it in setOf("complaint_installation_ids", "app_installations", "complaint_resource_ids", "complaints") }
+        val aliasApplied = f.domainImage().getValue("complaint_deletion_journal_applied").single()
+        f.assertSameOriginalRefused(aliasPoll); assertAllNoopReplay(f)
+
+        // Only the actual primary PUT may fill its PREPARED proof and complete its own N/P.
+        val paid = f.counters(); val audits = f.audits()
+        f.raw.selectOriginal(); f.expectAppliedObjects(alias.stored, f.record.stored)
+        val primaryPoll = f.begin(); val second = f.poll(primaryPoll)
+        assertEquals(1, second.primaryAcknowledged); assertEquals(0, second.dlqAcknowledged)
+        f.assertReleased(); f.assertNoAuthority(); f.assertExpectedAppliedObjects(); f.assertOnlyAuthorizedReportsErased()
+        assertEquals(erased, f.domainImage().filterKeys { it in erased.keys }, "Primary completion never extends credential TTL or rewrites domain tombstones/xmin.")
+        assertTrue(aliasApplied in f.domainImage().getValue("complaint_deletion_journal_applied"))
+        val publication = f.precursor.publication(); val receipt = f.receipt()
+        assertEquals("APPLIED", publication["state"]); assertEquals("COMPLETED", receipt["state"]); assertEquals("APPLIED", receipt["outcome"])
+        assertArrayEquals(originalEvent.canonicalBytes(), publication["event_bytes"] as ByteArray)
+        assertEquals(originalEvent.route.routingKeyId, publication["routing_key_id"]); assertEquals(f.record.stored.key, publication["object_key"])
+        assertEquals(f.record.stored.version, publication["object_version"]); assertEquals(f.record.stored.version, receipt["external_object_version"])
+        val hash = MessageDigest.getInstance("SHA-256").digest(f.record.stored.bytes)
+        assertArrayEquals(hash, publication["ciphertext_hash"] as ByteArray); assertArrayEquals(hash, receipt["external_ciphertext_hash"] as ByteArray)
+        assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(publication["verification_bytes"] as ByteArray), publication["verification_hash"] as ByteArray)
+        assertEquals(f.record.stored.lastModified, (publication["object_created_at"] as Timestamp).toInstant())
+        assertEquals(originalEvent.route.eventId, receipt["external_event_id"]); assertEquals(f.receiptBeforeQueue, f.receiptIdentity())
+        assertEquals(publication["created_at"], receipt["authorized_at"]); assertEquals(publication["applied_at"], receipt["completed_at"])
+        assertEquals(publication["applied_at"], f.observer.queryForObject("SELECT applied_at FROM complaint_deletion_journal_applied " +
+            "WHERE object_key = ? AND object_version = ? AND data_scope_id = ?", Timestamp::class.java, f.record.stored.key, f.record.stored.version, f.scope))
+        assertEquals((receipt["completed_at"] as Timestamp).toInstant().plus(Duration.ofHours(192)), (receipt["expires_at"] as Timestamp).toInstant())
+        if (f.verifiedPublication) assertEquals(f.proofBeforeQueue, f.publicationProof())
+        assertEquals(if (f.verifiedPublication) 0 else 1, f.calls.count { it.sql == verifySql })
+        assertEquals(1, f.calls.count { it.sql == sql.COMPLETE_RECEIPT }); assertEquals(1, f.calls.count { it.sql == sql.MARK_APPLIED })
+        assertEquals(1, f.calls.count { it.sql == sql.INSERT_APPLIED })
+        val secondUse = OwnerDeleteLiteralCharges.appliedOnly + OwnerDeleteLiteralCharges.audit
+        assertTransfer(paid, f.counters(), use = secondUse)
+        assertHistoricalReservation(f, reservation, materialized(f) + secondUse)
+        assertRecoveryAuditDelta(audits, f.audits(), removed = 0)
+        assertHistoricalSummaries(f, mapOf(other.route.eventId to f.precursor.reports.size, originalEvent.route.eventId to 0))
+        f.assertSameOriginalRefused(primaryPoll); assertAllNoopReplay(f)
+        f.raw.selectHistorical(alias); assertAllNoopReplay(f)
+        assertEquals(native, f.precursor.native.counts(), "Reference history and all five queue polls never issue another producer call.")
+        assertEquals(5, f.raw.order.count { it == "GET" }); assertEquals(5, f.raw.order.count { it == "DECRYPT" })
+        assertEquals(5, f.raw.ackRequests.size)
+    }
+
+    private fun allReservationIdentity(f: TestActiveOwnerDeleteQueueFixtureV1): String = checkNotNull(f.observer.queryForObject(
+        "SELECT (to_jsonb(r) - ARRAY['state','converted_amounts','converted_at'])::text FROM complaint_recovery_capacity_reservations r WHERE data_scope_id = ?",
+        String::class.java, f.scope))
+
+    private fun assertHistoricalReservation(f: TestActiveOwnerDeleteQueueFixtureV1, identity: String, used: ComplaintCapacityVector) {
+        assertEquals(identity, allReservationIdentity(f), "Only U/state/conversion time may change; primary identity and Y are frozen.")
+        val row = f.observer.queryForMap("SELECT state, reserved_amounts::text, converted_amounts::text FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", f.scope)
+        assertEquals("PARTIAL", row["state"]); assertEquals(vectorText(promise(f)), row["reserved_amounts"]); assertEquals(vectorText(used), row["converted_amounts"])
+    }
+
+    private fun assertHistoricalSummaries(f: TestActiveOwnerDeleteQueueFixtureV1, events: Map<String, Int>) {
+        val rows = f.observer.queryForList("SELECT detail->>'eventId' AS event_id, (detail->>'removed')::integer AS removed, " +
+            "complaint_actor_kind, actor_user_id FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_RECOVERY_APPLIED'", f.scope)
+        assertEquals(events.size, rows.size); assertEquals(events, rows.associate { it["event_id"] as String to (it["removed"] as Number).toInt() })
+        rows.forEach { assertEquals("SYSTEM", it["complaint_actor_kind"]); assertNull(it["actor_user_id"]) }
     }
 
     private fun assertAllRecoveryState(f: TestActiveOwnerDeleteQueueFixtureV1, used: ComplaintCapacityVector, credentialPresent: Boolean = true) {

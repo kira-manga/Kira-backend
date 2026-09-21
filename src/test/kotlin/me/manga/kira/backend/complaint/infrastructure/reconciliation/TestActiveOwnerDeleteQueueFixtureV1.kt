@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
+import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.DeleteAllCounter
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
@@ -16,6 +17,7 @@ import me.manga.kira.backend.complaint.catalog.S3CatalogReadbackFixture
 import me.manga.kira.backend.complaint.catalog.SignedActivationObservation
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainFixtureInputsV1
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
+import me.manga.kira.backend.complaint.journal.JournalPublisherObject
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -97,6 +99,7 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
     val identitiesBeforeQueue = identityImage()
     val credentialIdentityBeforeQueue = credentialIdentity()
     val grantBeforeQueue = grantImage()
+    private var expectedAppliedObjects = setOf(appliedObject(record.stored))
     private val authoritiesBeforeQueue = authorityImage()
     private val epochPreparation = checkNotNull(process.pools.epochRotation).observePreparation()
     var original: TestActiveOwnerDeleteQueueV1? = null
@@ -150,6 +153,27 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
     }
     fun audits() = precursor.audits()
     fun counters() = precursor.counters()
+    /** Assertion-only exact E set, frozen between released polls; never supplied to MAIN. */
+    fun expectAppliedObjects(vararg objects: JournalPublisherObject) {
+        assertReleased()
+        val expected = objects.map(::appliedObject)
+        assertEquals(expected.size, expected.toSet().size, "Expected E identities cannot repeat.")
+        expectedAppliedObjects = expected.toSet()
+    }
+    fun assertExpectedAppliedObjects() {
+        val actual = observer.query("SELECT object_key, object_version, event_id, encode(ciphertext_hash, 'hex') AS ciphertext_hash, " +
+            "writer_generation, journal_epoch, event_kind, target_count, data_scope_id, test_only " +
+            "FROM complaint_deletion_journal_applied WHERE data_scope_id = ?", { row, _ -> ExpectedAppliedObject(
+                row.getString("object_key"), row.getString("object_version"), row.getString("event_id"), row.getString("ciphertext_hash"),
+                row.getObject("writer_generation", UUID::class.java), row.getLong("journal_epoch"), row.getString("event_kind"),
+                row.getInt("target_count"), row.getObject("data_scope_id", UUID::class.java), row.getBoolean("test_only")) }, scope)
+        assertEquals(expectedAppliedObjects.size, actual.size, "No omitted or additional scoped E row.")
+        assertEquals(expectedAppliedObjects, actual.toSet(), "Every exact object/version/hash and family tuple must match.")
+    }
+    private fun appliedObject(value: JournalPublisherObject) = ExpectedAppliedObject(value.key, value.version,
+        value.metadata.getValue("kira-journal-event-id"), Sha256.hex(value.bytes),
+        UUID.fromString(process.consumers.journalConfiguration.declaration().writer.generationId), record.event.comparison.epoch,
+        family.name, record.event.complaintIds().size, scope, true)
     fun image(): Map<String, List<String>> = TABLES.associateWith { table -> observer.queryForList(
         "SELECT jsonb_build_array(to_jsonb(r), r.xmin::text)::text FROM $table r WHERE data_scope_id = ? ORDER BY to_jsonb(r)::text COLLATE \"C\"",
         String::class.java, scope) } + ("audit" to observer.queryForList(
@@ -254,7 +278,8 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
             assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
             assertTrue(phase.testActiveOwnerDeleteQueueCleanupProven(owner))
         }
-        assertEquals(1L, count("complaint_deletion_journal_applied"))
+        assertTrue(appliedObject(raw.deliveredStored) in expectedAppliedObjects, "This exact delivered object must be expected at ACK.")
+        assertExpectedAppliedObjects()
         assertEquals(raw.sts.createdClients, raw.sts.returnedClientCloses)
         assertEquals(raw.kms.createdClients, raw.kms.returnedClientCloses)
         assertEquals(raw.s3Created, raw.s3CloseReturned)
@@ -292,6 +317,8 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
         // nesting owns its genuine domain/identity history. This is not a product refund/purge.
         observer.update("DELETE FROM complaint_test_active_queue_observations WHERE data_scope_id = ?", scope)
     }
+    private data class ExpectedAppliedObject(val key: String, val version: String, val eventId: String, val ciphertextHash: String,
+        val writer: UUID, val epoch: Long, val kind: String, val targetCount: Int, val scope: UUID, val testOnly: Boolean)
     companion object {
         val TABLES = listOf("installation_deletion_receipts", "complaint_idempotency_receipts", "complaint_journal_publications", "complaint_recovery_capacity_reservations",
             "complaint_deletion_journal_applied", "complaint_installation_ids", "app_installations", "complaint_resource_ids", "complaints",

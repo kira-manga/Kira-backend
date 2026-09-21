@@ -1,6 +1,11 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.catalog.S3CatalogReply
@@ -12,10 +17,13 @@ import me.manga.kira.backend.complaint.journal.JournalPublisherObject
 import me.manga.kira.backend.complaint.journal.journalPublisherRawAssertSigned
 import me.manga.kira.backend.complaint.journal.journalPublisherRawGetReply
 import me.manga.kira.backend.complaint.journal.journalPublisherRawHttpClient
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
+import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.JournalKmsHttpReply
 import me.manga.kira.backend.security.aws.JournalKmsHttpRequest
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
@@ -25,10 +33,15 @@ import software.amazon.awssdk.http.ExecutableHttpRequest
 import software.amazon.awssdk.http.HttpExecuteRequest
 import software.amazon.awssdk.http.SdkHttpClient
 import java.net.URLEncoder
+import java.nio.ByteBuffer
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.HexFormat
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+import javax.crypto.Cipher
 import javax.crypto.Mac
+import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /** Immutable TEST raw recipes chosen before protected intake/full D. No SQL or admitted result seam. */
@@ -49,9 +62,10 @@ internal class TestActiveOwnerDeleteQueueHttpInputV1(
 
 /**
  * Real SDK/SigV4 + bounded MAIN native transport + codec/decrypt, substituted public HTTP SPI only.
- * Positive input is A's original actual native PUT, after real released AUTH and before APPLY.
- * Decrypt delegates its original wrapped-key map after independently checking queue SigV4/context.
- * No producer re-encryption, copied plaintext key, supplied proof, real AWS or two-process claim.
+ * Default positive input is A's actual native PUT and its original wrapped-key map. Explicitly
+ * selected protocol-history inputs instead use separate reference bytes and synthetic key maps;
+ * they never claim another AUTH/PUT. Both traverse the same real SDK/GET/decrypt/APPLY consumers.
+ * No copied primary plaintext key, supplied proof, real AWS or two-producer/process claim.
  */
 internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
     private var fixture: TestActiveOwnerDeleteQueueFixtureV1? = null
@@ -83,6 +97,9 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
     lateinit var stored: JournalPublisherObject
         private set
     private lateinit var originalRecord: TestRegisteredInitialDeletionNativeRecordV1
+    private var historical: TestActiveQueueHistoricalAllObjectV1? = null
+    private var historicalSerial = 0
+    val deliveredStored: JournalPublisherObject get() = historical?.stored ?: stored
     private val mapper = ObjectMapper()
     val input = TestActiveOwnerDeleteQueueHttpInputV1(
         { remaining -> native("STS", remaining, sts::httpClient) },
@@ -112,10 +129,11 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
             boundary(); signed(request, "kms"); order.add("DECRYPT")
             assertEquals(AwsJournalKmsFixture.DECRYPT_TARGET, request.target(), "Queue recovery cannot generate a key or PUT a journal.")
             val fields = request.fields()
-            assertEquals(originalRecord.kmsContext, fields["EncryptionContext"].fields().asSequence().associate { it.key to it.value.textValue() })
+            assertEquals(historical?.kmsContext ?: originalRecord.kmsContext,
+                fields["EncryptionContext"].fields().asSequence().associate { it.key to it.value.textValue() })
             val key = checkNotNull(fixture).process.consumers.journalConfiguration.declaration().encryption.keyArn
             assertEquals(key, fields["KeyId"].textValue())
-            originalRecord.decrypt(request) // The original raw producer owns the exact CiphertextBlob mapping.
+            historical?.decrypt(request) ?: originalRecord.decrypt(request)
         } }
         sqs.respond = { request -> checked { sqsReply(request) } }
     }
@@ -130,7 +148,30 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
     fun detach(f: TestActiveOwnerDeleteQueueFixtureV1) { check(fixture === f); fixture = null }
     fun resetFaults() { beforeSqs = {}; changeSqs = { _, _ -> }; changeS3 = { _, _ -> }; wrongPrincipal = false; onNativeClose = {} }
 
+    /** Reference protocol data only; original AUTH/work/PUT/key mapping and full D stay unchanged. */
+    fun protocolHistoricalAllObject(targets: List<UUID> = event.complaintIds(), routingKeyId: String? = null): TestActiveQueueHistoricalAllObjectV1 {
+        val f = checkNotNull(fixture); f.assertReleased()
+        assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, f.family)
+        val routing = f.process.consumers.journalRouting
+        val selected = routingKeyId ?: routing.derive(event.tuple).candidates().first { it.routingKeyId != event.route.routingKeyId }.routingKeyId
+        check(selected != event.route.routingKeyId)
+        val comparison = f.precursor.codec.canonicalize(event.tuple, targets, selected)
+        return TestActiveQueueHistoricalAllObjectV1.reference(routing, comparison, originalRecord.stored,
+            "synthetic-protocol-history-%2F+&=version-${++historicalSerial}")
+    }
+    fun selectHistorical(value: TestActiveQueueHistoricalAllObjectV1) {
+        val f = checkNotNull(fixture); f.assertReleased()
+        assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, f.family)
+        assertTrue(value.event.belongsTo(f.process.consumers.journalRouting))
+        historical = value; primaryBody = notification(); dlqBody = null
+    }
+    fun selectOriginal() {
+        checkNotNull(fixture).assertReleased()
+        historical = null; primaryBody = notification(); dlqBody = null
+    }
+
     fun notification(): String {
+        val stored = deliveredStored
         val d = checkNotNull(fixture).process.consumers.journalConfiguration.declaration()
         return mapper.writeValueAsString(mapOf("Records" to listOf(mapOf(
             "eventVersion" to "2.1", "eventSource" to "aws:s3", "awsRegion" to d.journalLocation.region,
@@ -208,6 +249,7 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
             s3Closed++; checked { closeBoundary("S3") }; s3CloseReturned++
         }) { request -> checked {
             boundary(); order.add("GET")
+            val stored = deliveredStored
             val d = checkNotNull(fixture).process.consumers.journalConfiguration.declaration()
             journalPublisherRawAssertSigned(request, d.journalLocation.region, d.journalLocation.accountId, input.credentials)
             assertEquals("GET", request.kind, "The queue graph never LISTs or PUTs.")
@@ -257,5 +299,98 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
         }
         requests.forEach { assertEquals(1, it.calls); assertEquals(1, it.aborts); assertEquals(1, checkNotNull(it.reply).closes) }
         assertFalse(requests.any { it.kind != "GET" }); assertNoLostAssertions()
+    }
+}
+
+/**
+ * Passive, explicitly synthetic protocol/history data, NOT A's actual-PUT record or any proof.
+ * Independent restricted JSON/JCE framing reuses existing TEST LP/base64 primitives only. Routes
+ * are retained product comparisons; the separate literal tests own independent HMAC coverage.
+ */
+internal class TestActiveQueueHistoricalAllObjectV1 private constructor(
+    val event: TestOwnerDeleteJournalEventV1,
+    private val value: JournalPublisherObject,
+    private val context: Map<String, String>,
+    private val key: ByteArray,
+    private val wrapped: ByteArray,
+    private val keyArn: String,
+) {
+    val stored: JournalPublisherObject get() = value.copy(bytes = value.bytes.copyOf(), metadata = value.metadata.toMap())
+    val kmsContext: Map<String, String> get() = context.toMap()
+    fun decrypt(request: JournalKmsHttpRequest): JournalKmsHttpReply {
+        requireConnectionFree()
+        assertEquals(AwsJournalKmsFixture.DECRYPT_TARGET, request.target())
+        val fields = request.fields()
+        assertEquals(setOf("KeyId", "CiphertextBlob", "EncryptionAlgorithm", "EncryptionContext"), fields.fieldNames().asSequence().toSet())
+        assertEquals(keyArn, fields["KeyId"].textValue())
+        assertEquals("SYMMETRIC_DEFAULT", fields["EncryptionAlgorithm"].textValue())
+        assertEquals(AwsJournalKmsFixture.base64(wrapped), fields["CiphertextBlob"].textValue())
+        assertEquals(context, fields["EncryptionContext"].fields().asSequence().associate { it.key to it.value.textValue() })
+        return JournalKmsHttpReply(AwsJournalKmsFixture.decryptDocument(keyArn, key))
+    }
+    /** Hostile provider version metadata, explicitly not a second actual PUT or a new authority. */
+    fun withAdversarialOpaqueVersion(version: String): TestActiveQueueHistoricalAllObjectV1 {
+        require(version.isNotBlank() && version != value.version)
+        return TestActiveQueueHistoricalAllObjectV1(event, value.copy(version = version), context, key, wrapped, keyArn)
+    }
+    override fun toString() = "HistoricalAllObject(protocol-reference-only,redacted,no-auth-put-or-proof)"
+
+    companion object {
+        internal fun reference(routing: TestOwnerDeleteJournalRoutingV1, event: TestOwnerDeleteJournalEventV1,
+            original: JournalPublisherObject, version: String): TestActiveQueueHistoricalAllObjectV1 {
+            requireConnectionFree()
+            assertTrue(event.belongsTo(routing))
+            assertEquals(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, event.comparison.eventKind)
+            val tuple = event.tuple; val d = routing.journalConfiguration.declaration()
+            val random = SecureRandom()
+            val key = ByteArray(32).also(random::nextBytes)
+            val wrapped = ByteArray(64).also(random::nextBytes)
+            val nonce = ByteArray(12).also(random::nextBytes)
+            val payload = canonical(mapOf(
+                "schemaVersion" to JsonPrimitive(1), "eventKind" to JsonPrimitive("OWNER_DELETE_ALL"),
+                "eventId" to JsonPrimitive(event.route.eventId), "publicationEpoch" to JsonPrimitive(tuple.epoch),
+                "writerGeneration" to JsonPrimitive(d.writer.generationId.toString()), "actorKind" to JsonPrimitive("INSTALLATION"),
+                "actorId" to JsonPrimitive(tuple.actorId.toString()), "credentialVersion" to JsonPrimitive(tuple.credentialVersion),
+                "operationKey" to JsonPrimitive(tuple.operationKey.toString()), "requestFingerprint" to JsonPrimitive(tuple.encodedFingerprint()),
+                "ownerInstallationIds" to JsonArray(listOf(JsonPrimitive(tuple.actorId.toString()))),
+                "dataScopeKind" to JsonPrimitive("TEST"), "dataScopeId" to JsonPrimitive(tuple.scope.id.toString()),
+                "complaintIds" to JsonArray(event.complaintIds().map { JsonPrimitive(it.toString()) }),
+            ))
+            assertArrayEquals(event.canonicalBytes(), payload, "Independent protocol-history payload matches only comparison semantics.")
+            val header = mapOf(
+                "envelopeSchemaVersion" to JsonPrimitive(1), "payloadSchemaVersion" to JsonPrimitive(1),
+                "canonicalizerId" to JsonPrimitive("kcj-1"), "objectKind" to JsonPrimitive("OWNER_DELETE_ALL"),
+                "encryptionAlgorithm" to JsonPrimitive("AES-256-GCM"), "dataKeyMode" to JsonPrimitive("FRESH_PER_OBJECT_KMS_WRAPPED"),
+                "kmsKeyId" to JsonPrimitive(d.encryption.keyId), "kmsKeyArn" to JsonPrimitive(d.encryption.keyArn),
+                "bucket" to JsonPrimitive(d.journalLocation.bucket), "objectKey" to JsonPrimitive(event.route.objectKey),
+                "writerGeneration" to JsonPrimitive(d.writer.generationId.toString()), "ordinaryPrefix" to JsonPrimitive(routing.journalConfiguration.ordinaryPrefix),
+                "dataScopeKind" to JsonPrimitive("TEST"), "dataScopeId" to JsonPrimitive(tuple.scope.id.toString()),
+                "publicationEpoch" to JsonPrimitive(tuple.epoch), "routingKeyId" to JsonPrimitive(event.route.routingKeyId),
+                "eventId" to JsonPrimitive(event.route.eventId), "nonce" to JsonPrimitive(AwsJournalKmsFixture.url(nonce)),
+            )
+            val values = HEADER_ORDER.map { header.getValue(it).jsonPrimitive.content }
+            val headerBytes = canonical(header)
+            val aad = AwsJournalKmsFixture.frame(listOf("kira-complaint-journal-aad-v1", "1", "KJEV", "1", headerBytes.size.toString()) +
+                values + listOf(wrapped.size.toString(), AwsJournalKmsFixture.url(wrapped), (payload.size + 16).toString()))
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, nonce))
+            cipher.updateAAD(aad)
+            val encrypted = cipher.doFinal(payload)
+            val wire = ByteBuffer.allocate(20 + headerBytes.size + wrapped.size + encrypted.size).apply {
+                putInt(0x4b4a4556).putInt(1)
+                listOf(headerBytes, wrapped, encrypted).forEach { putInt(it.size).put(it) }
+            }.array()
+            val context = mapOf(AwsJournalKmsFixture.CONTEXT_KEY to AwsJournalKmsFixture.url(AwsJournalKmsFixture.frame(
+                listOf("kira-complaint-journal-kms-context-v1", "1") + values)))
+            val stored = JournalPublisherObject(event.route.objectKey, version, wire, original.lastModified, original.retainUntil, mapOf(
+                "kira-journal-schema" to "1", "kira-journal-event-id" to event.route.eventId,
+                "kira-journal-ciphertext-sha256" to Sha256.hex(wire),
+                "kira-journal-retain-until" to original.metadata.getValue("kira-journal-retain-until"),
+            ))
+            return TestActiveQueueHistoricalAllObjectV1(event, stored, context, key, wrapped, d.encryption.keyArn)
+        }
+        private fun canonical(fields: Map<String, JsonElement>): ByteArray = JsonObject(fields.toSortedMap()).toString().toByteArray(Charsets.UTF_8)
+        private val HEADER_ORDER = listOf("envelopeSchemaVersion", "payloadSchemaVersion", "canonicalizerId", "objectKind", "encryptionAlgorithm", "dataKeyMode",
+            "kmsKeyId", "kmsKeyArn", "bucket", "objectKey", "writerGeneration", "ordinaryPrefix", "dataScopeKind", "dataScopeId", "publicationEpoch", "routingKeyId", "eventId", "nonce")
     }
 }
