@@ -24,7 +24,6 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestPro
 import me.manga.kira.backend.complaint.infrastructure.admission.boundedTestDeploymentFailure
 import me.manga.kira.backend.complaint.infrastructure.admission.requireTestDeployment
 import me.manga.kira.backend.complaint.infrastructure.catalog.preferCatalogFreezeCleanup
-import me.manga.kira.backend.security.ComplaintInstallationRoutes
 import me.manga.kira.backend.security.ComplaintSecurityFailure
 import me.manga.kira.backend.security.ComplaintSecurityResponses
 import me.manga.kira.backend.security.CurrentUser
@@ -148,7 +147,7 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             val repositories = JpaRepositoryFactory(SharedEntityManagerCreator.createSharedEntityManager(checkNotNull(emf)))
             val counted = JpaAuditRepositoryAdapter(repositories.getRepository(SpringDataAuditLogRepository::class.java))
             val service = AuditService(counted, CurrentUser(), Clock.systemUTC()).also { audit = it }
-            val composition = ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointCreate(registration, assembly, owner, template, service)
+            val composition = ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreate(registration, assembly, owner, template, service)
             val userKey = checkNotNull(registration.process.consumers.jwt.boundUserKeyProvider)
             val properties = KiraSecurityProperties(
                 issuer = userKey.versionBoundIssuer, audience = userKey.versionBoundAudience,
@@ -337,7 +336,7 @@ internal class ComplaintTestRegisteredServletConfigurationV1 {
     fun selectedTestNamespaceOnly(composition: ComplaintTestBootstrapHttpCompositionV1): FilterRegistrationBean<Filter> =
         FilterRegistrationBean<Filter>(Filter { request, response, chain ->
             val http = request as HttpServletRequest
-            if (ComplaintInstallationRoutes.path(http) in composition.mappedPaths) chain.doFilter(request, response)
+            if (composition.mapsRequest(http)) chain.doFilter(request, response)
             else ComplaintSecurityResponses.problem(http, response as HttpServletResponse, ComplaintSecurityFailure.NOT_FOUND)
         }).apply {
             // Both this restriction and the original ingress precede body buffering. It mints no
