@@ -22,6 +22,7 @@ import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllPersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllVerificationSql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationExceptionV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -216,34 +217,48 @@ class TestActiveOwnerDeleteQueueIT {
         withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, action = ::assertHistoricalAllSequence)
 
     @Test fun allAuthenticatedProtocolHistoryWithWrongTargetsOrAnotherVersionAtTheSameKeyRemainsUnacked() {
-        listOf("targets", "version").forEach { cut -> withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
-            val native = f.precursor.native.counts()
-            val alias = if (cut == "targets") f.raw.protocolHistoricalAllObject(targets = listOf(UUID.randomUUID().also {
-                assertFalse(it in f.record.event.complaintIds())
-            })) else f.raw.protocolHistoricalAllObject()
-            if (cut == "version") {
-                val before = f.counters(); val pending = allPrimaryImage(f) - "complaint_deletion_journal_applied"
-                f.raw.selectHistorical(alias); f.expectAppliedObjects(alias.stored)
-                assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased()
-                assertRecoveryCharge(f, before, f.counters()); f.assertOnlyAuthorizedReportsErased()
-                assertEquals(pending, allPrimaryImage(f) - "complaint_deletion_journal_applied")
-                f.raw.selectHistorical(alias.withAdversarialOpaqueVersion("synthetic-protocol-history-hostile-other-version"))
-            } else {
-                f.raw.selectHistorical(alias); f.expectAppliedObjects()
+        listOf("targets", "version").forEach { cut ->
+            var stage = "SETUP"
+            try {
+                withQueue(ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) { f ->
+                    stage = "BODY"
+                    val native = f.precursor.native.counts()
+                    val alias = if (cut == "targets") f.raw.protocolHistoricalAllObject(targets = listOf(UUID.randomUUID().also {
+                        assertFalse(it in f.record.event.complaintIds())
+                    })) else f.raw.protocolHistoricalAllObject()
+                    if (cut == "version") {
+                        val before = f.counters(); val pending = allPrimaryImage(f) - "complaint_deletion_journal_applied"
+                        f.raw.selectHistorical(alias); f.expectAppliedObjects(alias.stored)
+                        assertEquals(1, f.poll().primaryAcknowledged); f.assertReleased()
+                        assertRecoveryCharge(f, before, f.counters()); f.assertOnlyAuthorizedReportsErased()
+                        assertEquals(pending, allPrimaryImage(f) - "complaint_deletion_journal_applied")
+                        f.raw.selectHistorical(alias.withAdversarialOpaqueVersion("synthetic-protocol-history-hostile-other-version"))
+                    } else {
+                        f.raw.selectHistorical(alias); f.expectAppliedObjects()
+                    }
+                    val rows = f.domainImage(); val before = f.counters(); val acknowledgements = f.raw.ackRequests.toList()
+                    val nativeStart = f.raw.order.size; val original = f.begin()
+                    assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { f.poll(original) }
+                    f.assertReleased(); f.assertNoAuthority(); f.assertExpectedAppliedObjects()
+                    assertEquals(rows, f.domainImage(), "Authenticated but conflicting history cannot mutate domain/N/P/L/E/audit.")
+                    if (cut == "version") assertEquals(before, f.counters()) else assertObservationCharge(before, f.counters())
+                    val fresh = f.raw.order.drop(nativeStart)
+                    assertEquals(1, fresh.count { it == "GET" }); assertEquals(1, fresh.count { it == "DECRYPT" })
+                    assertTrue(f.deletionObservations.isNotEmpty(), "Valid AEAD reached the actual semantic/history SQL gate.")
+                    assertFalse(fresh.any { it.startsWith("DeleteMessage:") }); assertEquals(acknowledgements, f.raw.ackRequests)
+                    assertEquals(0, original.primaryAcked); assertEquals(native, f.precursor.native.counts())
+                    f.assertSameOriginalRefused(original)
+                    stage = "TEARDOWN"
+                }
+            } catch (failure: Throwable) {
+                // Last reached boundary only; the final bounded code can reflect cleanup precedence, not the first cause.
+                runCatching {
+                    val code = (failure as? ComplaintDesiredInstallationExceptionV1)?.code?.name ?: "NONE"
+                    System.err.println("TEST_ACTIVE_QUEUE_HISTORY_FAILURE variant=$cut stage=$stage class=${failure.javaClass.name} desired_code=$code")
+                }
+                throw failure
             }
-            val rows = f.domainImage(); val before = f.counters(); val acknowledgements = f.raw.ackRequests.toList()
-            val nativeStart = f.raw.order.size; val original = f.begin()
-            assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { f.poll(original) }
-            f.assertReleased(); f.assertNoAuthority(); f.assertExpectedAppliedObjects()
-            assertEquals(rows, f.domainImage(), "Authenticated but conflicting history cannot mutate domain/N/P/L/E/audit.")
-            if (cut == "version") assertEquals(before, f.counters()) else assertObservationCharge(before, f.counters())
-            val fresh = f.raw.order.drop(nativeStart)
-            assertEquals(1, fresh.count { it == "GET" }); assertEquals(1, fresh.count { it == "DECRYPT" })
-            assertTrue(f.deletionObservations.isNotEmpty(), "Valid AEAD reached the actual semantic/history SQL gate.")
-            assertFalse(fresh.any { it.startsWith("DeleteMessage:") }); assertEquals(acknowledgements, f.raw.ackRequests)
-            assertEquals(0, original.primaryAcked); assertEquals(native, f.precursor.native.counts())
-            f.assertSameOriginalRefused(original)
-        } }
+        }
     }
 
     @Test fun allMissingReceiptReservationOrWholeBookkeepingIsChargedWithoutResettingAnyUnattributedBalance() {
