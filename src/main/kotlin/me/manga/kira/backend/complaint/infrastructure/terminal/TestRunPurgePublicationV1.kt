@@ -70,6 +70,7 @@ internal class TestRunPurgePublicationV1 private constructor(internal val manife
     private var custody: TestRunPurgeCustodyV1? = null
     private var proof: TestRunPurgeProofV1? = null
     private var verified: TestRunPurgeRowsV1.Verified? = null
+    private var terminalEpochSeal: TestRunTerminalEpochSealV1? = null
     private val rows = ArrayList<TestTerminalDurableRowV1>(8)
     private val publications = ArrayList<TestRunPurgeRowsV1.Publication>(8)
     internal var step = TestRunPurgeStepV1.CAPTURE
@@ -228,12 +229,35 @@ internal class TestRunPurgePublicationV1 private constructor(internal val manife
         return checkNotNull(verified)
     }
     internal fun authenticatedPurge(): TestTerminalObjectRefV1 {
-        requireConnectionFree(); manifest.requirePurgePredecessor(); throwIfSignalled()
-        requirePurge(caller === Thread.currentThread() && started && finished && published && !cleanupUncertain && phase == null && !phaseEntered && custody == null)
+        requireConnectionFree(); requireSuccessfulPurge()
         return checkNotNull(verified).objectRef
+    }
+    private fun requireSuccessfulPurge() {
+        manifest.requirePurgePredecessor(); throwIfSignalled()
+        requirePurge(caller === Thread.currentThread() && started && finished && published && !cleanupUncertain && phase == null && !phaseEntered && custody == null)
+    }
+    /** The actual successful original only; physical retirement of a failed purge is not this entry. */
+    internal fun beginTerminalEpochSeal(): TestRunTerminalEpochSealV1 = TestRunTerminalEpochSealV1.begin(this)
+
+    internal fun retainTerminalEpochSeal(candidate: TestRunTerminalEpochSealV1) {
+        authenticatedPurge()
+        requirePurge(candidate.purge === this && terminalEpochSeal == null)
+        terminalEpochSeal = candidate
+    }
+    internal fun requireTerminalEpochSeal(candidate: TestRunTerminalEpochSealV1) {
+        requireSuccessfulPurge()
+        requirePurge(candidate.purge === this && terminalEpochSeal === candidate)
+    }
+    /** Historical authenticated comparison facts. A successor must read/lock its own current rows. */
+    internal fun authenticatedFactsForSeal(): TestRunPurgeRowsV1.Verified {
+        requireSuccessfulPurge()
+        return checkNotNull(verified)
     }
     internal fun requireRetiredForRetry(selected: TestRunInstallationManifestPublicationV1) {
         requireConnectionFree(); requirePurge(caller === Thread.currentThread() && manifest === selected && finished)
+        // Once the terminal child is claimed, replacing this ancestor must not create a second
+        // terminal original even if that child's PREPARE rolled back before any durable intent.
+        requirePurge(terminalEpochSeal == null)
         phase?.let { requirePurge(it.testRunPurgeResourcesRetired(this)); phase = null; phaseEntered = false }
         requirePurge(!phaseEntered)
         custody?.requireRetired(this)

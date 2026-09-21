@@ -61,6 +61,16 @@ internal class TestTerminalRootsV1(
         return TestTerminalCountHashV1(records.size.toLong(), Sha256.hexUtf8(canonical))
     }
 
+    /** Ordered ORDINARY prefix plus the one final TERMINAL reference. Syntax/root only, not proof. */
+    fun fullSeals(seals: TestTerminalSealSetV1): TestTerminalCountHashV1 {
+        json.encodeSealSet(seals).fill(0)
+        val records = seals.records()
+        requireTestTerminal(records.size in 2..TestTerminalProfileV1.MAX_SEALS && records.last().role == TestTerminalSealRoleV1.TERMINAL &&
+            records.dropLast(1).all { it.role == TestTerminalSealRoleV1.ORDINARY })
+        val canonical = CanonicalJson.canonicalize(ListSerializer(TestTerminalSealRefV1.serializer()), records)
+        return TestTerminalCountHashV1(records.size.toLong(), Sha256.hexUtf8(canonical))
+    }
+
     fun preTerminalInventory(context: TestTerminalRunContextV1, seals: TestTerminalSealSetV1): TestTerminalInventoryFoldV1 {
         requireContext(context)
         requireTestTerminal(context.activationCatalogGeneration == seals.activationCatalogGeneration)

@@ -17,6 +17,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySe
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPurgePublicationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalEpochSealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
@@ -142,6 +143,9 @@ internal class PersistencePhaseOwnership private constructor(
         enter(PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY, testRunPurge = original)
     internal fun enterTestActiveOrdinarySeal(original: TestActiveOrdinarySealV1): PersistencePhaseContext =
         enter(original.path, testActiveSealer = original)
+
+    internal fun enterTestTerminalEpochSeal(original: TestRunTerminalEpochSealV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL, testTerminalEpochSeal = original)
 
     internal fun enterTestOrdinarySeal(original: TestRunOrdinarySealV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL, testOrdinarySealer = original)
@@ -543,6 +547,7 @@ internal class PersistencePhaseOwnership private constructor(
         testInstallationManifestPublication: TestRunInstallationManifestPublicationV1? = null,
         testRunPurge: TestRunPurgePublicationV1? = null,
         testActiveSealer: TestActiveOrdinarySealV1? = null,
+        testTerminalEpochSeal: TestRunTerminalEpochSealV1? = null,
     ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
@@ -587,6 +592,9 @@ internal class PersistencePhaseOwnership private constructor(
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         if (path.testActiveOrdinarySeal != (testActiveSealer != null)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if ((path === PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL) != (testTerminalEpochSeal != null)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         if ((path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL) != (testOrdinarySealer != null)) {
@@ -638,6 +646,7 @@ internal class PersistencePhaseOwnership private constructor(
         testInstallationManifest?.requirePhaseEntry(this, path)
         testInstallationManifestPublication?.requirePhaseEntry(this, path)
         testRunPurge?.requirePhaseEntry(this, path)
+        testTerminalEpochSeal?.requirePhaseEntry(this, path)
         testRunOwnerDelete?.requirePhaseEntry(this, path)
         testRunOwnerDeleteAll?.requirePhaseEntry(this, path)
         testRunAdminDelete?.requirePhaseEntry(this, path)
@@ -669,6 +678,7 @@ internal class PersistencePhaseOwnership private constructor(
         val testInstallationManifestWork = testInstallationManifest?.budget?.capped(2_000)
         val testInstallationManifestPublicationWork = testInstallationManifestPublication?.phaseBudget()?.capped(2_000)
         val testRunPurgeWork = testRunPurge?.phaseBudget()?.capped(2_000)
+        val testTerminalEpochSealWork = testTerminalEpochSeal?.phaseBudget()?.capped(2_000)
         val testRunOwnerDeleteWork = testRunOwnerDelete?.budget?.capped(2_000)
         val testRunOwnerDeleteAllWork = testRunOwnerDeleteAll?.budget?.capped(2_000)
         val testRunAdminDeleteWork = testRunAdminDelete?.budget?.capped(2_000)
@@ -755,6 +765,8 @@ internal class PersistencePhaseOwnership private constructor(
                 testRunPurgeWork,
                 testActiveSealer,
                 testActiveOrdinarySealWork,
+                testTerminalEpochSeal = testTerminalEpochSeal,
+                testTerminalEpochSealWork = testTerminalEpochSealWork,
             )
             phase = prepared
             // Retain before any publication/permit effect, including entry failures that never return a phase to the executor.
@@ -776,6 +788,7 @@ internal class PersistencePhaseOwnership private constructor(
             testInstallationManifest?.retainPhase(prepared)
             testInstallationManifestPublication?.retainPhase(prepared)
             testRunPurge?.retainPhase(prepared)
+            testTerminalEpochSeal?.retainPhase(prepared)
             testRunOwnerDelete?.retainPhase(prepared)
             testRunOwnerDeleteAll?.retainPhase(prepared)
             testRunAdminDelete?.retainPhase(prepared)
@@ -805,6 +818,7 @@ internal class PersistencePhaseOwnership private constructor(
             testInstallationManifest?.observeFailure(failure)
             testInstallationManifestPublication?.observeFailure(failure)
             testRunPurge?.observeFailure(failure)
+            testTerminalEpochSeal?.observeFailure(failure)
             testRunOwnerDelete?.observeFailure(failure)
             testRunOwnerDeleteAll?.observeFailure(failure)
             testRunAdminDelete?.observeFailure(failure)
@@ -830,6 +844,7 @@ internal class PersistencePhaseOwnership private constructor(
                 testInstallationManifest?.observeFailure(cleanup)
                 testInstallationManifestPublication?.observeFailure(cleanup)
                 testRunPurge?.observeFailure(cleanup)
+                testTerminalEpochSeal?.observeFailure(cleanup)
                 testRunOwnerDelete?.observeFailure(cleanup)
                 testRunOwnerDeleteAll?.observeFailure(cleanup)
                 testRunAdminDelete?.observeFailure(cleanup)
@@ -854,6 +869,7 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { testInstallationManifest?.observePhaseCleanup(it) }
                 phase?.let { testInstallationManifestPublication?.observePhaseCleanup(it) }
                 phase?.let { testRunPurge?.observePhaseCleanup(it) }
+                phase?.let { testTerminalEpochSeal?.observePhaseCleanup(it) }
                 phase?.let { testRunOwnerDelete?.observePhaseCleanup(it) }
                 phase?.let { testRunOwnerDeleteAll?.observePhaseCleanup(it) }
                 phase?.let { testRunAdminDelete?.observePhaseCleanup(it) }
@@ -1085,6 +1101,7 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
                 PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_VERIFY,
                 PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
+                PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
                 PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY,
                 PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
@@ -1286,6 +1303,7 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_VERIFY,
             PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
+            PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
             PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
@@ -1468,6 +1486,7 @@ internal enum class PersistencePhasePath {
     COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
     COMPLAINT_TEST_INSTALLATION_MANIFEST_VERIFY,
     COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
+    COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
     COMPLAINT_TEST_RUN_PURGE_VERIFY,
     COMPLAINT_TEST_ORDINARY_DRAIN,
     COMPLAINT_CATALOG_GENESIS_PREPARE,
@@ -1563,6 +1582,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
             COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
             COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
+            COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
             COMPLAINT_TEST_ORDINARY_DRAIN,
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,

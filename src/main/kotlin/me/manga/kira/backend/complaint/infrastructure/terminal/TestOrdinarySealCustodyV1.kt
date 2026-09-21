@@ -7,6 +7,7 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveO
 import me.manga.kira.backend.security.TestTerminalAttemptV1
 import me.manga.kira.backend.security.TestTerminalEnvelopeV1
 import me.manga.kira.backend.security.aws.AwsTestOrdinarySealStsV1
+import java.time.Instant
 
 /** One concrete shared-J routine owner, retained across canonical release, codec, freeze and readback. */
 internal class TestOrdinarySealCustodyV1 private constructor(private val original: Original) : AutoCloseable {
@@ -25,6 +26,7 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
     private var adapter: AwsTestOrdinarySealStsV1? = null
     private var closeFailure: Throwable? = null
     private var observed: TestOrdinarySealProofV1? = null
+    private var observedTerminal: TestTerminalEpochSealProofV1? = null
 
     internal fun acquire() = call(false) {
         requireOrdinarySeal(adapter == null)
@@ -38,7 +40,12 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
         return if (result.isFailure) withJournalPublicationCleanup({ result.getOrThrow() }, { owned?.close() }) else result.getOrThrow()
     }
     internal fun publish(): TestOrdinarySealProofV1 = call(true) {
+        requireOrdinaryPublication()
         checkNotNull(adapter).publishOwned(this).also { observed = it }
+    }
+    internal fun publishTerminalEpoch(): TestTerminalEpochSealProofV1 = call(true) {
+        requireTerminalEpochPublication()
+        checkNotNull(adapter).publishTerminalOwned(this).also { observedTerminal = it }
     }
     private fun <T> call(publication: Boolean, body: () -> T): T {
         requireReady(publication)
@@ -57,6 +64,8 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
     internal fun remainingProviderMillis(ceilingMillis: Int): Int { requireReady(false); return original.remainingProviderMillis(ceilingMillis) }
     internal fun requireAcquisition(selected: VersionBoundTestOrdinarySealV1) { requireReady(false); requireOrdinarySeal(acquisition === selected) }
     internal fun requirePublication() { requireReady(true) }
+    internal fun requireOrdinaryPublication() { requirePublication(); requireOrdinarySeal(original is Original.Terminal || original is Original.Active) }
+    internal fun requireTerminalEpochPublication() { requirePublication(); requireOrdinarySeal(original is Original.TerminalEpoch) }
     internal fun canonical() = original.preparedRow()
     internal fun frozen() = original.frozenRow()
     internal fun content() = original.content()
@@ -64,7 +73,16 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
         requirePublication()
         original.requireUnverifiedSeal()
         val row = frozen()
-        requireOrdinarySeal(!checkNotNull(row.retainUntil).isBefore(acquisition.newRetention(attempt, row.binding.createdAt)))
+        if (original !is Original.TerminalEpoch) {
+            requireOrdinarySeal(!checkNotNull(row.retainUntil).isBefore(acquisition.newRetention(attempt, row.binding.createdAt)))
+        }
+    }
+    /** TERMINAL uses frozen metadata M unchanged and one captured current PUT lock max(M,new floor). */
+    internal fun putRetention(): Instant {
+        requirePutRetention()
+        val row = frozen()
+        val frozen = checkNotNull(row.retainUntil)
+        return if (original is Original.TerminalEpoch) maxOf(frozen, acquisition.newRetention(attempt, row.binding.createdAt)) else frozen
     }
     internal fun requireListedVersion(version: String?) { requirePublication(); original.requireListedSealVersion(version) }
     internal fun requireReleasedProof(candidate: TestRunOrdinarySealV1, proof: TestOrdinarySealProofV1) {
@@ -72,6 +90,13 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
     }
     internal fun requireReleasedProof(candidate: TestActiveOrdinarySealV1, proof: TestOrdinarySealProofV1) {
         synchronized(lifecycle) { requireOrdinarySeal(original is Original.Active && candidate === original.value && proof === observed && closed && !cleaning && closeFailure == null && !reserved) }
+    }
+    internal fun requireReleasedProof(candidate: TestRunTerminalEpochSealV1, proof: TestTerminalEpochSealProofV1) {
+        synchronized(lifecycle) { requireOrdinarySeal(original is Original.TerminalEpoch && candidate === original.value && proof === observedTerminal && closed && !cleaning && closeFailure == null && !reserved) }
+    }
+    internal fun requireRetired(candidate: TestRunTerminalEpochSealV1) = synchronized(lifecycle) {
+        requireOrdinarySeal(original is Original.TerminalEpoch && candidate === original.value && caller === Thread.currentThread() &&
+            closed && !cleaning && !active && closeFailure == null && !reserved)
     }
     // Called under the registry bookkeeping lock: fixed identity/atomic values only, no callbacks or clocks.
     internal fun requireLane(selected: JournalPublicationLanesV1) { requireOrdinarySeal(lanes === selected) }
@@ -120,31 +145,42 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
             custody.reserved = true
             return custody
         }
+        internal fun reserve(original: TestRunTerminalEpochSealV1): TestOrdinarySealCustodyV1 {
+            original.requireReservation()
+            val custody = TestOrdinarySealCustodyV1(Original.TerminalEpoch(original))
+            requireOrdinarySeal(original.registration.process.publicationLanes.tryTestOrdinarySeal(custody))
+            custody.reserved = true
+            return custody
+        }
     }
 
     /** Closed dispatch only. ACTIVE never inherits a terminal SQL, reserve, denial or result issuer. */
     private sealed class Original {
         class Terminal(val value: TestRunOrdinarySealV1) : Original()
         class Active(val value: TestActiveOrdinarySealV1) : Original()
-        val registration get() = when (this) { is Terminal -> value.registration; is Active -> value.registration }
-        val acquisition get() = when (this) { is Terminal -> value.acquisition; is Active -> value.acquisition }
-        val routing get() = when (this) { is Terminal -> value.routing; is Active -> value.routing }
-        val codecAttempt get() = when (this) { is Terminal -> value.codecAttempt; is Active -> value.codecAttempt }
-        val codec get() = when (this) { is Terminal -> value.codec; is Active -> value.codec }
+        class TerminalEpoch(val value: TestRunTerminalEpochSealV1) : Original()
+        val registration get() = when (this) { is Terminal -> value.registration; is Active -> value.registration; is TerminalEpoch -> value.registration }
+        val acquisition get() = when (this) { is Terminal -> value.acquisition; is Active -> value.acquisition; is TerminalEpoch -> value.acquisition }
+        val routing get() = when (this) { is Terminal -> value.routing; is Active -> value.routing; is TerminalEpoch -> value.routing }
+        val codecAttempt get() = when (this) { is Terminal -> value.codecAttempt; is Active -> value.codecAttempt; is TerminalEpoch -> value.codecAttempt }
+        val codec get() = when (this) { is Terminal -> value.codec; is Active -> value.codec; is TerminalEpoch -> value.codec }
         fun requireProvider(custody: TestOrdinarySealCustodyV1, publication: Boolean) = when (this) {
             is Terminal -> value.requireProvider(custody, publication)
             is Active -> value.requireProvider(custody, publication)
+            is TerminalEpoch -> value.requireProvider(custody, publication)
         }
-        fun preparedRow() = when (this) { is Terminal -> value.preparedRow(); is Active -> value.preparedRow() }
-        fun frozenRow() = when (this) { is Terminal -> value.frozenRow(); is Active -> value.frozenRow() }
-        fun content() = when (this) { is Terminal -> value.content(); is Active -> value.content() }
-        fun requireUnverifiedSeal() = when (this) { is Terminal -> value.requireUnverifiedSeal(); is Active -> value.requireUnverifiedSeal() }
+        fun preparedRow() = when (this) { is Terminal -> value.preparedRow(); is Active -> value.preparedRow(); is TerminalEpoch -> value.preparedRow() }
+        fun frozenRow() = when (this) { is Terminal -> value.frozenRow(); is Active -> value.frozenRow(); is TerminalEpoch -> value.frozenRow() }
+        fun content() = when (this) { is Terminal -> value.content(); is Active -> value.content(); is TerminalEpoch -> value.content() }
+        fun requireUnverifiedSeal() = when (this) { is Terminal -> value.requireUnverifiedSeal(); is Active -> value.requireUnverifiedSeal(); is TerminalEpoch -> value.requireUnverifiedSeal() }
         fun requireListedSealVersion(version: String?) = when (this) {
             is Terminal -> value.requireListedSealVersion(version)
             is Active -> value.requireListedSealVersion(version)
+            is TerminalEpoch -> value.requireListedSealVersion(version)
         }
         fun remainingProviderMillis(ceilingMillis: Int) = when (this) {
             is Terminal -> ceilingMillis
+            is TerminalEpoch -> ceilingMillis
             is Active -> value.remainingNativeContinuationMillis(ceilingMillis)
         }
     }

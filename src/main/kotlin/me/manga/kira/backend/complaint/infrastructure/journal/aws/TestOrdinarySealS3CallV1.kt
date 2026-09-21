@@ -14,6 +14,7 @@ internal class TestOrdinarySealS3BindingV1 private constructor(internal val cust
     val frozen get() = custody.frozen()
     fun requirePublicationStart() { requireConnectionFree(); custody.requirePublication() }
     fun requirePut() { requirePublicationStart(); custody.requirePutRetention() }
+    fun putRetention() = custody.putRetention()
     companion object {
         internal fun released(custody: TestOrdinarySealCustodyV1): TestOrdinarySealS3BindingV1 =
             TestOrdinarySealS3BindingV1(custody).also { it.requirePublicationStart() }
@@ -55,7 +56,7 @@ internal class TestOrdinarySealS3CallV1 private constructor(
             TestOrdinarySealS3CallV1(binding, JournalS3OperationV1.GET, requireJournalVersion(versionId), null, nanoTime)
         fun put(binding: TestOrdinarySealS3BindingV1, candidate: TestOrdinarySealS3CandidateV1, nanoTime: () -> Long): TestOrdinarySealS3CallV1 {
             binding.requirePut()
-            requireJournalPublication(candidate.row === binding.frozen)
+            candidate.requireBinding(binding)
             return TestOrdinarySealS3CallV1(binding, JournalS3OperationV1.PUT, null, candidate, nanoTime)
         }
     }
@@ -66,13 +67,14 @@ internal class TestOrdinarySealS3CandidateV1 private constructor(private val bin
     internal val row: TestTerminalDurableRowV1 = binding.frozen
     val wireSha256 get() = checkNotNull(row.wireSha256)
     val checksum get() = checkNotNull(row.checksumSha256)
-    val retainUntil get() = checkNotNull(row.retainUntil)
+    val retainUntil = binding.putRetention()
     val size: Int get() = bytes().let { try { it.size } finally { it.fill(0) } }
     fun bytes(): ByteArray { binding.requirePublicationStart(); return checkNotNull(row.wireBytes()) }
     fun metadata(): Map<String, String> { binding.requirePublicationStart(); return checkNotNull(row.metadata()) }
+    internal fun requireBinding(selected: TestOrdinarySealS3BindingV1) { requireJournalPublication(binding === selected && row === selected.frozen) }
     companion object {
         fun frozen(binding: TestOrdinarySealS3BindingV1): TestOrdinarySealS3CandidateV1 {
-            binding.requirePublicationStart()
+            binding.requirePut()
             requireJournalPublication(binding.frozen.state === TestTerminalDurableStateV1.WIRE_FROZEN)
             return TestOrdinarySealS3CandidateV1(binding)
         }

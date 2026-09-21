@@ -3,6 +3,7 @@ package me.manga.kira.backend.security.aws
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealProofV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalEpochSealProofV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.TestOrdinarySealS3ClientV1
 import me.manga.kira.backend.security.TestTerminalEnvelopeV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
@@ -84,11 +85,25 @@ internal class AwsTestOrdinarySealStsV1 private constructor(
 
     internal fun publishOwned(custody: TestOrdinarySealCustodyV1): TestOrdinarySealProofV1 = epochSealStsCall {
         requireSession(custody)
+        custody.requireOrdinaryPublication()
         requireEpochSealSts(!published)
         published = true
         val s3 = s3Construction.open(routing, checkNotNull(credentials), s3HttpFactory, nanoTime, custody.attempt)
         requireSession(custody)
         val result = TestOrdinarySealProofV1.publish(custody, s3, keys(custody))
+        requireSession(custody)
+        result
+    }
+
+    /** Same retained credentials, exact-key policy, constructors, bounds and close owner. */
+    internal fun publishTerminalOwned(custody: TestOrdinarySealCustodyV1): TestTerminalEpochSealProofV1 = epochSealStsCall {
+        requireSession(custody)
+        custody.requireTerminalEpochPublication()
+        requireEpochSealSts(!published)
+        published = true
+        val s3 = s3Construction.open(routing, checkNotNull(credentials), s3HttpFactory, nanoTime, custody.attempt)
+        requireSession(custody)
+        val result = TestTerminalEpochSealProofV1.publish(custody, s3, keys(custody))
         requireSession(custody)
         result
     }

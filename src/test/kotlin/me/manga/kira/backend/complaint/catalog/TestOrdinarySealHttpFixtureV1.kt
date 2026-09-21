@@ -53,6 +53,7 @@ internal class TestOrdinarySealHttpFixtureV1(
     val purgePublication: Boolean = false,
     // Raw TEST input selected before protected parsing/full D, never a live counter reset or quota exemption.
     val protectedEnrollmentGlobalPerHour: Int? = null,
+    val terminalEpochSeal: Boolean = false,
 ) : AutoCloseable {
     init { require(protectedEnrollmentGlobalPerHour == null || (protectedIntake && protectedEnrollmentGlobalPerHour in 1..120)) }
 
@@ -80,7 +81,11 @@ internal class TestOrdinarySealHttpFixtureV1(
     // Opt-in sibling family only. Keep the original strict seal object/version assertions intact.
     val manifestObjects = linkedMapOf<String, JournalPublisherObject>()
     val purgeObjects = linkedMapOf<String, JournalPublisherObject>()
+    // The first ordinary seal stays in `stored`; only this explicit successor fixture may own
+    // a different epoch-seal key. No ordinary object is overwritten to simulate terminal proof.
+    val terminalSealObjects = linkedMapOf<String, JournalPublisherObject>()
     var manifestListing: (String, List<JournalPublisherObject>) -> List<JournalPublisherObject> = { _, values -> values }
+    var terminalSealListing: (String, List<JournalPublisherObject>) -> List<JournalPublisherObject> = { _, values -> values }
     var s3Created = 0
         private set
     var s3Closed = 0
@@ -198,7 +203,12 @@ internal class TestOrdinarySealHttpFixtureV1(
         val key = checkNotNull(expectedKey)
         val manifest = "/installation-manifest/" in key
         val purge = "/test-run-purge/" in key
-        val existing = if (manifest) manifestObjects[key] else if (purge) purgeObjects[key] else stored
+        val terminal = terminalEpochSeal && "/epoch-seal/" in key && stored != null && key != stored?.key
+        if (terminal) {
+            val first = checkNotNull(stored).key.removePrefix(j.sealTerminalPrefix).substringBefore('/').toLong()
+            assertEquals(first + 1, key.removePrefix(j.sealTerminalPrefix).substringBefore('/').toLong())
+        }
+        val existing = if (manifest) manifestObjects[key] else if (purge) purgeObjects[key] else if (terminal) terminalSealObjects[key] else stored
         journalPublisherRawAssertSigned(request, location.region, location.accountId, TARGET)
         assertTrue(key.startsWith(j.sealTerminalPrefix) && ("/epoch-seal/" in key || manifestPublication && manifest || purgePublication && purge))
         assertFalse(request.http.encodedPath().contains("/live/"))
@@ -208,12 +218,12 @@ internal class TestOrdinarySealHttpFixtureV1(
                 assertEquals("2", request.http.rawQueryParameters().getValue("max-keys").single())
                 val visible = if (hideObject) emptyList() else listOfNotNull(existing)
                 OwnerDeleteAllJournalPublisherFixture.xmlReply(journalPublisherRawListDocument(location.bucket, key,
-                    if (manifest) manifestListing(key, visible) else visible))
+                    if (manifest) manifestListing(key, visible) else if (terminal) terminalSealListing(key, visible) else visible))
             }
             "GET" -> {
                 assertEquals("/${location.bucket}/$key", request.http.encodedPath())
                 assertEquals(checkNotNull(existing).version, request.http.rawQueryParameters().getValue("versionId").single())
-                journalPublisherRawGetReply(location.region, if (manifest || purge) existing.copy(bytes = existing.bytes.copyOf()) else existing)
+                journalPublisherRawGetReply(location.region, if (manifest || purge || terminal) existing.copy(bytes = existing.bytes.copyOf()) else existing)
             }
             else -> {
                 assertEquals("PUT", request.kind)
@@ -221,12 +231,14 @@ internal class TestOrdinarySealHttpFixtureV1(
                 assertEquals("*", request.header("If-None-Match"))
                 assertEquals("COMPLIANCE", request.header("x-amz-object-lock-mode"))
                 if (existing != null) OwnerDeleteAllJournalPublisherFixture.errorReply(412) else {
-                    val version = if (manifest) "test-manifest-version-${manifestObjects.size + 1}" else if (purge) "test-purge-version-${purgeObjects.size + 1}" else VERSION
+                    val version = if (manifest) "test-manifest-version-${manifestObjects.size + 1}" else if (purge) "test-purge-version-${purgeObjects.size + 1}"
+                        else if (terminal) "test-terminal-seal-version-1" else VERSION
                     val value = JournalPublisherObject(key, version, request.body.copyOf(), now().truncatedTo(ChronoUnit.SECONDS),
                         Instant.parse(request.header("x-amz-object-lock-retain-until-date")),
                         request.http.headers().entries.filter { it.key.startsWith("x-amz-meta-", ignoreCase = true) }
                             .associate { it.key.lowercase().removePrefix("x-amz-meta-") to it.value.single() })
-                    if (manifest) manifestObjects[key] = value else if (purge) purgeObjects[key] = value else stored = value
+                    if (manifest) manifestObjects[key] = value else if (purge) purgeObjects[key] = value
+                        else if (terminal) terminalSealObjects[key] = value else stored = value
                     if (lostPutAcknowledgment) OwnerDeleteAllJournalPublisherFixture.errorReply(500) else journalPublisherRawPutReply(value)
                 }
             }

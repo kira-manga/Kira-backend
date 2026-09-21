@@ -25,6 +25,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestO
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestInstallationManifestPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestInstallationManifestPublicationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestRunPurgePhaseExecutorV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestTerminalEpochSealPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestOrdinaryDrainPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
@@ -80,6 +81,8 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val testInstallationManifestPublication: ComplaintTestInstallationManifestPublicationPhaseExecutorV1 get() = checkNotNull(testInstallationManifestPublicationExecutor)
     private var testRunPurgeExecutor: ComplaintTestRunPurgePhaseExecutorV1? = null
     internal val testRunPurge: ComplaintTestRunPurgePhaseExecutorV1 get() = checkNotNull(testRunPurgeExecutor)
+    private var testTerminalEpochSealExecutor: ComplaintTestTerminalEpochSealPhaseExecutorV1? = null
+    internal val testTerminalEpochSeal: ComplaintTestTerminalEpochSealPhaseExecutorV1 get() = checkNotNull(testTerminalEpochSealExecutor)
     private var testRecoveryRegistrationExecutor: ComplaintTestNamespaceRecoveryRegistrationPhaseExecutorV1? = null
     private var testActiveRegistrationExecutor: ComplaintTestNamespaceActiveRegistrationPhaseExecutorV1? = null
     private var testInstallationManifestExecutor: ComplaintTestInstallationManifestPhaseExecutorV1? = null
@@ -166,6 +169,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         testInstallationManifestExecutor = ComplaintTestInstallationManifestPhaseExecutorV1(this)
         testInstallationManifestPublicationExecutor = ComplaintTestInstallationManifestPublicationPhaseExecutorV1(this)
         testRunPurgeExecutor = ComplaintTestRunPurgePhaseExecutorV1(this)
+        testTerminalEpochSealExecutor = ComplaintTestTerminalEpochSealPhaseExecutorV1(this)
         testOrdinaryDrainExecutor = ComplaintTestOrdinaryDrainPhaseExecutorV1(this)
         projectedHeadExecutor = ComplaintCatalogProjectedHeadPhaseExecutor(this, jdbc)
         leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
