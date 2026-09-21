@@ -1,0 +1,117 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 19,
+      "class": "me.manga.kira.backend.database.complaint.ComplaintSharedExtensionIT",
+      "cohort": "Existing positive vocabulary and unknown action/null extension regression directly affected by additive audit migration.",
+      "expected_invocations_from_annotation": 1,
+      "method": "complaint actions use a closed vocabulary and noncomplaint rows keep null extension fields",
+      "path": "src/test/kotlin/me/manga/kira/backend/database/complaint/ComplaintSharedExtensionIT.kt",
+      "source_head": "e033c94426490b840a7a3c2b5d3d5bbb43d6b1c3",
+      "source_sha256": "025419f5574455d5cd365a15ffc39fb7ee2b93c22706a1b401986237fe453827",
+      "xml_names": [
+        "complaint actions use a closed vocabulary and noncomplaint rows keep null extension fields()"
+      ]
+    },
+    {
+      "annotation_line": 40,
+      "class": "me.manga.kira.backend.database.complaint.ComplaintSharedExtensionIT",
+      "cohort": "Existing negative actor/scope/null/FK contract regression for changed audit CHECK.",
+      "expected_invocations_from_annotation": 1,
+      "method": "complaint actor and scope cannot borrow a user foreign key or pass unknown SQL nulls",
+      "path": "src/test/kotlin/me/manga/kira/backend/database/complaint/ComplaintSharedExtensionIT.kt",
+      "source_head": "e033c94426490b840a7a3c2b5d3d5bbb43d6b1c3",
+      "source_sha256": "025419f5574455d5cd365a15ffc39fb7ee2b93c22706a1b401986237fe453827",
+      "xml_names": [
+        "complaint actor and scope cannot borrow a user foreign key or pass unknown SQL nulls()"
+      ]
+    },
+    {
+      "annotation_line": 61,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun one-scenario retained-ALL primary replay; owner prerequisite26 and missing-ALL27 PASS.",
+      "expected_invocations_from_annotation": 1,
+      "method": "bAppliedProtocolHistoryAllAliasPrecedesOnlyTheActualOriginalPrimarySplit2",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "e033c94426490b840a7a3c2b5d3d5bbb43d6b1c3",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "bAppliedProtocolHistoryAllAliasPrecedesOnlyTheActualOriginalPrimarySplit2()"
+      ]
+    },
+    {
+      "annotation_line": 64,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun one-scenario retained-ALL already-applied coverage; prerequisite families27 PASS.",
+      "expected_invocations_from_annotation": 1,
+      "method": "bothAppliedAllVersionsRemainExactNativeCoverageWithoutAnotherApplyOrCharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "e033c94426490b840a7a3c2b5d3d5bbb43d6b1c3",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "bothAppliedAllVersionsRemainExactNativeCoverageWithoutAnotherApplyOrCharge()"
+      ]
+    },
+    {
+      "annotation_line": 83,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Only after sole-reviewed TEST-only fixed-stage diagnostic: actual27 opaque failure cannot establish setup/body/cleanup origin; obtain materially new observation without weakening assertions. No concrete source defect yet demonstrated.",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentApplyCannotBorrowAnOrdinaryTemplateAndReviveTheFailedOriginal",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "e033c94426490b840a7a3c2b5d3d5bbb43d6b1c3",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "recurrentApplyCannotBorrowAnOrdinaryTemplateAndReviveTheFailedOriginal()"
+      ]
+    },
+    {
+      "annotation_line": 39,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "Only after reviewed audit action schema correction of source-proven terminal PROJECT incompatibility; no inferred SQL runtime attribution.",
+      "expected_invocations_from_annotation": 1,
+      "method": "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "e033c94426490b840a7a3c2b5d3d5bbb43d6b1c3",
+      "source_sha256": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+      "xml_names": [
+        "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 6,
+  "expected_total": 6,
+  "selection_basis": {
+    "cohorts": {
+      "Existing negative actor/scope/null/FK contract regression for changed audit CHECK.": 1,
+      "Existing positive vocabulary and unknown action/null extension regression directly affected by additive audit migration.": 1,
+      "Only after reviewed audit action schema correction of source-proven terminal PROJECT incompatibility; no inferred SQL runtime attribution.": 1,
+      "Only after sole-reviewed TEST-only fixed-stage diagnostic: actual27 opaque failure cannot establish setup/body/cleanup origin; obtain materially new observation without weakening assertions. No concrete source defect yet demonstrated.": 1,
+      "Previously unrun one-scenario retained-ALL already-applied coverage; prerequisite families27 PASS.": 1,
+      "Previously unrun one-scenario retained-ALL primary replay; owner prerequisite26 and missing-ALL27 PASS.": 1
+    },
+    "previous_run": "35620220269",
+    "scope": "Corrected terminal, diagnosed recurrent failure, two affected audit schema methods and two previously unrun retained-ALL alias positives. Six previous recurrent passes carried; long fault/alias loops and other20 remain."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+    "src/test/kotlin/me/manga/kira/backend/database/complaint/ComplaintSharedExtensionIT.kt": "025419f5574455d5cd365a15ffc39fb7ee2b93c22706a1b401986237fe453827"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 3,
+    "me.manga.kira.backend.database.complaint.ComplaintSharedExtensionIT": 2
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentApplyCannotBorrowAnOrdinaryTemplateAndReviveTheFailedOriginal",
+    "me.manga.kira.backend.database.complaint.ComplaintSharedExtensionIT.complaint actions use a closed vocabulary and noncomplaint rows keep null extension fields",
+    "me.manga.kira.backend.database.complaint.ComplaintSharedExtensionIT.complaint actor and scope cannot borrow a user foreign key or pass unknown SQL nulls",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.bAppliedProtocolHistoryAllAliasPrecedesOnlyTheActualOriginalPrimarySplit2",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.bothAppliedAllVersionsRemainExactNativeCoverageWithoutAnotherApplyOrCharge"
+  ]
+}
