@@ -7,10 +7,14 @@ import me.manga.kira.backend.complaint.infrastructure.restore.LogicalCaptureClea
 import me.manga.kira.backend.complaint.infrastructure.restore.LogicalCaptureFailureV1
 import me.manga.kira.backend.complaint.infrastructure.restore.LogicalCaptureFilesV1
 import me.manga.kira.backend.complaint.infrastructure.restore.LogicalCaptureImageV1
+import me.manga.kira.backend.complaint.infrastructure.restore.LogicalCaptureImportV1
 import me.manga.kira.backend.complaint.infrastructure.restore.LogicalCaptureJsonV1
 import me.manga.kira.backend.complaint.infrastructure.restore.Pg176CaptureToolsV1
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.MethodOrderer.OrderAnnotation
 import org.junit.jupiter.api.Order
@@ -18,8 +22,11 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestMethodOrder
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.junit.jupiter.api.parallel.ResourceLock
+import java.nio.channels.FileChannel
 import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption.WRITE
 import java.security.MessageDigest
 import java.sql.Connection
 import java.sql.Driver
@@ -27,6 +34,8 @@ import java.util.Properties
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.GZIPOutputStream
 
 /**
@@ -114,6 +123,59 @@ class LogicalBackupCaptureIT {
 
     @Test
     @Order(3)
+    fun `real native dump timeout after exporter release refuses and keeps failed stage`() {
+        val fixture = Fixture()
+        fixture.withEmptySource {
+            fixture.execute("CREATE TABLE public.complaint_journal_control (marker integer NOT NULL)")
+            fixture.execute("INSERT INTO public.complaint_journal_control VALUES (7)")
+            fixture.execute("CREATE TABLE public.capture_rows (id integer NOT NULL)")
+            fixture.execute("INSERT INTO public.capture_rows VALUES (1)")
+            fixture.execute("CREATE TABLE public.zz_capture_tail (id integer NOT NULL)")
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                fixture.connect().use { tail ->
+                    tail.autoCommit = false
+                    tail.createStatement().use { it.execute("LOCK TABLE public.zz_capture_tail IN ACCESS EXCLUSIVE MODE") }
+                    val original = ComplaintLogicalBackupCaptureV1.prepare(fixture.input())
+                    val running = executor.submit<LogicalBackupCaptureResultV1> { original.capture() }
+                    try {
+                        fixture.awaitTailWait()
+                        fixture.awaitExporterGone()
+                        // Unlike the successful selector, retain this real blocker until pg_dump's
+                        // unchanged 1000ms initial table-lock timeout ends the original native child.
+                        val result = running.get(125, TimeUnit.SECONDS) as LogicalBackupCaptureResultV1.Refused
+                        assertEquals(LogicalCaptureFailureV1.PROCESS, result.failure)
+                        assertEquals(LogicalCaptureCleanupV1.CONFIRMED, result.cleanup)
+                        assertReleasedExporterAndFailedDump(original)
+                        val stage = fixture.output.resolve(checkNotNull(result.stageName))
+                        assertTrue(Files.isDirectory(stage, NOFOLLOW_LINKS))
+                        assertTrue(Files.isRegularFile(stage.resolve("capture.dump"), NOFOLLOW_LINKS))
+                        assertTrue(Files.isRegularFile(stage.resolve("capture.media.tar.gz"), NOFOLLOW_LINKS))
+                        assertTrue(Files.notExists(stage.resolve(".pgpass"), NOFOLLOW_LINKS))
+                        assertTrue(Files.notExists(stage.resolve("capture.bundle.json"), NOFOLLOW_LINKS))
+                        assertTrue(Files.notExists(stage.resolve("capture.json"), NOFOLLOW_LINKS))
+                        // A real independent lock acquisition checks parent-lock release, not a reset
+                        // or a second capture that could hide this failed original's cleanup.
+                        FileChannel.open(fixture.output.resolve(".logical-backup-capture.lock"), WRITE, NOFOLLOW_LINKS).use { channel ->
+                            checkNotNull(channel.tryLock()).use { assertTrue(it.isValid) }
+                        }
+                        assertEquals(7L, fixture.scalar("SELECT marker FROM public.complaint_journal_control"))
+                        assertEquals(1L, fixture.scalar("SELECT count(*) FROM public.capture_rows"))
+                        assertEquals(0L, fixture.scalar("SELECT count(*) FROM pg_catalog.pg_stat_activity WHERE application_name LIKE 'kira-qcap-%'"))
+                        assertEquals(LogicalCaptureFailureV1.ALREADY_USED, (original.capture() as LogicalBackupCaptureResultV1.Refused).failure)
+                    } finally {
+                        try { tail.rollback() } finally { if (!running.isDone) running.cancel(true) }
+                    }
+                }
+            } finally {
+                executor.shutdownNow()
+                assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+            }
+        }
+    }
+
+    @Test
+    @Order(4)
     fun `blocked guard is bounded retained unknown and never refunded by elapsed time`() {
         val fixture = Fixture()
         fixture.withEmptySource {
@@ -134,6 +196,33 @@ class LogicalBackupCaptureIT {
             }
             assertEquals(7L, fixture.scalar("SELECT marker FROM public.complaint_journal_control"))
         }
+    }
+
+    /** Passive reads only after Future.get publishes the original's completed work and cleanup. */
+    private fun assertReleasedExporterAndFailedDump(original: ComplaintLogicalBackupCaptureV1) {
+        val exporter = checkNotNull(ownedCutField(original, "session"))
+        val dump = checkNotNull(ownedCutField(original, "dump"))
+        val witness = ownedCutField(exporter, "witness") as LogicalCaptureImportV1
+        assertSame(witness, ownedCutField(dump, "imported"))
+        assertTrue(witness.dumpBackendPid > 0)
+        assertEquals(true, ownedCutField(exporter, "released"))
+        assertEquals(true, ownedCutField(exporter, "localChildrenEnded"))
+        val exporterProcess = ownedCutField(exporter, "process") as Process
+        assertFalse(exporterProcess.isAlive)
+        assertEquals(0, exporterProcess.exitValue())
+        assertTrue((ownedCutField(exporter, "readerEnded") as AtomicBoolean).get())
+        assertFalse((ownedCutField(exporter, "reader") as Thread).isAlive)
+        val dumpProcess = ownedCutField(dump, "process") as Process
+        assertEquals(witness.socket.childPid, dumpProcess.pid())
+        assertFalse(dumpProcess.isAlive)
+        assertNotEquals(0, dumpProcess.exitValue())
+        assertTrue((ownedCutField(dump, "pumpEnded") as AtomicBoolean).get())
+        assertFalse((ownedCutField(dump, "pump") as Thread).isAlive)
+        assertFalse((ownedCutField(dump, "output") as FileChannel).isOpen)
+        assertEquals(3, (ownedCutField(dump, "shorts") as List<*>).size, "Only the original three version checks ran; no TOC or bundle helper.")
+        assertNull(ownedCutField(original, "parentLock"))
+        assertNull(ownedCutField(original, "lockChannel"))
+        assertNull((ownedCutField(original, "retained") as AtomicReference<*>).get())
     }
 
     private class Fixture {
