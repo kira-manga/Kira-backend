@@ -1,0 +1,122 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 31,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun; actual28 retained-ALL positives and actual29 all4-family commit outcomes PASS. Validates retained inventory/history refusal or genuine family/range/private-pending coverage without replaying prior passes.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineAdminDeleteMarkerCoversTheNativeVersionWithoutReapplyingDeletion",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "genuineAdminDeleteMarkerCoversTheNativeVersionWithoutReapplyingDeletion()"
+      ]
+    },
+    {
+      "annotation_line": 34,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun; actual28 retained-ALL positives and actual29 all4-family commit outcomes PASS. Validates retained inventory/history refusal or genuine family/range/private-pending coverage without replaying prior passes.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineAdminBatchMarkerCoversItsCanonicalTargetsWithoutReapplyingDeletion",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "genuineAdminBatchMarkerCoversItsCanonicalTargetsWithoutReapplyingDeletion()"
+      ]
+    },
+    {
+      "annotation_line": 37,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun; actual28 retained-ALL positives and actual29 all4-family commit outcomes PASS. Validates retained inventory/history refusal or genuine family/range/private-pending coverage without replaying prior passes.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineOwnerDeleteAllMarkerCoversTheNativeVersionAfterBOracleComposition",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "genuineOwnerDeleteAllMarkerCoversTheNativeVersionAfterBOracleComposition()"
+      ]
+    },
+    {
+      "annotation_line": 40,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun; actual28 retained-ALL positives and actual29 all4-family commit outcomes PASS. Validates retained inventory/history refusal or genuine family/range/private-pending coverage without replaying prior passes.",
+      "expected_invocations_from_annotation": 1,
+      "method": "theNextEmptyRangeStillRereadsEveryPriorNonemptyRangeTwice",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "theNextEmptyRangeStillRereadsEveryPriorNonemptyRangeTwice()"
+      ]
+    },
+    {
+      "annotation_line": 43,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun; actual28 retained-ALL positives and actual29 all4-family commit outcomes PASS. Validates retained inventory/history refusal or genuine family/range/private-pending coverage without replaying prior passes.",
+      "expected_invocations_from_annotation": 1,
+      "method": "missingApplyYieldsOnlyTheOriginalAuthenticatedPrivateScanRecoveryInput",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "missingApplyYieldsOnlyTheOriginalAuthenticatedPrivateScanRecoveryInput()"
+      ]
+    },
+    {
+      "annotation_line": 67,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun; actual28 retained-ALL positives and actual29 all4-family commit outcomes PASS. Validates retained inventory/history refusal or genuine family/range/private-pending coverage without replaying prior passes.",
+      "expected_invocations_from_annotation": 1,
+      "method": "retainedAllManifestRejectsMissingVersionsOverlapForeignRowsAndPhysicalDrift",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "retainedAllManifestRejectsMissingVersionsOverlapForeignRowsAndPhysicalDrift()"
+      ]
+    },
+    {
+      "annotation_line": 70,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun; actual28 retained-ALL positives and actual29 all4-family commit outcomes PASS. Validates retained inventory/history refusal or genuine family/range/private-pending coverage without replaying prior passes.",
+      "expected_invocations_from_annotation": 1,
+      "method": "authenticatedAllAliasCannotReplaceMissingPrimaryHistoryOrTornCumulativeUse",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "authenticatedAllAliasCannotReplaceMissingPrimaryHistoryOrTornCumulativeUse()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 7,
+  "expected_total": 7,
+  "selection_basis": {
+    "cohorts": {
+      "Previously unrun; actual28 retained-ALL positives and actual29 all4-family commit outcomes PASS. Validates retained inventory/history refusal or genuine family/range/private-pending coverage without replaying prior passes.": 7
+    },
+    "previous_run": "35624780819",
+    "scope": "Two retained alias positives PASS28 and all twelve commit outcomes PASS29. Select10 negative alias scenarios plus5 independent family/range/pending-input fixtures;7 methods15fixtures. Other42 fixtures retained in three bounded batches."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 7
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.retainedAllManifestRejectsMissingVersionsOverlapForeignRowsAndPhysicalDrift",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.authenticatedAllAliasCannotReplaceMissingPrimaryHistoryOrTornCumulativeUse",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuineAdminDeleteMarkerCoversTheNativeVersionWithoutReapplyingDeletion",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuineAdminBatchMarkerCoversItsCanonicalTargetsWithoutReapplyingDeletion",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuineOwnerDeleteAllMarkerCoversTheNativeVersionAfterBOracleComposition",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.theNextEmptyRangeStillRereadsEveryPriorNonemptyRangeTwice",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.missingApplyYieldsOnlyTheOriginalAuthenticatedPrivateScanRecoveryInput"
+  ]
+}
