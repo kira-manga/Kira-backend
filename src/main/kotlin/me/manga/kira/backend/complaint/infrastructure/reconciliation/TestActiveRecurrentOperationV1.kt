@@ -494,6 +494,52 @@ internal class TestActiveRecurrentOperationV1 private constructor(
         private val ACCOUNTING = setOf(TestActiveRecurrentStepV1.REQUEST, TestActiveRecurrentStepV1.VERIFY, TestActiveRecurrentStepV1.START_PASS,
             TestActiveRecurrentStepV1.APPEND, TestActiveRecurrentStepV1.CLEAN)
         private fun wipe(args: Array<out Any?>) { args.forEach { if (it is ByteArray) it.fill(0) } }
+        /** Existing APPLY E/shared fence is already held; authenticate before this global/scoped prefix. */
+        internal fun lockRecoveryControls(jdbc: JdbcTemplate, apply: TestActiveRecurrentApplyV1) {
+            apply.requireRecoveryHolder(jdbc)
+            val original = apply.original
+            requireRecurrent(jdbc.query(TestActiveRecurrentSqlV1.lockGlobal, { _, _ -> true }).single())
+            requireRecurrent(jdbc.query(TestActiveRecurrentSqlV1.lockScope, { _, _ -> true }, original.scope).single())
+            val args = original.identity.tailArguments()
+            val tail = try { jdbc.query(TestNamespaceRecoveryRegistrationSqlV1.tail, { row, _ -> TestNamespaceRecoveryRegistrationTailV1(row, original.scope) }, *args).single() }
+            finally { wipe(args) }
+            val historyArgs = original.historyArguments()
+            val history = try { checkNotNull(jdbc.query(CatalogTestRunActivationSqlV1.lockRecoveryRegistrationHistory.removeSuffix("\nFOR UPDATE"),
+                ResultSetExtractor { rows -> CatalogTestRunActivationHistoryV1.readActiveCurrent(rows, original.identity.generation,
+                    original.process.catalogReadback.chainPolicy.limits.maximumGenerations) }, *historyArgs)) }
+            finally { wipe(historyArgs) }
+            original.requireApplyAdmission(apply, tail, history)
+            requireRecurrent(jdbc.query(TestActiveRecurrentScanSqlV1.supported, { row, _ -> row.getBoolean("valid") && !row.wasNull() }, original.scope, original.identity.writer).single())
+            requireRecoveryCurrent(jdbc, apply)
+        }
+        /** N/P/L and the normal APPLY counters precede these run/intent/paid-entry locks. */
+        internal fun lockRecoveryRun(jdbc: JdbcTemplate, apply: TestActiveRecurrentApplyV1) {
+            apply.requireRecoveryHolder(jdbc)
+            val original = apply.original
+            requireRecurrent(jdbc.query(TestActiveRecurrentSqlV1.lockRun, { _, _ -> true }, original.scope).single())
+            requireRecurrent(jdbc.query(TestActiveRecurrentSqlV1.lockSlot, { _, _ -> true }, original.scope, original.operationToken).single())
+            readRecoveryCurrent(jdbc, apply).use { current ->
+                apply.requireDatabaseTime(jdbc, current)
+                val runs = jdbc.query(TestActiveRecurrentScanSqlV1.runs,
+                    { row, _ -> TestActiveRecurrentScanV1.Run(row, original, original.currentIntent(), current) }, original.scope)
+                original.requireApplyScans(apply, runs)
+                val run = runs.single()
+                val entry = jdbc.query(TestActiveRecurrentScanSqlV1.exact, { row, _ -> TestActiveRecurrentScanV1.Entry.read(row, original, run) },
+                    run.id, 1, original.scope, apply.entry.key, apply.entry.version).single()
+                apply.requireLockedEntry(jdbc, entry)
+            }
+            requireRecoveryCurrent(jdbc, apply) // Fresh server time AFTER every possibly blocking lock.
+        }
+        internal fun requireRecoveryCurrent(jdbc: JdbcTemplate, apply: TestActiveRecurrentApplyV1): Long {
+            apply.requireRecoveryHolder(jdbc)
+            return readRecoveryCurrent(jdbc, apply).use { current -> apply.requireDatabaseTime(jdbc, current); current.epoch }
+        }
+        private fun readRecoveryCurrent(jdbc: JdbcTemplate, apply: TestActiveRecurrentApplyV1): TestActiveRecurrentCurrentV1 {
+            apply.requireRecoveryHolder(jdbc)
+            val args = apply.original.identity.arguments()
+            return try { jdbc.query(TestActiveRecurrentSqlV1.read, { row, _ -> TestActiveRecurrentCurrentV1.copy(row) }, *args).single() }
+            finally { wipe(args) }
+        }
         internal fun execute(jdbc: JdbcTemplate, original: TestActiveRecurrentV1): TestActiveRecurrentOperationV1 {
             val phase = checkNotNull(PersistencePhaseOwnership.current())
             phase.testActiveRecurrent.requireOperation(original, jdbc)

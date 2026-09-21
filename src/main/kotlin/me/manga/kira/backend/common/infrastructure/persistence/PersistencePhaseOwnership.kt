@@ -15,6 +15,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentApplyV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySealV1
@@ -167,6 +168,12 @@ internal class PersistencePhaseOwnership private constructor(
         enter(original.path, testInitialCheckpoint = original)
     internal fun enterTestActiveRecurrent(original: TestActiveRecurrentV1): PersistencePhaseContext =
         enter(original.path, testRecurrent = original)
+    internal fun enterTestActiveRecurrentOwnerDeleteRecovery(original: TestActiveRecurrentApplyV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, testRecurrentApply = original)
+    internal fun enterTestActiveRecurrentOwnerDeleteAllRecovery(original: TestActiveRecurrentApplyV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY, testRecurrentApply = original)
+    internal fun enterTestActiveRecurrentAdminDeleteRecovery(original: TestActiveRecurrentApplyV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY, testRecurrentApply = original)
     internal fun enterTestActiveOwnerDeleteQueue(original: TestActiveOwnerDeleteQueueV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE, testActiveQueue = original)
     internal fun enterTestActiveQueueOwnerDeleteRecovery(original: TestActiveOwnerDeleteQueueV1): PersistencePhaseContext =
@@ -584,6 +591,7 @@ internal class PersistencePhaseOwnership private constructor(
         testTerminalEpochSeal: TestRunTerminalEpochSealV1? = null,
         testInitialCheckpoint: TestActiveInitialCheckpointV1? = null,
         testRecurrent: TestActiveRecurrentV1? = null,
+        testRecurrentApply: TestActiveRecurrentApplyV1? = null,
         testActiveQueue: TestActiveOwnerDeleteQueueV1? = null,
         testActiveSealRecovery: TestActiveOrdinarySealRecoveryV1? = null,
         testTerminalQuiescence: TestRunTerminalQuiescenceV1? = null,
@@ -656,6 +664,12 @@ internal class PersistencePhaseOwnership private constructor(
         if (path.testActiveInitialCheckpoint != (testInitialCheckpoint != null)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
+        if (testRecurrentApply != null && (path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY) ||
+                testActiveQueue != null || testOrdinaryDrain != null || testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testRunAdminDelete != null ||
+                testRecurrent != null || testInitialCheckpoint != null || testActiveSealer != null || testActiveSealRecovery != null)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
         if (path.testActiveRecurrent != (testRecurrent != null)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
@@ -710,6 +724,7 @@ internal class PersistencePhaseOwnership private constructor(
         testActiveSealer?.requirePhaseEntry(this, path)
         testInitialCheckpoint?.requirePhaseEntry(this, path)
         testRecurrent?.requirePhaseEntry(this, path)
+        testRecurrentApply?.requirePhaseEntry(this, path)
         testActiveQueue?.requirePhaseEntry(this, path)
         testActiveSealRecovery?.requirePhaseEntry(this, path)
         testInstallationManifest?.requirePhaseEntry(this, path)
@@ -749,6 +764,7 @@ internal class PersistencePhaseOwnership private constructor(
         val testActiveOrdinarySealWork = testActiveSealer?.phaseBudget()
         val testActiveInitialCheckpointWork = testInitialCheckpoint?.phaseBudget()
         val testActiveRecurrentWork = testRecurrent?.phaseBudget()
+        val testActiveRecurrentApplyWork = testRecurrentApply?.phaseBudget()
         val testActiveOwnerDeleteQueueWork = testActiveQueue?.budget?.capped(2_000)
         val testActiveOrdinarySealRecoveryWork = testActiveSealRecovery?.phaseBudget()
         val testInstallationManifestWork = testInstallationManifest?.budget?.capped(2_000)
@@ -848,6 +864,8 @@ internal class PersistencePhaseOwnership private constructor(
                 testTerminalEpochSealWork = testTerminalEpochSealWork,
                 testInitialCheckpoint = testInitialCheckpoint,
                 testRecurrent = testRecurrent,
+                testRecurrentApply = testRecurrentApply,
+                testActiveRecurrentApplyWork = testActiveRecurrentApplyWork,
                 testActiveInitialCheckpointWork = testActiveInitialCheckpointWork,
                 testActiveRecurrentWork = testActiveRecurrentWork,
                 testActiveQueue = testActiveQueue,
@@ -880,6 +898,7 @@ internal class PersistencePhaseOwnership private constructor(
             testActiveSealer?.retainPhase(prepared)
             testInitialCheckpoint?.retainPhase(prepared)
             testRecurrent?.retainPhase(prepared)
+            testRecurrentApply?.retainPhase(prepared)
             testActiveQueue?.retainPhase(prepared)
             testActiveSealRecovery?.retainPhase(prepared)
             testInstallationManifest?.retainPhase(prepared)
@@ -917,6 +936,7 @@ internal class PersistencePhaseOwnership private constructor(
             testActiveSealer?.observeFailure(failure)
             testInitialCheckpoint?.observeFailure(failure)
             testRecurrent?.observeFailure(failure)
+            testRecurrentApply?.observeFailure(failure)
             testActiveQueue?.observeFailure(failure)
             testActiveSealRecovery?.observeFailure(failure)
             testInstallationManifest?.observeFailure(failure)
@@ -950,6 +970,7 @@ internal class PersistencePhaseOwnership private constructor(
                 testActiveSealer?.observeFailure(cleanup)
                 testInitialCheckpoint?.observeFailure(cleanup)
                 testRecurrent?.observeFailure(cleanup)
+                testRecurrentApply?.observeFailure(cleanup)
                 testActiveQueue?.observeFailure(cleanup)
                 testActiveSealRecovery?.observeFailure(cleanup)
                 testInstallationManifest?.observeFailure(cleanup)
@@ -981,6 +1002,7 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { testActiveSealer?.observePhaseCleanup(it) }
                 phase?.let { testInitialCheckpoint?.observePhaseCleanup(it) }
                 phase?.let { testRecurrent?.observePhaseCleanup(it) }
+                phase?.let { testRecurrentApply?.observePhaseCleanup(it) }
                 phase?.let { testActiveQueue?.observePhaseCleanup(it) }
                 phase?.let { testActiveSealRecovery?.observePhaseCleanup(it) }
                 phase?.let { testInstallationManifest?.observePhaseCleanup(it) }

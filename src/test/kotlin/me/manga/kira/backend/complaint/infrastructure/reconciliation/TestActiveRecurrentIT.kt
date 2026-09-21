@@ -12,8 +12,8 @@ import org.junit.jupiter.api.parallel.ExecutionMode
 /**
  * SOURCE_ONLY / NOT_COMPILED / NOT_RUN / NOT_REVIEWED. Selectors for actual PG/TLS and substituted
  * raw HTTP only; no provider, deployment-cadence, dropped-COMMIT-reply or two-JVM qualification.
- * Split1 produces only ordinary recurrent history. Missing replay remains a private native input;
- * no split2 deferred reducer, catalog writer handoff, retirement or terminal authority is implied.
+ * Split2 joins only the first genuine retained-primary missing APPLY. Deferred replay sweep,
+ * missing bookkeeping, receiptless retirement, full14 and terminal authority remain unresolved.
  * The ALL setup additionally needs the separately owned B readback-oracle correction composed.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -42,6 +42,39 @@ class TestActiveRecurrentIT {
     }
     @Test fun genuinePreparedCutoffPublicationIsNativelyVerifiedButCannotStandInForApply() = withFixture {
         TestActiveRecurrentCasesV1.genuinePreparedPublicationIsResolvedWithoutInventingApply(it)
+    }
+    @Test fun genuineMissingOwnerPrimaryAppliesBeforeTheIndependentRecurrentMarkerRecheck() = withFixture {
+        TestActiveRecurrentRecoveryCasesV1.firstMissingPrimary(it, ComplaintJournalDeletionKindV1.OWNER_DELETE)
+    }
+    @Test fun genuineMissingAllPrimaryAppliesBeforeTheIndependentRecurrentMarkerRecheck() = withFixture {
+        TestActiveRecurrentRecoveryCasesV1.firstMissingPrimary(it, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL)
+    }
+    @Test fun genuineMissingAdminPrimaryAppliesBeforeTheIndependentRecurrentMarkerRecheck() = withFixture {
+        TestActiveRecurrentRecoveryCasesV1.firstMissingPrimary(it, ComplaintJournalDeletionKindV1.ADMIN_DELETE)
+    }
+    @Test fun genuineMissingAdminBatchPrimaryAppliesBeforeTheIndependentRecurrentMarkerRecheck() = withFixture {
+        TestActiveRecurrentRecoveryCasesV1.firstMissingPrimary(it, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE)
+    }
+    @Test fun missingPrimaryApplyBeforeAfterAndUnknownCommitCannotResumeTheFailedOriginal() {
+        ComplaintJournalDeletionKindV1.entries.forEach { family ->
+            listOf(RecurrentCommitCut.BEFORE_COMMIT, RecurrentCommitCut.AFTER_COMMIT, RecurrentCommitCut.DEFERRED_COMMIT_UNKNOWN).forEach { cut ->
+                withFixture { TestActiveRecurrentRecoveryCasesV1.missingPrimaryCommit(it, family, cut) }
+            }
+        }
+    }
+    @Test fun pendingNativeInputCannotBeAdoptedByAnotherRecurrentOriginal() = withFixture {
+        TestActiveRecurrentRecoveryCasesV1.differentOriginalCannotAdoptPendingNativeInput(it)
+    }
+    @Test fun recurrentApplyCannotBorrowAnOrdinaryTemplateAndReviveTheFailedOriginal() = withFixture {
+        TestActiveRecurrentRecoveryCasesV1.wrongDeletionTemplatePoisonsOnlyTheAttemptWithoutApplying(it)
+    }
+    @Test fun unusedRecurrentApplyAdmissionReleasesCustodyForANewOriginalButCannotReviveTheFailedOne() = withFixture {
+        TestActiveRecurrentRecoveryCasesV1.unusedDeletionEntryRefusalReleasesCustodyButNeverRevivesTheOriginal(it)
+    }
+    @Test fun missingRecurrentPrimaryBookkeepingIsRefusedWithoutSynthesizingNPL() {
+        ComplaintJournalDeletionKindV1.entries.forEach { family -> RecurrentApplyBookkeepingCut.entries.forEach { cut ->
+            withFixture { TestActiveRecurrentRecoveryCasesV1.missingBookkeepingCannotBeSynthesized(it, family, cut) }
+        } }
     }
     @Test fun recurrentExclusiveEpochWaitOwnsNoPooledHolderAndCaptureUsesFreshDatabaseTime() = withFixture {
         TestActiveRecurrentCasesV1.captureWaitUsesFreshDatabaseTimeAndNoPooledHolderAcrossExclusiveEpoch(it)

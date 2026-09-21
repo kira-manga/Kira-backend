@@ -36,6 +36,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.aws.requireJournal
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentApplyV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import org.springframework.jdbc.core.JdbcTemplate
@@ -89,12 +90,19 @@ internal class JdbcComplaintOwnerDeleteApplyStore(
         val record = codec.observed(readback)
         return CapturedTestDeleteApply(issuer, readback.event, record, codec.canonicalBytes(record), recovery = true, registeredQueue = original)
     }
+    internal fun captureRegisteredRecurrentRecovery(original: TestActiveRecurrentApplyV1): TestOwnerDeleteApplyInputV1 {
+        requireConnectionFree()
+        check(graph.recoveryRegistration === original.registration)
+        val readback = original.ownedRecoveryReadback(this, graph, jdbc)
+        val record = codec.observed(readback)
+        return CapturedTestDeleteApply(issuer, readback.event, record, codec.canonicalBytes(record), recovery = true, registeredRecurrent = original)
+    }
     fun apply(input: TestOwnerDeleteApplyInputV1): ComplaintOwnerDeleteApplyOperation = ComplaintOwnerDeleteApplyOperation.capture(jdbc, capacity, audit, graph, codec, issuer, input)
 }
 internal sealed interface TestOwnerDeleteApplyInputV1
 private class CapturedTestDeleteApply(val issuer: Any, val event: TestOwnerDeleteJournalEventV1, val record: TestOwnerDeleteVerificationRecordV1,
     bytes: ByteArray, val recovery: Boolean, val registeredInventory: TestRunOrdinaryDrainV1? = null,
-    val registeredQueue: TestActiveOwnerDeleteQueueV1? = null) : TestOwnerDeleteApplyInputV1 {
+    val registeredQueue: TestActiveOwnerDeleteQueueV1? = null, val registeredRecurrent: TestActiveRecurrentApplyV1? = null) : TestOwnerDeleteApplyInputV1 {
     val bytes = bytes.copyOf()
     val hash: ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
     val ciphertext: ByteArray = HexFormat.of().parseHex(record.ciphertextSha256)
@@ -142,11 +150,18 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
         original.requireApplyInput(input)
     }
     internal fun requireRegisteredInventoryRecovery(original: TestRunOrdinaryDrainV1) {
-        check(input.recovery && input.registeredInventory === original && graph.recoveryRegistration === original.registration)
+        check(input.recovery && input.registeredInventory === original && input.registeredQueue == null && input.registeredRecurrent == null &&
+            graph.recoveryRegistration === original.registration)
         original.requireRecoveryInput(input)
     }
     internal fun requireRegisteredQueueRecovery(original: TestActiveOwnerDeleteQueueV1) {
-        check(input.recovery && input.registeredQueue === original && input.registeredInventory == null && graph.recoveryRegistration === original.registration)
+        check(input.recovery && input.registeredQueue === original && input.registeredInventory == null && input.registeredRecurrent == null &&
+            graph.recoveryRegistration === original.registration)
+        original.requireRecoveryInput(input)
+    }
+    internal fun requireRegisteredRecurrentRecovery(original: TestActiveRecurrentApplyV1) {
+        check(input.recovery && input.registeredRecurrent === original && input.registeredInventory == null && input.registeredQueue == null &&
+            graph.recoveryRegistration === original.registration)
         original.requireRecoveryInput(input)
     }
     private fun execute(capacity: JdbcComplaintCapacityStore, audit: AuditService) {
@@ -198,6 +213,13 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
             // capacity. Only aliases (or exact primary replay) of the actual retained promise apply.
             check(!missingN && !missingP && !missingL && publication?.state == "APPLIED" && receipt?.state == "COMPLETED")
         }
+        if (input.registeredRecurrent != null) {
+            // This bounded bridge repairs first APPLY, not missing bookkeeping or routing aliases.
+            val p = checkNotNull(publication); val n = checkNotNull(receipt)
+            check(!missingN && !missingP && !missingL && isPrimary && p.objectVersion == input.record.objectVersion &&
+                primary.canonicalBytes().contentEquals(event.canonicalBytes()))
+            check(p.state == "VERIFIED" && n.state == "AUTHORIZED_DELETE" || p.state == "APPLIED" && n.state == "COMPLETED")
+        }
         val appliedRows = jdbc.query(OwnerDeletePersistenceSql.READ_APPLIED_FAMILY, { row, _ ->
             check(row.getObject("data_scope_id", UUID::class.java) == scope.id && row.getBoolean("test_only") && row.getObject("writer_generation", UUID::class.java) == graph.writer &&
                 row.getLong("journal_epoch") == event.tuple.epoch && row.getString("event_kind") == "OWNER_DELETE" && row.getInt("target_count") == 1 && row.getBoolean("finite"))
@@ -224,6 +246,10 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
         check((!missingL && !missingP) || familyApplied == 0)
         check(exactApplied || familyApplied < OwnerDeleteCapacityCharges.MAX_RETAINED_CANDIDATES)
         if (publication?.state == "APPLIED" && isPrimary) check(exactApplied)
+        if (input.registeredRecurrent != null) {
+            check(appliedRows.size == if (exactApplied) 1 else 0)
+            check((publication?.state == "APPLIED") == exactApplied && (receipt?.state == "COMPLETED") == exactApplied)
+        }
         stage = Stage.COUNTERS_READY
         val paid = capacity.lockForOwnerDeleteApply(this)
         stage = Stage.BOOKKEEPING
@@ -287,6 +313,7 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
         // An alias has only its applied row and (first recovery) summary; never rewrite primary object/proof/receipt.
         input.registeredInventory?.recordRecoveredVersion(this, jdbc)
         input.registeredQueue?.requireAppliedCurrent(this, jdbc)
+        input.registeredRecurrent?.requireAppliedCurrent(this, jdbc)
         retained(); stage = Stage.COMPLETE
     }
     private fun reconstructBookkeeping(isPrimary: Boolean) {

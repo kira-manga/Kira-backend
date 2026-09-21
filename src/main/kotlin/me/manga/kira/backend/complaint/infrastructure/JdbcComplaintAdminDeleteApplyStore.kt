@@ -33,6 +33,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVer
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationRecordV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.requireJournalVersion
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentApplyV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunAdminDeleteContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
@@ -89,12 +90,19 @@ internal class JdbcComplaintAdminDeleteApplyStore(
         val record = codec.observed(readback)
         return CapturedTestAdminDeleteApply(issuer, readback.event, record, codec.canonicalBytes(record), recovery = true, registeredQueue = original)
     }
+    internal fun captureRegisteredRecurrentRecovery(original: TestActiveRecurrentApplyV1): TestAdminDeleteApplyInputV1 {
+        requireConnectionFree()
+        check(graph.recoveryRegistration === original.registration)
+        val readback = original.ownedRecoveryReadback(this, graph, jdbc)
+        val record = codec.observed(readback)
+        return CapturedTestAdminDeleteApply(issuer, readback.event, record, codec.canonicalBytes(record), recovery = true, registeredRecurrent = original)
+    }
     fun apply(input: TestAdminDeleteApplyInputV1): ComplaintAdminDeleteApplyOperation = ComplaintAdminDeleteApplyOperation.capture(jdbc, capacity, audit, graph, codec, issuer, input)
 }
 internal sealed interface TestAdminDeleteApplyInputV1
 private class CapturedTestAdminDeleteApply(val issuer: Any, val event: TestOwnerDeleteJournalEventV1, val record: TestOwnerDeleteVerificationRecordV1,
     bytes: ByteArray, val recovery: Boolean, val registeredInventory: TestRunOrdinaryDrainV1? = null,
-    val registeredQueue: TestActiveOwnerDeleteQueueV1? = null) : TestAdminDeleteApplyInputV1 {
+    val registeredQueue: TestActiveOwnerDeleteQueueV1? = null, val registeredRecurrent: TestActiveRecurrentApplyV1? = null) : TestAdminDeleteApplyInputV1 {
     val bytes = bytes.copyOf()
     val hash: ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
     val ciphertext: ByteArray = HexFormat.of().parseHex(record.ciphertextSha256)
@@ -146,11 +154,18 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
         original.requireApplyInput(input)
     }
     internal fun requireRegisteredInventoryRecovery(original: TestRunOrdinaryDrainV1) {
-        check(input.recovery && input.registeredInventory === original && graph.recoveryRegistration === original.registration)
+        check(input.recovery && input.registeredInventory === original && input.registeredQueue == null && input.registeredRecurrent == null &&
+            graph.recoveryRegistration === original.registration)
         original.requireRecoveryInput(input)
     }
     internal fun requireRegisteredQueueRecovery(original: TestActiveOwnerDeleteQueueV1) {
-        check(input.recovery && input.registeredQueue === original && input.registeredInventory == null && graph.recoveryRegistration === original.registration)
+        check(input.recovery && input.registeredQueue === original && input.registeredInventory == null && input.registeredRecurrent == null &&
+            graph.recoveryRegistration === original.registration)
+        original.requireRecoveryInput(input)
+    }
+    internal fun requireRegisteredRecurrentRecovery(original: TestActiveRecurrentApplyV1) {
+        check(input.recovery && input.registeredRecurrent === original && input.registeredInventory == null && input.registeredQueue == null &&
+            graph.recoveryRegistration === original.registration)
         original.requireRecoveryInput(input)
     }
     private fun execute(capacity: JdbcComplaintCapacityStore, audit: AuditService) {
@@ -159,7 +174,7 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
         controls.lock(jdbc, false).requireContinuation(event.adminComparison.epoch, prepared = false)
         stage = Stage.RECEIPT
         receipt = jdbc.query(AdminDeletePersistenceSql.LOCK_RECEIPT, { row, _ -> AdminDeleteRows.Receipt(row) }, tuple.actor, tuple.key).singleOrNull()
-        if (receipt == null && input.recovery && input.registeredInventory == null) {
+        if (receipt == null && input.recovery && input.registeredInventory == null && input.registeredRecurrent == null) {
             // Claim the absent historical receipt before any publication/counter/domain lock. A
             // concurrent first use must settle here, never below a later-class lock. Capacity is
             // charged later in this same transaction; any failure rolls this provisional claim back.
@@ -213,6 +228,13 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
             // the actual paid primary, original grant and separately committed verification.
             check(receipt != null && !missingN && !missingP && !missingL && publication?.state == "APPLIED" && receipt?.state == "COMPLETED")
         }
+        if (input.registeredRecurrent != null) {
+            // This bounded bridge repairs first APPLY, not missing bookkeeping or routing aliases.
+            val p = checkNotNull(publication); val n = checkNotNull(receipt)
+            check(!missingN && !missingP && !missingL && isPrimary && p.objectVersion == input.record.objectVersion &&
+                primary.canonicalBytes().contentEquals(event.canonicalBytes()))
+            check(p.state == "VERIFIED" && n.state == "AUTHORIZED_DELETE" || p.state == "APPLIED" && n.state == "COMPLETED")
+        }
         val appliedRows = jdbc.query(AdminDeletePersistenceSql.READ_APPLIED_FAMILY, { row, _ ->
             check(row.getObject("data_scope_id", UUID::class.java) == scope.id && row.getBoolean("test_only") && row.getObject("writer_generation", UUID::class.java) == graph.writer &&
                 row.getLong("journal_epoch") == event.adminComparison.epoch && row.getString("event_kind") == tuple.operation && row.getInt("target_count") == targets.size && row.getBoolean("finite"))
@@ -221,14 +243,14 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
             val version = requireJournalVersion(row.getString("object_version"))
             val hash = checkNotNull(row.getBytes("ciphertext_hash")).also { check(it.size == 32) }
             if (route == event.route) {
-                if (input.registeredInventory != null || input.registeredQueue != null) check(hash.contentEquals(input.ciphertext))
-                if (input.registeredQueue != null) check(version == input.record.objectVersion)
+                if (input.registeredInventory != null || input.registeredQueue != null || input.registeredRecurrent != null) check(hash.contentEquals(input.ciphertext))
+                if (input.registeredQueue != null || input.registeredRecurrent != null) check(version == input.record.objectVersion)
             }
             if (route == event.route && version == input.record.objectVersion) { check(hash.contentEquals(input.ciphertext)); exactApplied = true }
             route.objectKey to version
         }, routes.joinToString(",", "{", "}") { it.eventId })
         check(appliedRows.size <= OwnerDeleteCapacityCharges.MAX_RETAINED_CANDIDATES && appliedRows.distinct().size == appliedRows.size)
-        if (input.registeredQueue != null) check(appliedRows.map { it.first }.distinct().size == appliedRows.size)
+        if (input.registeredQueue != null || input.registeredRecurrent != null) check(appliedRows.map { it.first }.distinct().size == appliedRows.size)
         familyApplied = appliedRows.size
         // Each retained first application spends exactly one logical E in the same transaction.
         check((reserve?.used ?: ComplaintCapacityVector.ZERO)[ComplaintCapacityCounter.JOURNAL_APPLIED] == familyApplied.toLong())
@@ -236,6 +258,10 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
         check((!missingL && !missingP) || familyApplied == 0)
         check(exactApplied || familyApplied < OwnerDeleteCapacityCharges.MAX_RETAINED_CANDIDATES)
         if (publication?.state == "APPLIED" && isPrimary) check(exactApplied)
+        if (input.registeredRecurrent != null) {
+            check(appliedRows.size == if (exactApplied) 1 else 0)
+            check((publication?.state == "APPLIED") == exactApplied && (receipt?.state == "COMPLETED") == exactApplied)
+        }
         stage = Stage.COUNTERS_READY
         val paid = capacity.lockForAdminDeleteApply(this)
         stage = Stage.BOOKKEEPING
@@ -328,6 +354,7 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
         // An alias has only its applied row and (first recovery) summary; never rewrite primary object/proof/receipt.
         input.registeredInventory?.recordRecoveredVersion(this, jdbc)
         input.registeredQueue?.requireAppliedCurrent(this, jdbc)
+        input.registeredRecurrent?.requireAppliedCurrent(this, jdbc)
         retained(); stage = Stage.COMPLETE
     }
     private fun reconstructBookkeeping(isPrimary: Boolean) {
@@ -382,7 +409,7 @@ internal class ComplaintAdminDeleteApplyOperation private constructor(
     }
     internal fun requireRecoveryReceiptClaim(selected: JdbcTemplate) {
         requireSelected(selected)
-        check(input.recovery && input.registeredInventory == null && stage === Stage.RECEIPT && receipt == null && !missingN && allocation == null)
+        check(input.recovery && input.registeredInventory == null && input.registeredRecurrent == null && stage === Stage.RECEIPT && receipt == null && !missingN && allocation == null)
     }
     internal fun beginCounterLock(selected: JdbcTemplate) { requireSelected(selected); check(stage === Stage.COUNTERS_READY && allocation == null); stage = Stage.COUNTERS }
     internal fun requireCapacityPolicy(ledger: ComplaintCapacityLedger, selected: JdbcTemplate) {

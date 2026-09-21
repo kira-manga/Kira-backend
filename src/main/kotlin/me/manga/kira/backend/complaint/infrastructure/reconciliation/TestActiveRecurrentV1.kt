@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
+import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.common.infrastructure.persistence.EpochRotationLimits
 import me.manga.kira.backend.common.infrastructure.persistence.EpochRotationPersistence
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceGateV1
@@ -126,6 +127,7 @@ internal class TestActiveRecurrentV1 private constructor(
     private var appliedAfter = "" to ""
     private var cleaning: Cleanup? = null
     private var waiting: RecoveryRequired? = null
+    private var applying: TestActiveRecurrentApplyV1? = null
     private val readbackIdentity = copyFirstCutArguments(registration.activeReadbackArguments())
     private val expected = CatalogTestRunActivationCanonicalV3.fromRetained(process, identity.installationLimit)
     private val construction = S3CatalogReadbackAdapter.Construction()
@@ -181,10 +183,55 @@ internal class TestActiveRecurrentV1 private constructor(
     private fun resume(result: RecoveryRequired): Result {
         try {
             requireConnectionFree(); requireCutoffRunning()
-            requireRecurrent(waiting === result)
+            requireRecurrent(waiting === result && applying == null)
             checkNotNull(scan).requireContinuation(result.nativeInput)
             return advanceToBoundary()
         } catch (problem: Throwable) { return failAndClose(problem) }
+    }
+    /** Connection-free handoff into one distinct deletion owner, then the existing marker recheck. */
+    private fun apply(result: RecoveryRequired, deletionOwner: PersistencePhaseOwnership, deletionJdbc: JdbcTemplate, audit: AuditService): Result {
+        try {
+            requireConnectionFree(); requireCutoffRunning()
+            requireRecurrent(waiting === result && applying == null)
+            result.nativeInput.requireOriginal(this)
+            renew()
+            val selected = TestActiveRecurrentApplyV1.prepare(this, result.nativeInput, deletionOwner, deletionJdbc, audit)
+            applying = selected
+            selected.apply(); selected.requireReleased()
+            applying = null
+            return resume(result) // APPLY has not changed replay_state or claimed checkpoint success.
+        } catch (problem: Throwable) { return failAndClose(problem) }
+    }
+    internal fun captureApplyEntry(input: TestActiveRecurrentScanRecoveryInputV1): TestActiveRecurrentScanV1.Entry {
+        requireConnectionFree(); requireCutoffRunning()
+        requireRecurrent(waiting?.nativeInput === input && applying == null && !executing && !capturing && phase == null && !phaseEntered)
+        input.requireOriginal(this)
+        return checkNotNull(scan).captureApplyEntry(input)
+    }
+    /** SQL-safe original checks. Native/seam getters and renewals remain connection-free. */
+    internal fun requireApply(selected: TestActiveRecurrentApplyV1) {
+        requireCutoffRunning()
+        requireRecurrent(applying === selected && selected.original === this && waiting?.nativeInput === selected.input &&
+            !executing && !capturing && phase == null && !phaseEntered && !captureAwaiting)
+        checkNotNull(scan).requireApplySelection(selected.input, selected.entry)
+    }
+    internal fun requireApplyCurrent(selected: TestActiveRecurrentApplyV1, current: TestActiveRecurrentCurrentV1) {
+        requireApply(selected)
+        val prior = checkNotNull(snapshot); prior.requireCommittedComparison()
+        prior.current.requireSameContent(current); current.requireIntent(prior.intent); current.requireLease(attemptId, leaseToken)
+        requireRecurrent(current.sampledAt >= prior.current.sampledAt && current.state == "CAPTURED" && current.sealState == "SEAL_VERIFIED" &&
+            current.checkpointSha256 == null && prior.intent.ordinal >= 2 && leaseToken > prior.intent.preparingToken())
+        requireRawReleased()
+    }
+    internal fun requireApplyScans(selected: TestActiveRecurrentApplyV1, rows: List<TestActiveRecurrentScanV1.Run>) {
+        requireApply(selected)
+        val prior = checkNotNull(snapshot).scans
+        requireRecurrent(rows.size == 1 && prior.size == 1 && rows.single().fingerprint == prior.single().fingerprint &&
+            rows.single().pass == 1 && rows.single().state == "COMPLETE" && rows.single().token == leaseToken)
+    }
+    internal fun requireApplyAdmission(selected: TestActiveRecurrentApplyV1, tail: TestNamespaceRecoveryRegistrationTailV1, history: CatalogTestRunActivationHistoryV1) {
+        requireApply(selected)
+        checkNotNull(firstRead).tail.requireSame(tail); checkNotNull(firstRead).catalogHistory.requireSame(history); requireRawReleased()
     }
     private fun advanceToBoundary(): Result {
         requireCutoffRunning()
@@ -211,7 +258,7 @@ internal class TestActiveRecurrentV1 private constructor(
 
     private fun execute(selected: TestActiveRecurrentStepV1): TestActiveRecurrentOperationV1 {
         requireConnectionFree(); requireRunning()
-        requireRecurrent(!executing && phase == null && !phaseEntered && !capturing)
+        requireRecurrent(!executing && phase == null && !phaseEntered && !capturing && applying == null)
         step = selected; executing = true
         try {
             val operation = coordinator.testActiveRecurrent.execute(this)
@@ -509,7 +556,7 @@ internal class TestActiveRecurrentV1 private constructor(
     }
     internal fun requirePhaseEntry(ownership: PersistencePhaseOwnership, path: PersistencePhasePath) {
         requireConnectionFree(); requireRunning()
-        requireRecurrent(executing && ownership === coordinator.ownership && path === this.path && phase == null && !phaseEntered && !capturing)
+        requireRecurrent(executing && ownership === coordinator.ownership && path === this.path && phase == null && !phaseEntered && !capturing && applying == null)
         phaseEntered = true
     }
     internal fun retainPhase(selected: PersistencePhaseContext) { requireRunning(); requireRecurrent(phaseEntered && phase == null); phase = selected }
@@ -622,10 +669,12 @@ internal class TestActiveRecurrentV1 private constructor(
     internal fun requireActualReadbackCleanup() {
         requireConnectionFree(); requireCustody(coordinator.catalogRefreshCustody)
         requireRecurrent(providerClosed && providerFailure == null && phase == null && !phaseEntered && !cleanupUncertain && !capturing)
+        applying?.requirePhysicalReleased()
     }
     internal fun requireNativeReleased(selected: VersionBoundTestActiveRecurrentV1) {
         requireConnectionFree(); requireRecipe(selected)
         requireRecurrent(phase == null && !phaseEntered && !cleanupUncertain && !capturing && nativeSeal == null && (publisher == null || publisherClosed))
+        applying?.requirePhysicalReleased()
         scan?.requirePhysicalReleased()
         nativeSeals.values.forEach { it.requirePhysicalCleanup() }
     }
@@ -637,6 +686,7 @@ internal class TestActiveRecurrentV1 private constructor(
         if (!successful) observeFailure(TestActiveRecurrentExceptionV1())
         waiting = null
         fun attempt(body: () -> Unit) { runCatching(body).exceptionOrNull()?.let(::observeFailure) }
+        attempt { applying?.close() }
         attempt { scan?.close() }
         nativeSeals.values.forEach { owner -> attempt(owner::close) }
         attempt(::closePublisher); attempt(::closeReadback)
@@ -677,6 +727,8 @@ internal class TestActiveRecurrentV1 private constructor(
             nativeInput.requireOriginal(original); return nativeInput
         }
         fun resume(): Result = original.resume(this)
+        fun apply(deletionOwner: PersistencePhaseOwnership, deletionJdbc: JdbcTemplate, audit: AuditService): Result =
+            original.apply(this, deletionOwner, deletionJdbc, audit)
         override fun toString(): String = "RecurrentRecoveryRequired(private-native-scan-input,NOT_SUCCESS,redacted)"
         companion object { internal fun issue(original: TestActiveRecurrentV1, input: TestActiveRecurrentScanRecoveryInputV1): RecoveryRequired = RecoveryRequired(original, input) }
     }

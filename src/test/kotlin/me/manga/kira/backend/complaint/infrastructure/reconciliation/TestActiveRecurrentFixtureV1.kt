@@ -105,6 +105,10 @@ internal class TestActiveRecurrentFixtureV1(val queue: TestActiveOwnerDeleteQueu
     val scope = precursor.scope
     val record = queue.record
     val probe = TestActiveRecurrentProbeJdbcV1(this)
+    val applyObservations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
+    val applyCalls = mutableListOf<TestRegisteredInitialDeletionSqlCallV1>()
+    var beforeApply: (TestRegisteredInitialDeletionSqlCallV1) -> Unit = {}
+    var afterApply: (TestRegisteredInitialDeletionSqlCallV1) -> Unit = {}
     val nativeSessions = CopyOnWriteArrayList<PersistenceEpochRotationSession>()
     var beforeNativeSample: (PersistenceEpochRotationSession) -> Unit = {}
     var original: TestActiveRecurrentV1? = null
@@ -114,6 +118,8 @@ internal class TestActiveRecurrentFixtureV1(val queue: TestActiveOwnerDeleteQueu
     private val actual = field.get(executor) as JdbcTemplate
     private val beforeRead = first.p.f.http.beforeRead
     private val beforeNative = first.native.onNanoSample
+    private val beforeDeletion = precursor.deletion.before
+    private val afterDeletion = precursor.deletion.after
 
     init {
         val author = first.p.f.rows.evidence.process
@@ -123,6 +129,10 @@ internal class TestActiveRecurrentFixtureV1(val queue: TestActiveOwnerDeleteQueu
         assertArrayEquals(process.canonicalBytes(), author.canonicalBytes())
         assertSame(actual.dataSource, probe.dataSource); field.set(executor, probe)
         raw.attach(this)
+        // Reuse A's actual registered deletion template and passive holder probe. Its enclosing
+        // queue fixture is idle here; do not run that fixture's queue-original assertion hooks.
+        precursor.deletion.before = { call -> observeApply(call); beforeApply(call) }
+        precursor.deletion.after = { call -> afterApply(call) }
         first.p.f.http.beforeRead = { beforeRead(); assertSqlReleased() }
         first.native.onNanoSample = {
             beforeNative?.invoke()
@@ -139,12 +149,32 @@ internal class TestActiveRecurrentFixtureV1(val queue: TestActiveOwnerDeleteQueu
         return ownedCutField(active, "session") as? PersistenceEpochRotationSession
     }
     fun begin(): TestActiveRecurrentV1 {
-        assertSqlReleased(); probe.reset()
+        assertSqlReleased(); probe.reset(); applyObservations.clear(); applyCalls.clear()
         return TestActiveRecurrentV1.withHttpFixture(registration, assembly, first.p.f.http::readClient, SignedActivationObservation.WALL_CLOCK)
             .also { original = it; probe.original = it }
     }
     fun checkpoint(selected: TestActiveRecurrentV1 = begin()): TestActiveRecurrentV1.Result =
         selected.checkpoint(S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials)
+    fun apply(result: TestActiveRecurrentV1.RecoveryRequired): TestActiveRecurrentV1.Result =
+        result.apply(precursor.deletionOwner, precursor.deletion, precursor.audit)
+    private fun observeApply(call: TestRegisteredInitialDeletionSqlCallV1) {
+        val selected = ownedCutField(call.phase, "testRecurrentApply") as TestActiveRecurrentApplyV1
+        assertSame(original, selected.original)
+        assertSame(selected, ownedCutField(checkNotNull(original), "applying"))
+        assertSame(checkNotNull(original).budget, selected.budget)
+        assertEquals(selected.path, call.path)
+        assertNull(ownedCutField(call.phase, "testRecurrent"))
+        assertNull(ownedCutField(call.phase, "testActiveQueue")); assertNull(ownedCutField(call.phase, "testOrdinaryDrain"))
+        val connection = (TransactionSynchronizationManager.getResource(checkNotNull(precursor.deletion.dataSource)) as ConnectionHolder).connection
+        assertTrue(first.p.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
+        assertTrue(first.p.advisory(connection, "complaint-journal-epoch", "ShareLock"))
+        assertFalse(first.p.advisory(connection, "complaint-journal-epoch", "ExclusiveLock"))
+        val observation = precursor.deletion.observations.getValue(call.phase)
+        assertSame(observation.lease, ownedPoolLease(connection))
+        assertSame(observation, applyObservations.getOrPut(call.phase) { observation })
+        raw.assertDisposed() // Every native exchange/key/client from capture has really retired.
+        applyCalls.add(call)
+    }
     fun passNumber(): Int = original?.let { (ownedCutField(it, "scan") as? TestActiveRecurrentScanV1)?.passNumber } ?: 0
     fun control() = observer.queryForMap("SELECT * FROM complaint_journal_control WHERE data_scope_id = ?", scope)
     fun document() = TestActiveRecurrentCheckpointDocumentV1.parse(control().getValue("checkpoint_bytes") as ByteArray)
@@ -176,8 +206,8 @@ internal class TestActiveRecurrentFixtureV1(val queue: TestActiveOwnerDeleteQueu
         requireConnectionFree(); assertNull(PersistencePhaseOwnership.current())
         assertTrue(TransactionSynchronizationManager.getResourceMap().isEmpty())
         assertEquals(0, runtime.pools.catalogCoordinator.activeSnapshotOwners())
-        probe.observations.values.forEach { assertTrue(it.lease.completion.quiescent()) }
-        probe.assertNoLostAssertions(); raw.assertNoLostAssertions()
+        (probe.observations.values + precursor.deletion.observations.values).forEach { assertTrue(it.lease.completion.quiescent()) }
+        probe.assertNoLostAssertions(); precursor.deletion.assertNoLostAssertions(); raw.assertNoLostAssertions()
     }
     fun assertReleased() {
         assertSqlReleased(); raw.assertDisposed()
@@ -194,15 +224,21 @@ internal class TestActiveRecurrentFixtureV1(val queue: TestActiveOwnerDeleteQueu
             assertEquals(PersistenceDatabaseOutcome.COMMITTED, it.databaseOutcome())
             assertTrue(it.testActiveRecurrentCleanupProven(checkNotNull(probe.original)))
         }
+        applyObservations.forEach { (phase, value) ->
+            val selected = ownedCutField(phase, "testRecurrentApply") as TestActiveRecurrentApplyV1
+            assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+            assertTrue(phase.testActiveRecurrentApplyCleanupProven(selected)); assertTrue(value.lease.completion.quiescent())
+        }
         assertTrue(scans().isEmpty() && entries().isEmpty())
         assertNull(control()["lease_owner"]); assertNull(control()["lease_expires_at"])
         assertEquals("SUCCESS", control()["checkpoint_result"])
         assertEquals(0L, queue.count("complaint_test_terminal_intents"))
     }
     override fun close() {
-        beforeNativeSample = {}; probe.before = {}; probe.after = {}; raw.resetFaults()
+        beforeNativeSample = {}; probe.before = {}; probe.after = {}; beforeApply = {}; afterApply = {}; raw.resetFaults()
         // A deliberately unfinished RecoveryRequired is failed/closed, never silently checkpointed.
         original?.let { runCatching(it::close) }
+        precursor.deletion.before = beforeDeletion; precursor.deletion.after = afterDeletion
         first.native.onNanoSample = beforeNative
         first.p.f.http.beforeRead = beforeRead
         assertSame(probe, field.get(executor)); field.set(executor, actual)

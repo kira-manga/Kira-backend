@@ -200,6 +200,16 @@ internal class TestActiveRecurrentScanV1 private constructor(internal val origin
     internal fun requireRecoveryInput(input: TestActiveRecurrentScanRecoveryInputV1, native: TestOrdinaryInventoryReadbackV1) {
         requireRecoveryReadback(native); requireRecurrent(input === recoveryInput)
     }
+    internal fun captureApplyEntry(input: TestActiveRecurrentScanRecoveryInputV1): Entry {
+        requireContinuation(input)
+        return checkNotNull(selectedRecovery)
+    }
+    /** Retained pointer checks only; never consult the connection-free native reader under SQL. */
+    internal fun requireApplySelection(input: TestActiveRecurrentScanRecoveryInputV1, entry: Entry) {
+        original.requireScan(this)
+        requireRecurrent(caller === Thread.currentThread() && !retired && !ready && passNumber == 1 &&
+            recoveryInput === input && selectedRecovery === entry && entry.replay == "PENDING" && recoveryNative != null)
+    }
     internal fun recoveryEntry(operation: TestActiveRecurrentOperationV1): Entry {
         original.requireScanOperation(operation, this, TestActiveRecurrentStepV1.RECHECK_ENTRY)
         return checkNotNull(selectedRecovery)

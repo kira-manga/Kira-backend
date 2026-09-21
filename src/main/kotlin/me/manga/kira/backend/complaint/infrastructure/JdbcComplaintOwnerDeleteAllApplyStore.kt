@@ -33,6 +33,7 @@ import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapa
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationRecordV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentApplyV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainAllPersistenceV1
@@ -131,6 +132,17 @@ internal class JdbcComplaintOwnerDeleteAllApplyStore private constructor(
             MessageDigest.getInstance("SHA-256").digest(bytes), original)
     }
 
+    internal fun captureRegisteredRecurrentRecovery(original: TestActiveRecurrentApplyV1): OwnerDeleteAllApplyInputV1 {
+        requireConnectionFree()
+        val graph = checkNotNull(controls.testGraph)
+        check(graph.recoveryRegistration === original.registration)
+        val readback = original.ownedRecoveryReadback(this, graph, jdbc)
+        val event = routing.fromTest(readback.event)
+        val record = codec.observed(readback)
+        val bytes = codec.canonicalBytes(record)
+        return CapturedOwnerDeleteAllRecurrentApply(issuer, routing, event, record, bytes, MessageDigest.getInstance("SHA-256").digest(bytes), original)
+    }
+
     fun apply(input: OwnerDeleteAllApplyInputV1): ComplaintOwnerDeleteAllApplyOperation =
         ComplaintOwnerDeleteAllApplyOperation.capture(jdbc, capacity, audit, controls, policy, codec, issuer, routing, input)
 
@@ -202,6 +214,12 @@ private class CapturedOwnerDeleteAllQueueApply(issuer: Any, routing: OwnerDelete
     val original: TestActiveOwnerDeleteQueueV1,
 ) : CapturedOwnerDeleteAllApply(issuer, routing, event, record, bytes, hash)
 
+/** Original-bound paid recurrent native input; no queue delivery or terminal grant is synthesized. */
+private class CapturedOwnerDeleteAllRecurrentApply(issuer: Any, routing: OwnerDeleteAllJournalBindingV1,
+    event: OwnerDeleteAllJournalEventV1, record: OwnerDeleteAllVerificationRecordV1, bytes: ByteArray, hash: ByteArray,
+    val original: TestActiveRecurrentApplyV1,
+) : CapturedOwnerDeleteAllApply(issuer, routing, event, record, bytes, hash)
+
 internal class OwnerDeleteAllMaterializedCountsV1(val removed: Int, val resources: Int, val installations: Int,
     val applied: Int, val summary: Int) {
     init { check(removed in 0..100 && resources in 0..100 && installations in 0..1 && applied in 0..1 && summary in 0..1) }
@@ -223,6 +241,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
 ) {
     private val inventory = observed as? CapturedOwnerDeleteAllInventoryApply
     private val queue = observed as? CapturedOwnerDeleteAllQueueApply
+    private val recurrent = observed as? CapturedOwnerDeleteAllRecurrentApply
     private fun primary() = observed as? CapturedOwnerDeleteAllPrimaryApply ?: error("Committed primary input required")
     private val sql = if (controls.scope.testOnly) OwnerDeleteAllApplySql.test(controls.scope) else OwnerDeleteAllApplySql.live
     private var stage = Stage.RETAINED
@@ -251,11 +270,11 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
 
     fun belongsTo(selected: PersistencePhaseContext): Boolean = phase === selected
     fun completedFor(selected: PersistencePhaseContext): Boolean = belongsTo(selected) && stage === Stage.COMPLETE &&
-        (if (queue != null) queueAt != null else completion != null && expiry != null) && allocation?.completedFor(this) == true
+        (if (queue != null || recurrent != null) queueAt != null else completion != null && expiry != null) && allocation?.completedFor(this) == true
 
     val result: CommittedOwnerDeleteAllApplyV1
         get() {
-            check(inventory == null && queue == null)
+            check(inventory == null && queue == null && recurrent == null)
             phase.ownerDeleteAllApply.requireCommitted(this)
             requireConnectionFree()
             return released ?: Released(checkNotNull(completion), checkNotNull(expiry)).also { released = it }
@@ -263,31 +282,35 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
 
     val continuationResult: OwnerDeleteAllApplyOutcomeV1
         get() {
-            check(inventory == null && queue == null)
+            check(inventory == null && queue == null && recurrent == null)
             if (!phase.ownerDeleteAllApply.reconciliationPending(this)) return result
             requireConnectionFree()
             return pending ?: ReconciliationPending(primary().work, primary().proof).also { pending = it }
         }
 
     internal fun requireRegisteredContinuation(original: TestRunOwnerDeleteAllContinuationV1) {
-        check(inventory == null && queue == null); original.requireApplyInput(observed)
+        check(inventory == null && queue == null && recurrent == null); original.requireApplyInput(observed)
     }
     internal fun requireRegisteredInventoryRecovery(original: TestRunOrdinaryDrainV1) {
-        check(inventory?.original === original && controls.testGraph?.recoveryRegistration === original.registration)
+        check(inventory?.original === original && queue == null && recurrent == null && controls.testGraph?.recoveryRegistration === original.registration)
         original.requireRecoveryInput(observed)
     }
     internal fun requireRegisteredQueueRecovery(original: TestActiveOwnerDeleteQueueV1) {
-        check(queue?.original === original && inventory == null && controls.testGraph?.recoveryRegistration === original.registration)
+        check(queue?.original === original && inventory == null && recurrent == null && controls.testGraph?.recoveryRegistration === original.registration)
+        original.requireRecoveryInput(observed)
+    }
+    internal fun requireRegisteredRecurrentRecovery(original: TestActiveRecurrentApplyV1) {
+        check(recurrent?.original === original && inventory == null && queue == null && controls.testGraph?.recoveryRegistration === original.registration)
         original.requireRecoveryInput(observed)
     }
     internal fun requireRecovered() {
-        check(inventory != null || queue != null)
+        check(inventory != null || queue != null || recurrent != null)
         phase.ownerDeleteAllApply.requireCommitted(this); requireConnectionFree()
     }
 
     private fun execute(capacity: JdbcComplaintCapacityStore, audit: AuditService) {
         if (inventory != null) { executeInventory(capacity, audit); return }
-        if (queue != null) { executeQueue(capacity, audit); return }
+        if (queue != null || recurrent != null) { executeActiveRecovery(capacity, audit); return }
         requireRetained()
         check(stage === Stage.RETAINED)
         stage = Stage.CONTROL
@@ -396,9 +419,9 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         return receipt
     }
 
-    /** ACTIVE native recovery, deliberately separate from both primary APPLY and terminal inventory. */
-    private fun executeQueue(capacity: JdbcComplaintCapacityStore, audit: AuditService) {
-        val original = checkNotNull(queue).original
+    /** Fixed ACTIVE reducer shared by two explicit private issuers, never by a synthetic queue owner. */
+    private fun executeActiveRecovery(capacity: JdbcComplaintCapacityStore, audit: AuditService) {
+        check((queue != null) != (recurrent != null))
         val nativeSql = OwnerDeleteAllInventorySqlV1(controls.scope) // Fixed domain SQL only; no terminal issuer/rows/authority.
         requireRetained()
         stage = Stage.CONTROL
@@ -505,12 +528,13 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         check(finalCredential == null || finalCredential.state == "DELETED" && finalCredential.credentialVersion == nextCredentialVersion() &&
             finalCredential.deletedAt == finalInstallation.terminalAt)
         requireQueueRetention(plan, databaseNow())
-        original.requireAppliedCurrent(this, jdbc)
+        queue?.original?.requireAppliedCurrent(this, jdbc)
+        recurrent?.original?.requireAppliedCurrent(this, jdbc)
         stage = Stage.COMPLETE
     }
 
     private fun lockQueueBookkeeping(): QueuePlan {
-        checkNotNull(queue)
+        check((queue != null) != (recurrent != null))
         val tuple = observed.event.tuple
         check(observed.writer == controls.writer && tuple.scope == controls.scope)
         stage = Stage.RECEIPT
@@ -546,6 +570,12 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         check(reservations.size <= 1)
         recovery = reservations.singleOrNull()
         recovery?.let { check(publication != null && it.eventId == primary.route.eventId && it.promise == OwnerDeleteAllCapacityCharges.RECOVERY) }
+        if (recurrent != null) {
+            val p = checkNotNull(publication); val n = checkNotNull(receipt); val proof = checkNotNull(p.proof)
+            check(recovery != null && isPrimary && proof.version == observed.record.objectVersion &&
+                p.event.canonicalBytes().contentEquals(observed.eventBytes))
+            check(p.state == "VERIFIED" && n.state == "AUTHORIZED_DELETE" || p.state == "APPLIED" && n.state == "COMPLETED")
+        }
         val family = jdbc.query(sql.QUEUE_APPLIED_FAMILY, { row, _ ->
             OwnerDeleteAllApplyRows.valid(row)
             val route = routes.single { it.eventId == OwnerDeleteAllApplyRows.string(row, "event_id") }
@@ -559,6 +589,10 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         check(family.size <= 4 && family.map { it.eventId }.distinct().size == family.size) // One version per retained key, not terminal aliases.
         val exact = family.any { it.eventId == observed.record.eventId }
         check(exact || family.size < 4)
+        if (recurrent != null) {
+            check(family.size == if (exact) 1 else 0)
+            check((publication?.state == "APPLIED") == exact && (receipt?.state == "COMPLETED") == exact)
+        }
         val plan = QueuePlan(receipt, publication, primary, recovery == null, isPrimary, exact, family)
         val now = databaseNow()
         requireQueueRetention(plan, now)
@@ -1058,7 +1092,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     internal fun missingBookkeeping(value: JdbcComplaintCapacityStore.LockedOwnerDeleteAllApply, selected: JdbcTemplate): Pair<ComplaintCapacityVector, ComplaintCapacityVector>? {
         requireSelected(selected)
         check(stage === Stage.COUNTERS && allocation === value)
-        if (queue == null) return null // Primary and terminal allocation behavior is unchanged.
+        if (queue == null) return null // Primary/terminal unchanged; recurrent requires the actual retained N/P/L above.
         requireCapacityWrite(value, selected)
         val plan = checkNotNull(queuePlan)
         val actual = OwnerDeleteAllCapacityCharges.RECEIPT.scaled(if (plan.missingN) 1 else 0) +
@@ -1071,7 +1105,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     internal fun materializedCounts(value: JdbcComplaintCapacityStore.LockedOwnerDeleteAllApply, selected: JdbcTemplate): OwnerDeleteAllMaterializedCountsV1? {
         requireCapacityWrite(value, selected)
         if (inventory != null) return inventoryCounts
-        if (queue != null) return queueCounts
+        if (queue != null || recurrent != null) return queueCounts
         if (replay) {
             val reserve = checkNotNull(recovery)
             check(reserve.state == "PARTIAL" && reserve.convertedAt != null && !reserve.convertedAt.isBefore(checkNotNull(completion)))
@@ -1091,7 +1125,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         requireCapacityWrite(value, selected)
         check(!replay && use == when {
             inventory != null -> checkNotNull(inventoryCounts).use
-            queue != null -> checkNotNull(queueCounts).use
+            queue != null || recurrent != null -> checkNotNull(queueCounts).use
             else -> actualUse(reconstructed, removed.size)
         })
         val reserve = checkNotNull(recovery)
@@ -1132,13 +1166,13 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
             }
 
             is OwnerDeleteAllAuditOutcome.InstallationCompleted -> {
-                check(inventory == null && queue == null && ordinal == removed.size && outcome.version == nextCredentialVersion())
+                check(inventory == null && queue == null && recurrent == null && ordinal == removed.size && outcome.version == nextCredentialVersion())
                 check(outcome.removedCount == removed.size && outcome.reconstructedCount == reconstructed)
             }
 
             is OwnerDeleteAllAuditOutcome.RecoveryApplied -> {
                 val counts = checkNotNull(queueCounts ?: inventoryCounts)
-                check((inventory != null || queue != null) && ordinal == removed.size && outcome.eventId == observed.record.eventId &&
+                check((inventory != null || queue != null || recurrent != null) && ordinal == removed.size && outcome.eventId == observed.record.eventId &&
                     outcome.removedCount == counts.removed && outcome.reconstructedCount == counts.resources && outcome.installationCount == counts.installations)
             }
         }
@@ -1158,7 +1192,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
 
     internal fun auditActorKind(value: JdbcComplaintCapacityStore.LockedOwnerDeleteAllApply, selected: JdbcTemplate): String {
         requireAuditWrite(value, selected)
-        return if (inventory == null && queue == null) "INSTALLATION" else "SYSTEM"
+        return if (inventory == null && queue == null && recurrent == null) "INSTALLATION" else "SYSTEM"
     }
 
     private fun requireFutureUse(newIds: Int, contentCount: Int) = check(actualUse(newIds, contentCount).fitsWithin(checkNotNull(recovery).remaining))

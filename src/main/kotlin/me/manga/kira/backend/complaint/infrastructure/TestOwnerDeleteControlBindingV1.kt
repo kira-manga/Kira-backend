@@ -17,6 +17,12 @@ internal class TestOwnerDeleteControlBindingV1(private val graph: TestOwnerDelet
         graph.requireDeletion(jdbc)
         check(!authorizing || graph.recoveryRegistration == null)
         graph.initialDeletion?.let { return it.lockControls(jdbc) }
+        PersistencePhaseOwnership.current()?.registeredActiveRecurrentControls(graph, jdbc)?.let { epoch ->
+            // Exact recurrent pending-native leaf, with current full D and the original live lease.
+            // Neither the queue owner nor terminal inventory is used to enter this nonauthorizing APPLY.
+            check(!authorizing && graph.recoveryRegistration != null)
+            return Locked(epoch, 0)
+        }
         PersistencePhaseOwnership.current()?.registeredActiveQueueControls(graph, jdbc)?.let { epoch ->
             // Separate ACTIVE original: exact current full D, raw catalog and its live lease were
             // rechecked on this APPLY holder. No checkpoint health or SEALED exception is borrowed.
