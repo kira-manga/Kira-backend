@@ -126,11 +126,11 @@ internal fun withRegisteredInitialCheckpointDeletion(
                     val creators = owners.map { (actor, token) ->
                         TestRegisteredInitialCheckpointCreateFixtureV1(checkpoint, exchange, actor, token)
                     }
-                    try {
+                    AutoCloseable { creators.asReversed().forEach { it.close() } }.use {
                         val reports = creators.map { creator -> creator.attempt().also { creator.assertApplied(creator.create(it), it) } }
                         assertEquals(PersistenceLifecycleObservation.READY, first.runtime.pools.deletion.prepareDeletion())
                         TestRegisteredInitialCheckpointDeletionFixtureV1(checkpoint, exchange, creators, reports, native, family).use(action)
-                    } finally { creators.asReversed().forEach { it.close() } }
+                    }
                 }
             }
         }

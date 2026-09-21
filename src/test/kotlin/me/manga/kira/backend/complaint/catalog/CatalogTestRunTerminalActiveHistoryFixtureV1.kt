@@ -296,7 +296,8 @@ internal object CatalogRetainedDPrimaryCasesV1 {
                 }
                 val drain = probe.begin(inventory::client, inventory.keys::httpClient, primary::primaryClient, primary.keys::httpClient)
                 val approval = activeHistoryOrdinaryApproval(f, inputs, drain); val raw = f.rawEvidence
-                try {
+                // Keep an original D failure when the unchanged native cleanup also refuses.
+                AutoCloseable { approval.fill(0); raw.forEach { it.fill(0) }; primary.assertClosed(); inventory.assertClosed() }.use {
                     terminalCatalogHistoryBoundaries(f, probe::assertReleased) {
                         assertEquals(TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED,
                             drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS))
@@ -312,7 +313,7 @@ internal object CatalogRetainedDPrimaryCasesV1 {
                     assertEquals(otherControlRows, otherControls(f.observer, f.scope), "No global healthy history is synthesized.")
                     assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
                     a.assertReleased(); f.assertReleased()
-                } finally { approval.fill(0); raw.forEach { it.fill(0) }; primary.assertClosed(); inventory.assertClosed() }
+                }
             }
         }
 

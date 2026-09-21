@@ -68,13 +68,7 @@ internal fun withTestActiveFirstCut(
                 assertTrue(identity.p.advisory(holder, "complaint-journal-epoch", "ShareLock"))
             } else previousBefore(step)
         }
-        try {
-            f.prepare()
-            identity.p.f.rows.globalPredecessor?.assertPreserved(identity.observer)
-            action(f)
-            identity.probe.assertNoLostAssertions()
-            identity.native.assertNoLostAssertions()
-        } finally {
+        AutoCloseable {
             identity.probe.beforeSql = previousBefore
             identity.probe.afterSql = {}
             identity.native.onNanoSample = null
@@ -84,6 +78,12 @@ internal fun withTestActiveFirstCut(
             assertSame(identity.probe, field.get(executor))
             field.set(executor, original)
             f.fixtureCleanup()
+        }.use {
+            f.prepare()
+            identity.p.f.rows.globalPredecessor?.assertPreserved(identity.observer)
+            action(f)
+            identity.probe.assertNoLostAssertions()
+            identity.native.assertNoLostAssertions()
         }
     }
 
