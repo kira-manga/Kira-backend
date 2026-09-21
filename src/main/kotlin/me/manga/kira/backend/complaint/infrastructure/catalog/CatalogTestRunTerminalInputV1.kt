@@ -121,7 +121,8 @@ internal class CatalogTestRunTerminalFrozenV1 private constructor(
     val createdAt: Instant = Instant.ofEpochSecond(stored.creation.createdAtEpochSecond)
     val prepareCharge: ComplaintCapacityVector = TestTerminalCapacityChargesV1.SCOPED_CATALOG
     val projectionCharge: ComplaintCapacityVector = TestTerminalCapacityChargesV1.AUDIT
-    val hasActiveHistory: Boolean = stored.terminalRecord.sealSet.records().size == 3
+    val activeHistoryCount: Int = stored.terminalRecord.sealSet.records().size - 2
+    val hasActiveHistory: Boolean = activeHistoryCount > 0
     val targets: List<TestTerminalQuiescenceTargetV1> = buildList {
         stored.terminalRecord.installationManifest.chunks.forEach {
             add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.INSTALLATION_MANIFEST, it.chunkIndex, it.eventId, terminalEpoch, terminalEpoch, it.objectRef))
@@ -129,10 +130,11 @@ internal class CatalogTestRunTerminalFrozenV1 private constructor(
         add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.TEST_RUN_PURGE, 0, stored.terminalRecord.purge.document.eventId,
             terminalEpoch, terminalEpoch, stored.terminalRecord.purge.objectRef))
         stored.terminalRecord.sealSet.records().forEachIndexed { index, seal ->
-            val active = hasActiveHistory && index == 0
-            add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.EPOCH_SEAL, if (active) 0 else index - (if (hasActiveHistory) 1 else 0), seal.sealId,
+            val active = index < activeHistoryCount
+            add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.EPOCH_SEAL, if (active) index else index - activeHistoryCount, seal.sealId,
                 seal.epochStartInclusive, seal.epochEndInclusive, seal.objectRef,
-                if (active) TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL else TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT))
+                if (!active) TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT else if (index == 0) TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL
+                    else TestTerminalQuiescenceSourceV1.V31_ACTIVE_RECURRENT_SEAL))
         }
     }.sortedBy { it.objectRef.objectKey }
     private val arguments: Array<Any?> = arrayOf(token, scope, generation - 1, hex(predecessorHash), generation, catalogWriter,

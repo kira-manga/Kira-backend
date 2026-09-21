@@ -181,12 +181,12 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
         jdbc.query(sql, { row, _ ->
             requireTestTerminalCatalog(row.requiredTestActivationBoolean("valid") && row.requiredTestActivationBoolean("scan_requested") &&
                 row.requiredTestActivationLong("publication_epoch") == Math.addExact(input.terminalEpoch, 1L) &&
-                row.requiredTestActivationLong("rotation_sequence") == (if (input.hasActiveHistory) 2L else 1L) && row.getObject("rotation_id", UUID::class.java) != null &&
+                row.requiredTestActivationLong("rotation_sequence") == input.activeHistoryCount.toLong() + 1L && row.getObject("rotation_id", UUID::class.java) != null &&
                 row.requiredTestActivationLong("rotation_epoch_before") == input.ordinaryEpoch &&
                 row.requiredTestActivationLong("rotation_capture_token") in 1..ordinary.fencingToken &&
                 row.requiredTestActivationLong("lease_token") == terminal.fencingToken &&
                 checkNotNull(row.getTimestamp("rotation_captured_at")).toInstant().epochSecond <= ordinary.denial.firstInventory.startedAtEpochSecond &&
-                (if (input.hasActiveHistory) row.requiredTestActivationLong("seal_epoch") == 1L else row.getObject("seal_epoch") == null))
+                (if (input.hasActiveHistory) row.requiredTestActivationLong("seal_epoch") == expected.activeHistory.references.last().epochEndInclusive else row.getObject("seal_epoch") == null))
             original.requirePredecessorControl(this, row)
         }, input.scope).single()
         expected.activeHistory.requirePhysical(jdbc, original)
@@ -391,9 +391,7 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
     private fun requireSidecars(source: TestInstallationManifestSourceV1.Observation, applied: List<CatalogTestRunTerminalAppliedV1>) {
         val roots = TestTerminalRootsV1(journal, expected.run.installationLimit, TestTerminalSyntaxV1.chunkCount(expected.run.installationLimit))
         val chunks = source.startChunks(input.terminalEpoch)
-        val fullOrdinaryRoot = ordinaryManifest(applied) // Keep the whole 1..cutoff denial commitment.
-        requireTestTerminalCatalog(!input.hasActiveHistory || applied.none { it.epoch == 1L })
-        val expectedOrdinaryRoot = if (input.hasActiveHistory) ordinaryManifest(applied, 2, input.ordinaryEpoch) else fullOrdinaryRoot
+        ordinaryManifest(applied) // The complete 1..cutoff denial is separate from every historical range and tail.
         val expectedTerminalRoot = TestTerminalEpochSealManifestV1.Builder(journal, input.terminalEpoch, record.installationManifest.chunks.size)
         repeat(2) { pass ->
             if (pass == 1) expectedTerminalRoot.beginSecond()
@@ -436,9 +434,10 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
                         TestTerminalCodecKindV1.EPOCH_SEAL -> {
                             val seal = json.epochSeal(bytes)
                             requireSeal(seal, loaded, target)
-                            val active = target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL
-                            val count = if (active) 0L else if (target.ordinal == 0) applied.size.toLong() else terminalManifest.count
-                            val root = if (active) ordinaryManifest(emptyList(), 1, 1) else if (target.ordinal == 0) expectedOrdinaryRoot else terminalManifest.sha256
+                            val ordinary = target.source !== TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT || target.ordinal == 0
+                            val subset = if (ordinary) applied.filter { it.epoch in target.startEpoch..target.endEpoch } else emptyList()
+                            val count = if (ordinary) subset.size.toLong() else terminalManifest.count
+                            val root = if (ordinary) ordinaryManifest(subset, target.startEpoch, target.endEpoch, target) else terminalManifest.sha256
                             requireTestTerminalCatalog(seal.eventCount == count && seal.eventManifestSha256 == root)
                         }
                     }
@@ -452,7 +451,7 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
     }
 
     private fun loadSidecar(target: TestTerminalQuiescenceTargetV1): TestTerminalDurableRowV1 {
-        if (target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL) {
+        if (target.source !== TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT) {
             val loaded = expected.activeHistory.frozenInitial(jdbc, original, expected.activation, target)
             try { original.requirePredecessorSidecar(this, target, loaded.binding); return loaded }
             catch (problem: Throwable) { loaded.close(); throw problem }
@@ -527,7 +526,8 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
             seal.dataScopeId == input.scope.toString() && seal.epochStartInclusive == reference.epochStartInclusive && seal.epochEndInclusive == reference.epochEndInclusive &&
             seal.precedingSealSha256 == reference.precedingSealSha256 && seal.preparingFencingToken == row.binding.preparingFencingToken)
     }
-    private fun ordinaryManifest(applied: List<CatalogTestRunTerminalAppliedV1>, start: Long = 1, end: Long = input.ordinaryEpoch): String {
+    private fun ordinaryManifest(applied: List<CatalogTestRunTerminalAppliedV1>, start: Long = 1, end: Long = input.ordinaryEpoch,
+        target: TestTerminalQuiescenceTargetV1? = null): String {
         requireTestTerminalCatalog(start in 1..end && end <= input.ordinaryEpoch && applied.all { it.epoch in start..end })
         val hash = MessageDigest.getInstance("SHA-256")
         var bytes = EpochSealFramesV1.update(hash, listOf(EpochSealFramesV1.DOMAIN, "1", "manifest", original.writer,
@@ -537,6 +537,8 @@ internal class CatalogTestRunTerminalPreflightOperationV1 private constructor(
         val result = TestTerminalFramesV1.finish(hash)
         requireTestTerminalCatalog(bytes <= maximumBytes)
         if (start == 1L && end == input.ordinaryEpoch) requireTestTerminalCatalog(bytes == cut.framedByteCount && result == cut.denial.firstInventory.sha256)
+        if (target != null && target.source !== TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT)
+            expected.activeHistory.requireManifest(target, applied.size.toLong(), result, bytes)
         return result
     }
     private fun requireRelations() {

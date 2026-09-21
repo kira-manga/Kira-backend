@@ -221,7 +221,7 @@ internal class CatalogTestRunTerminalRunV1(row: ResultSet, maximumVersions: Long
     )
     init {
         requireTestTerminalCatalog(row.requiredTestActivationBoolean("valid") && state in setOf("SEALED", "PURGING") &&
-            core.length in 1..524288 && reserve == plan.originalUnusedReserve && sealCount in 2L..3L)
+            core.length in 1..524288 && reserve == plan.originalUnusedReserve && sealCount in 2L..16L)
     }
     fun requireFrozen(input: CatalogTestRunTerminalFrozenV1) {
         val record = input.manifest().terminalRecord

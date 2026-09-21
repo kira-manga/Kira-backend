@@ -472,7 +472,7 @@ internal object TestOrdinaryDrainPersistenceV1 {
             fun read(row: ResultSet, original: TestRunOrdinaryDrainV1, hasTime: Boolean = false): Applied {
                 original.requireInventoryKind(checkNotNull(row.getString("event_kind")))
                 return readFacts(row, FamilyFacts(original.routing, original.cutoff), hasTime).also {
-                    requireDrain(it.epoch in original.ordinaryStart..original.cutoff)
+                    requireDrain(it.epoch in 1..original.cutoff)
                 }
             }
 

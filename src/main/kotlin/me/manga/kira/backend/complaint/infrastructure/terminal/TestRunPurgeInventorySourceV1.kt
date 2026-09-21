@@ -46,7 +46,7 @@ internal object TestRunPurgeInventorySourceV1 {
                 val hashes = resolvePage(jdbc, operation, run, page)
                 page.forEachIndexed { index, value ->
                     operation.requireInventoryPage(jdbc)
-                    requirePurge(value.epoch in original.control.ordinaryStart..original.control.cutoff &&
+                    requirePurge(value.epoch in 1..original.control.cutoff &&
                         count < original.ordinaryCut.denial.firstInventory.versionCount)
                     val entry = TestTerminalInventoryEntryV1(original.writer, value.kind, value.epoch, value.epoch,
                         TestTerminalObjectRefV1(value.key, value.version, value.ciphertext, hashes[index]))
@@ -136,7 +136,7 @@ internal object TestRunPurgeInventorySourceV1 {
             if (page.isEmpty()) break
             page.forEach { value ->
                 operation.requireInventoryPage(jdbc)
-                requirePurge(value.epoch in original.control.ordinaryStart..original.control.cutoff &&
+                requirePurge(value.epoch in 1..original.control.cutoff &&
                     count < expected.versionCount && after?.let { TestOrdinaryDrainRowsV1.compare(it, value.locator) < 0 } != false)
                 framed = Math.addExact(framed, EpochSealFramesV1.update(hash, listOf(value.key, value.version, value.ciphertext)))
                 requirePurge(framed <= original.drain.maximumFramedBytes)

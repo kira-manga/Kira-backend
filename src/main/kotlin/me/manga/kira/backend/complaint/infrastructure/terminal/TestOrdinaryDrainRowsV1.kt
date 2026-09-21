@@ -7,7 +7,6 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityEncoding
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
 import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
-import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveFirstSealStorageV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalAccountingPlanV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityChargesV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalInventoryWitnessV1
@@ -29,10 +28,10 @@ internal object TestOrdinaryDrainRowsV1 {
     class Control(row: ResultSet, val initialHistory: TestOrdinaryDrainActiveHistoryV1? = null) {
         val epoch = row.getLong("publication_epoch")
         val sequence = row.getLong("rotation_sequence")
-        val terminalRotationSequence = if (initialHistory == null) 1L else 2L
+        val terminalRotationSequence = (initialHistory?.count?.toLong() ?: 0L) + 1L
         val needsCapture = sequence == terminalRotationSequence - 1L
-        val ordinaryStart = if (initialHistory == null) 1L else 2L
-        val ordinaryHistoryCharge = if (initialHistory == null) ComplaintCapacityVector.ZERO else TestActiveFirstSealStorageV1.ROW
+        val ordinaryStart = initialHistory?.reference?.epochEndInclusive?.let { Math.addExact(it, 1L) } ?: 1L
+        val ordinaryHistoryCharge = initialHistory?.ordinaryPaid ?: ComplaintCapacityVector.ZERO
         val cutoff = if (needsCapture) epoch else row.getLong("rotation_epoch_before")
         val captureId: UUID? = row.getObject("rotation_id", UUID::class.java)
         val captureFence = row.getLong("rotation_capture_token")
@@ -42,8 +41,10 @@ internal object TestOrdinaryDrainRowsV1 {
         init {
             requireDrain(boolean(row, "valid") && sequence in (terminalRotationSequence - 1)..terminalRotationSequence && epoch > 0 && cutoff > 0)
             if (!needsCapture) requireDrain(epoch == Math.addExact(cutoff, 1L) && captureId != null && captureFence > 0 && capturedAt != null)
-            if (initialHistory != null) requireDrain(previousSealEpoch == 1L && cutoff == 2L &&
-                (needsCapture && epoch == 2L && captureId == initialHistory.operationToken || !needsCapture && epoch == 3L && captureId != initialHistory.operationToken))
+            initialHistory?.requireControlFingerprint(historyHash)
+            if (initialHistory != null) requireDrain(previousSealEpoch == initialHistory.reference.epochEndInclusive && cutoff == ordinaryStart &&
+                (needsCapture && epoch == ordinaryStart && captureId == initialHistory.operationToken ||
+                    !needsCapture && epoch == Math.addExact(ordinaryStart, 1L) && captureId != initialHistory.operationToken))
         }
         fun requireSame(other: Control) {
             requireDrain(epoch == other.epoch && sequence == other.sequence && cutoff == other.cutoff && captureId == other.captureId &&
@@ -54,7 +55,7 @@ internal object TestOrdinaryDrainRowsV1 {
             requireDrain((initialHistory == null) == (other.initialHistory == null))
             initialHistory?.requireSame(other.initialHistory)
         }
-        fun ordinarySeals(final: TestTerminalSealRefV1): List<TestTerminalSealRefV1> = listOfNotNull(initialHistory?.reference, final)
+        fun ordinarySeals(final: TestTerminalSealRefV1): List<TestTerminalSealRefV1> = (initialHistory?.records?.map { it.reference } ?: emptyList()) + final
     }
 
     class Run(row: ResultSet, original: TestRunOrdinaryDrainV1) {
@@ -143,7 +144,7 @@ internal object TestOrdinaryDrainRowsV1 {
         private fun requireBound(original: TestRunOrdinaryDrainV1) {
             val journal = original.routing.journalConfiguration
             original.requireInventoryKind(kind)
-            requireDrain(epoch in original.ordinaryStart..original.cutoff && ciphertextBytes in 1..journal.declaration().limits.decoder.maximumEnvelopeBytes.toLong() &&
+            requireDrain(epoch in 1..original.cutoff && ciphertextBytes in 1..journal.declaration().limits.decoder.maximumEnvelopeBytes.toLong() &&
                 ciphertext.matches(HASH) && semantic.matches(HASH) && replay in setOf("PENDING", "APPLIED"))
             EpochSealFramesV1.opaque(eventId)
             requireDrain(journal.declaration().routing.keys.any { retained ->

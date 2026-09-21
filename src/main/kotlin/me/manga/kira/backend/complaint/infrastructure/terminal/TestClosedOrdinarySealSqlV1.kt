@@ -7,7 +7,7 @@ internal object TestClosedOrdinarySealSqlV1 {
             object_id, object_key, routing_key_id, writer_generation, epoch_start, epoch_end, preparing_fencing_token,
             activation_catalog_generation, activation_catalog_hash, configuration_hash, journal_configuration_hash, terminal_encoding_hash,
             publication_ref, canonicalizer, canonical_bytes, canonical_hash, retention_floor, created_at, state)
-        VALUES (1, ?::uuid, ?::uuid, true, 'EPOCH_SEAL', 0, ?, ?, ?, ?::uuid, 2, ?, ?, ?, ?, ?, ?, ?, NULL, 'kcj-1', ?, ?, ?, ?, 'CANONICAL')
+        VALUES (1, ?::uuid, ?::uuid, true, 'EPOCH_SEAL', 0, ?, ?, ?, ?::uuid, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'kcj-1', ?, ?, ?, ?, 'CANONICAL')
     """.trimIndent()
     val verifyRun = """
         UPDATE complaint_test_runs SET final_ordinary_epoch = ?, terminal_seal_epoch = ?, generation_seal_count = ?,

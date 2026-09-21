@@ -78,7 +78,7 @@ internal class TestRunOrdinarySealV1 private constructor(
     private var content: TestTerminalContentV1? = null
     private var custody: TestOrdinarySealCustodyV1? = null
     private var proof: TestOrdinarySealProofV1? = null
-    private var historyReadback: TestActiveHistorySealReadbackV1? = null
+    private val historyReadbacks = ArrayList<TestActiveHistorySealReadbackV1>()
     private var installationObservation: TestTerminalProgressV1? = null
     private var completedStrictReference: TestTerminalSealRefV1? = null
     private val rows = ArrayList<TestTerminalDurableRowV1>()
@@ -106,9 +106,9 @@ internal class TestRunOrdinarySealV1 private constructor(
         try {
             requireRunning()
             capture = coordinator.testOrdinarySeal.execute(this)
-            checkNotNull(capture).activeHistoryRow?.let { row ->
-                val history = checkNotNull(capturedClosedCut().control.initialHistory)
-                TestActiveHistorySealReadbackV1.begin(this, row, history).also { historyReadback = it }.read()
+            checkNotNull(capture).activeHistoryRows.forEach { row ->
+                val history = checkNotNull(capturedClosedCut().control.initialHistory).record(row.binding.objectOrdinal)
+                TestActiveHistorySealReadbackV1.begin(this, row, history).also { historyReadbacks.add(it) }.read()
             }
             bindCanonical()
             val createdAt = (checkNotNull(capture).row ?: checkNotNull(canonicalCandidate)).binding.createdAt
@@ -270,20 +270,22 @@ internal class TestRunOrdinarySealV1 private constructor(
         if (closedDrain == null) capturedCut().requireListedVersion(version) else capturedClosedCut().requireListedVersion(version)
     }
     internal fun capturedManifest() = checkNotNull(capture).manifest
-    internal fun requireHistoryReservation() {
+    internal fun requireHistoryReservation(row: TestTerminalDurableRowV1, history: TestOrdinaryDrainActiveHistoryV1.Record) {
         requireConnectionFree(); requireRunning(); requireReleased(capture)
-        requireDrain(closedDrain != null && step === TestOrdinarySealStepV1.CAPTURE && historyReadback == null && custody == null &&
-            checkNotNull(capture).activeHistoryRow != null && capturedClosedCut().control.initialHistory != null)
+        requireDrain(closedDrain != null && step === TestOrdinarySealStepV1.CAPTURE && custody == null &&
+            checkNotNull(capture).activeHistoryRows.getOrNull(historyReadbacks.size) === row &&
+            checkNotNull(capturedClosedCut().control.initialHistory).records.getOrNull(historyReadbacks.size) === history)
     }
     internal fun requireHistoryReadback(selected: TestActiveHistorySealReadbackV1) {
         requireConnectionFree(); requireRunning(); requireReleased(capture)
-        requireDrain(step === TestOrdinarySealStepV1.CAPTURE && historyReadback === selected && custody == null && prepared == null && frozen == null)
+        requireDrain(step === TestOrdinarySealStepV1.CAPTURE && historyReadbacks.lastOrNull() === selected && custody == null && prepared == null && frozen == null)
     }
-    internal fun requireHistoryProof(operation: TestOrdinarySealOperationV1, history: TestOrdinaryDrainActiveHistoryV1,
+    internal fun requireHistoryProof(operation: TestOrdinarySealOperationV1, history: TestOrdinaryDrainActiveHistoryV1.Record,
         row: TestTerminalDurableRowV1, at: Instant) {
         requireRunning()
         requireDrain(operation.original === this && step === TestOrdinarySealStepV1.VERIFY && closedDrain != null)
-        checkNotNull(historyReadback).requireProof(this, history, row, at)
+        requireDrain(historyReadbacks.size == checkNotNull(capturedClosedCut().control.initialHistory).count)
+        historyReadbacks[history.binding.objectOrdinal].requireProof(this, history, row, at)
     }
     internal fun preparedRow(): TestTerminalDurableRowV1 = checkNotNull(checkNotNull(prepared).row)
     internal fun frozenRow(): TestTerminalDurableRowV1 = checkNotNull(checkNotNull(frozen).row)

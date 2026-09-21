@@ -82,7 +82,7 @@ internal object CatalogTestRunTerminalActiveHistorySqlV1 {
                 AND r.final_ordinary_epoch = 2 AND r.terminal_seal_epoch = 3 AND r.generation_seal_count = 3
                 AND complaint_finite_times(c.checkpoint_started_at, c.checkpoint_completed_at, c.seal_verified_at, c.seal_retain_until)
                 AND complaint_finite_times(i.requested_at, i.captured_at, i.created_at, i.retention_floor, i.retain_until, i.frozen_at)
-                AND NOT EXISTS (SELECT 1 FROM complaint_journal_scan_runs x WHERE x.data_scope_id = e.scope AND x.active_initial_seal_token IS NOT NULL)
+                AND NOT EXISTS (SELECT 1 FROM complaint_journal_scan_runs x WHERE x.data_scope_id = e.scope AND (x.active_initial_seal_token IS NOT NULL OR x.active_recurrent_seal_token IS NOT NULL))
                 AND octet_length(to_jsonb(i)::text) BETWEEN 1 AND 524288) IS TRUE AS valid
         FROM complaint_test_active_seal_intents i CROSS JOIN e CROSS JOIN s
         LEFT JOIN complaint_test_runs r ON r.data_scope_id = e.scope

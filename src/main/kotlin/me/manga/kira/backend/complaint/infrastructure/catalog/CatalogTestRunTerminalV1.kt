@@ -651,11 +651,10 @@ internal class CatalogTestRunTerminalV1 private constructor(
         requireTestTerminalCatalog(target in checkNotNull(frozen).targets && target.kind.name == binding.objectKind.name &&
             target.ordinal == binding.objectOrdinal && target.id == binding.objectId && target.objectRef.objectKey == binding.objectKey)
         predecessor?.let { d ->
-            if (target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL) {
-                val history = checkNotNull(d.control.initialHistory)
-                requireTestTerminalCatalog(binding.objectKind === TestTerminalDurableKindV1.EPOCH_SEAL && binding.objectOrdinal == 0 &&
-                    binding.operationToken == history.operationToken.toString() && target.objectRef == history.reference.objectRef &&
-                    binding.objectId == history.reference.sealId && binding.epochStartInclusive == 1L && binding.epochEndInclusive == 1L &&
+            if (target.source !== TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT) {
+                val history = checkNotNull(d.control.initialHistory).record(target.ordinal)
+                requireTestTerminalCatalog(binding == history.binding && target.objectRef == history.reference.objectRef &&
+                    (target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL) == (history.binding.objectOrdinal == 0) &&
                     binding.createdAt <= history.checkpointCompletedAt)
             } else when (binding.objectKind) {
                 TestTerminalDurableKindV1.INSTALLATION_MANIFEST -> requireTestTerminalCatalog(binding.preparingFencingToken in (d.drain.leaseToken + 1)..d.manifest.preparation.leaseToken &&

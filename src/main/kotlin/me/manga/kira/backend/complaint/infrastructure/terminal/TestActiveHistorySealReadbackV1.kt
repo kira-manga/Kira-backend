@@ -14,7 +14,7 @@ import java.time.Instant
 internal class TestActiveHistorySealReadbackV1 private constructor(
     private val original: TestRunOrdinarySealV1,
     private val row: TestTerminalDurableRowV1,
-    private val history: TestOrdinaryDrainActiveHistoryV1,
+    private val history: TestOrdinaryDrainActiveHistoryV1.Record,
 ) {
     internal val registration = original.registration
     internal val routing = original.routing
@@ -71,8 +71,8 @@ internal class TestActiveHistorySealReadbackV1 private constructor(
         requireDrain(version != null && version == history.reference.objectRef.objectVersion)
     }
 
-    /** Called only in the parent's later current SQL phase, against a freshly reread V26 row. */
-    internal fun requireProof(parent: TestRunOrdinarySealV1, current: TestOrdinaryDrainActiveHistoryV1,
+    /** Called only in the parent's later current SQL phase, against a freshly reread original V26/V31 row. */
+    internal fun requireProof(parent: TestRunOrdinarySealV1, current: TestOrdinaryDrainActiveHistoryV1.Record,
         fresh: TestTerminalDurableRowV1, at: Instant) {
         requireDrain(parent === original && caller === Thread.currentThread() && completed && content == null)
         history.requireSame(current)
@@ -82,11 +82,11 @@ internal class TestActiveHistorySealReadbackV1 private constructor(
         current.requireNative(fresh, observed, at)
     }
 
-    override fun toString(): String = "TestActiveHistorySealReadbackV1(fresh-owned-V26-read-only,redacted)"
+    override fun toString(): String = "TestActiveHistorySealReadbackV1(fresh-owned-original-source-read-only,redacted)"
     companion object {
         internal fun begin(original: TestRunOrdinarySealV1, row: TestTerminalDurableRowV1,
-            history: TestOrdinaryDrainActiveHistoryV1): TestActiveHistorySealReadbackV1 {
-            original.requireHistoryReservation()
+            history: TestOrdinaryDrainActiveHistoryV1.Record): TestActiveHistorySealReadbackV1 {
+            original.requireHistoryReservation(row, history)
             return TestActiveHistorySealReadbackV1(original, row, history)
         }
     }

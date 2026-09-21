@@ -4,7 +4,8 @@ package me.manga.kira.backend.complaint.infrastructure.terminal
 internal object TestTerminalQuiescenceSqlV1 {
     val run = TestTerminalEpochSealSqlV1.run.replace("r.generation_seal_count BETWEEN 1 AND 2", "r.generation_seal_count = 2")
     val control = TestTerminalEpochSealSqlV1.control
-    val runWithActiveHistory = TestTerminalEpochSealSqlV1.runWithActiveHistory.replace("r.generation_seal_count BETWEEN 2 AND 3", "r.generation_seal_count = 3")
+    val runWithActiveHistory = TestTerminalEpochSealSqlV1.runWithActiveHistory.replace(
+        TestOrdinaryDrainSqlV1.activeGrowingCount, TestOrdinaryDrainSqlV1.activeCompleteCount)
     val controlWithActiveHistory = TestTerminalEpochSealSqlV1.controlWithActiveHistory
     val relation = TestTerminalEpochSealSqlV1.relation
         .replace("p.event_kind = 'INSTALLATION_MANIFEST' AND p.target_count BETWEEN 1 AND 500 AND p.state IN ('PREPARED', 'VERIFIED')",

@@ -416,7 +416,7 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         requireRunning()
         requireInventoryKind(event.comparison.eventKind.name)
         requireDrain(event.belongsTo(routing) && event.comparison.scope == routing.journalConfiguration.scope &&
-            event.comparison.epoch in ordinaryStart..cutoff && when (event.comparison.eventKind) {
+            event.comparison.epoch in 1..cutoff && when (event.comparison.eventKind) {
                 ComplaintJournalDeletionKindV1.OWNER_DELETE, ComplaintJournalDeletionKindV1.ADMIN_DELETE -> event.complaintIds().size == 1
                 ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> event.complaintIds().size in 0..100
                 ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE -> event.complaintIds().size in 1..50
@@ -678,8 +678,8 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         requireDrain(jdbc === deletionJdbc && !phaseEntered && allContinuation == null && adminContinuation == null)
         val captured = checkNotNull(capturedControl)
         if (captured.initialHistory == null) return null // Fresh no-history selection cannot admit a child.
-        requireDrain(captured.needsCapture && captured.epoch == 2L && captured.sequence == 1L && captured.previousSealEpoch == 1L &&
-            captured.ordinaryStart == 2L && captured.cutoff == 2L && checkNotNull(retainedRun).progress == null && leaseToken > 0)
+        requireDrain(captured.needsCapture && captured.epoch == captured.ordinaryStart && captured.sequence == captured.initialHistory.count.toLong() &&
+            captured.previousSealEpoch == captured.initialHistory.reference.epochEndInclusive && captured.cutoff == captured.ordinaryStart && checkNotNull(retainedRun).progress == null && leaseToken > 0)
         val current = if (readOnly) TestOrdinaryDrainPersistenceV1.readRetainedPrimaryControl(jdbc, this) else {
             TestOrdinaryDrainPersistenceV1.lockControlIdentities(jdbc, this)
             TestOrdinaryDrainPersistenceV1.readControl(jdbc, this)
