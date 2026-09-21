@@ -223,7 +223,7 @@ class LogicalBackupCaptureIT {
             require(table in setOf("capture_rows", "complaint_journal_control"))
             val selected = fixture.resolve("inspection-$table.sql")
             LogicalCaptureFilesV1.write(selected, ByteArray(0))
-            val builder = ProcessBuilder(tools.pgRestore.path.toString(), "--data-only", "--no-owner", "--no-acl", "--table=$table", dump.toString())
+            val builder = ProcessBuilder(tools.pgRestore.path.toString(), "--file=-", "--data-only", "--no-owner", "--no-acl", "--table=$table", dump.toString())
                 .redirectError(ProcessBuilder.Redirect.DISCARD).redirectOutput(selected.toFile())
             builder.environment().clear()
             builder.environment().putAll(mapOf("LANG" to "C", "LC_ALL" to "C", "PATH" to "/nonexistent", "HOME" to fixture.toString()))
