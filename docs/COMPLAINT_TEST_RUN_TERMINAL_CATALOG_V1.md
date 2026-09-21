@@ -130,6 +130,34 @@ controls without an additional run read or run lock; their unchanged control
 predicate retains its existing bounded run-identity join. The original native reader stack is
 unchanged. This bounded join adds no erasure handoff or migration.
 
+### Same-lineage recurrent E → F amendment (source only)
+
+The later recurrent consumer retains the complete ordered V26/V31 sources, charged
+checkpoint archives, canonical history and original native objects; widening the
+seal count alone is insufficient. N0 and unarchived N1 keep their meanings. The
+bound remains **14 ACTIVE / 16 total seals**, not a maximum-size runtime acceptance
+claim.
+
+Forward migration **31.3** adds `complaint_test_runs.recurrent_erasure_history_hash`.
+Only the actual typed E SEALED → PURGING projection writes this domain-separated,
+32-byte commitment to its scope/run/activation/terminal identity and complete
+ordered source/archive rows including xmin, canonical entries and checkpoint
+history. It is immutable through F batches and PURGED. First F CAPTURE, including
+a separately claimed fresh same-lineage process, compares current physical history
+to that retained commitment before any erasure; it cannot recapture or backfill
+custody. Existing recurrent PURGING/PURGED rows without it fail closed. N0/N1 use
+NULL. E excludes this projection effect from its old SEALED core/custody preimage.
+
+F retains complete history through every bounded batch. FINAL alone retires
+**Hn → In → H(n−1) … → H1 → V26 → scoped control**, using exact physical predicates
+and the original F lease/transaction. Each actual source and archive refunds
+**2097152 STORAGE_BYTES** once; rollback refunds none. Permanent IDs, audits and
+B's **8192** observation remain. The extra digest fits the existing terminal-run
+price: its non-NULL schema branch caps denial bytes at 51291 versus the profile's
+65536-byte datum allowance; it adds no row or index. PURGED replay stays read-only.
+No historical backfill, older-restore producer, LIVE authority or deployment is
+introduced. This amendment is **NOT_COMPILED / NOT_RUN / NOT_RUNTIME_ACCEPTED**.
+
 ## Bounds and qualification limits
 
 Both the complete unsigned manifest **and complete signed envelope**, with its

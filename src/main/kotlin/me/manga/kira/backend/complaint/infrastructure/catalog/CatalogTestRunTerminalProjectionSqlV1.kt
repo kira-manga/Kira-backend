@@ -8,7 +8,8 @@ internal object CatalogTestRunTerminalProjectionSqlV1 {
     """.trimIndent()
     private const val CORE = """(to_jsonb(r) - ARRAY['state','unused_reserve','purging_at','event_manifest_count','event_manifest_root',
         'installation_manifest_count','installation_manifest_root','installation_chunk_count','retired_count','deleted_count',
-        'terminal_event_id','terminal_object_key','terminal_object_version','terminal_ciphertext_hash','terminal_catalog_generation','terminal_catalog_hash'])::text"""
+        'terminal_event_id','terminal_object_key','terminal_object_version','terminal_ciphertext_hash','terminal_catalog_generation','terminal_catalog_hash',
+        'recurrent_erasure_history_hash'])::text"""
     private val valid = """
         r.test_only AND r.configuration_hash = e.configuration_hash AND r.accounting_version = 1
         AND r.installation_limit = e.installation_limit AND r.enrolled_count BETWEEN 0 AND r.installation_limit
@@ -25,7 +26,7 @@ internal object CatalogTestRunTerminalProjectionSqlV1 {
                 AND r.installation_manifest_count IS NULL AND r.installation_manifest_root IS NULL AND r.installation_chunk_count IS NULL
                 AND r.retired_count IS NULL AND r.deleted_count IS NULL AND r.terminal_event_id IS NULL AND r.terminal_object_key IS NULL
                 AND r.terminal_object_version IS NULL AND r.terminal_ciphertext_hash IS NULL
-                AND r.terminal_catalog_generation IS NULL AND r.terminal_catalog_hash IS NULL)
+                AND r.terminal_catalog_generation IS NULL AND r.terminal_catalog_hash IS NULL AND r.recurrent_erasure_history_hash IS NULL)
             OR (r.state = 'PURGING' AND r.purging_at >= r.sealed_at AND r.purging_at <= clock_timestamp()
                 AND r.event_manifest_count > 0 AND complaint_digest_valid(r.event_manifest_root)
                 AND r.installation_manifest_count = r.enrolled_count AND complaint_digest_valid(r.installation_manifest_root)
@@ -34,7 +35,9 @@ internal object CatalogTestRunTerminalProjectionSqlV1 {
                 AND complaint_ascii_valid(r.terminal_event_id, 128) AND complaint_ascii_valid(r.terminal_object_key, 1024)
                 AND complaint_opaque_valid(r.terminal_object_version, 1024) AND r.terminal_object_version <> 'null'
                 AND complaint_digest_valid(r.terminal_ciphertext_hash) AND r.terminal_catalog_generation = r.activation_catalog_generation + 1
-                AND complaint_digest_valid(r.terminal_catalog_hash)))
+                AND complaint_digest_valid(r.terminal_catalog_hash)
+                AND ((r.generation_seal_count <= 3 AND r.recurrent_erasure_history_hash IS NULL)
+                    OR (r.generation_seal_count >= 4 AND complaint_digest_valid(r.recurrent_erasure_history_hash)))))
         AND octet_length($CORE) BETWEEN 1 AND 524288
     """.trimIndent()
     private val run = """
@@ -59,6 +62,7 @@ internal object CatalogTestRunTerminalProjectionSqlV1 {
             CASE WHEN octet_length(r.terminal_ciphertext_hash) = 32 THEN r.terminal_ciphertext_hash END AS terminal_ciphertext_hash,
             r.terminal_catalog_generation,
             CASE WHEN octet_length(r.terminal_catalog_hash) = 32 THEN r.terminal_catalog_hash END AS terminal_catalog_hash,
+            CASE WHEN octet_length(r.recurrent_erasure_history_hash) = 32 THEN r.recurrent_erasure_history_hash END AS recurrent_erasure_history_hash,
             CASE WHEN ($valid) IS TRUE THEN $CORE END AS core_preimage
         FROM complaint_test_runs r CROSS JOIN e WHERE r.data_scope_id = e.scope
     """.trimIndent()
@@ -81,7 +85,7 @@ internal object CatalogTestRunTerminalProjectionSqlV1 {
             event_manifest_count = ?, event_manifest_root = ?::bytea,
             installation_manifest_count = ?, installation_manifest_root = ?::bytea, installation_chunk_count = ?, retired_count = ?, deleted_count = ?,
             terminal_event_id = ?, terminal_object_key = ?, terminal_object_version = ?, terminal_ciphertext_hash = ?::bytea,
-            terminal_catalog_generation = ?, terminal_catalog_hash = ?::bytea
+            terminal_catalog_generation = ?, terminal_catalog_hash = ?::bytea, recurrent_erasure_history_hash = ?::bytea
         FROM e WHERE r.data_scope_id = e.scope AND ($valid) AND r.state = 'SEALED' AND r.unused_reserve = ?::bigint[]
             AND r.permanent_denial_bytes = ?::bytea AND r.seal_set_bytes = ?::bytea
     """.trimIndent()

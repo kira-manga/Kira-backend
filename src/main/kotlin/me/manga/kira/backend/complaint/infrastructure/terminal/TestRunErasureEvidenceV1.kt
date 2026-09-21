@@ -191,6 +191,8 @@ internal class TestRunErasureEvidenceV1(private val original: TestRunErasureV1) 
         requireErasure(value.entry.objectRef == target.objectRef && value.entry.kind == target.kind &&
             value.entry.epochStartInclusive == target.startEpoch && value.entry.epochEndInclusive == target.endEpoch)
         checkNotNull(checkedSnapshot).active?.requireNative(value.entry)
+        checkNotNull(checkedSnapshot).recurrent?.records?.singleOrNull { it.reference.objectRef.objectKey == value.entry.objectRef.objectKey }
+            ?.requireNative(value.entry)
         val doc = value.erasureDocument(original)
         doc.requireTarget(target, original)
         if (pass == 1) {
@@ -330,13 +332,15 @@ internal class TestRunErasureEvidenceV1(private val original: TestRunErasureV1) 
         add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.TEST_RUN_PURGE, 0, value.purge.document.eventId,
             value.closure.terminalEpoch, value.closure.terminalEpoch, value.purge.objectRef))
         val seals = value.sealSet.records()
-        requireErasure(seals.size in 2..3)
+        requireErasure(seals.size in 2..16)
+        val activeCount = seals.size - 2
         seals.forEachIndexed { index, it ->
-            val initial = seals.size == 3 && index == 0
-            val ordinal = if (index == seals.lastIndex) 1 else 0
+            val active = index < activeCount
+            val ordinal = if (active) index else index - activeCount
             add(TestTerminalQuiescenceTargetV1(TestTerminalCodecKindV1.EPOCH_SEAL, ordinal, it.sealId,
                 it.epochStartInclusive, it.epochEndInclusive, it.objectRef,
-                if (initial) TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL else TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT))
+                if (!active) TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT else if (index == 0) TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL
+                    else TestTerminalQuiescenceSourceV1.V31_ACTIVE_RECURRENT_SEAL))
         }
     }.sortedBy { it.objectRef.objectKey }.also { requireErasure(it.map { ref -> ref.objectRef.objectKey }.distinct().size == it.size) }
 
