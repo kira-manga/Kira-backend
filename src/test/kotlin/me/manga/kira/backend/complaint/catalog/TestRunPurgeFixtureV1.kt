@@ -58,9 +58,16 @@ internal fun withUnusedPurgeRun(tls: VersionBoundPersistenceConnectedFixture, sh
                 TestRunPurgeFixtureV1(p, runtime, registration, audit, http, inputs).use { f ->
                     f.assertUnused()
                     assertEquals(TestRunSealingResultV1.SEALED_AND_AUDITED, TestRunSealingV1.begin(registration).seal())
-                    val drain = f.beginDrain()
-                    assertEquals(TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED,
-                        drain.drain(f.approval(drain), f.rawEvidence, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS))
+                    f.enableUnexpectedDrainDiagnostic()
+                    val drain = try {
+                        f.beginDrain().also { original ->
+                            assertEquals(TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED,
+                                original.drain(f.approval(original), f.rawEvidence, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS))
+                        }
+                    } catch (problem: Throwable) {
+                        runCatching { f.reportUnexpectedDrainFailure() }
+                        throw problem // Preserve the exact failure and existing enclosing cleanup.
+                    }
                     f.assertReleased()
                     assertEquals(listOf("LIST", "LIST"), f.inventoryRequests.map { it.kind })
                     assertTrue(f.inventoryKeys.requests.isEmpty(), "No dummy empty event is constructed or decrypted.")
@@ -183,6 +190,19 @@ internal class TestRunPurgeFixtureV1(
         coordinator.assertPhysicallyReleased(); deletion.assertPhysicallyReleased()
     }
     fun assertReleased() = assertDisposed(expectUnreturnedClose = false)
+
+    /** Diagnostic CPU overhead is explicit, not timing-neutral or a causal fix. Before beginDrain only. */
+    fun enableUnexpectedDrainDiagnostic() {
+        coordinator.enableUnexpectedFailureDiagnostic(); deletion.enableUnexpectedFailureDiagnostic()
+    }
+
+    /** Passive existing observations only; this never opens another database/provider operation. */
+    fun reportUnexpectedDrainFailure() {
+        coordinator.reportUnexpectedFailure(); deletion.reportUnexpectedFailure()
+        val allowed = setOf("STS_SOURCE", "STS_ASSUME", "STS_TARGET", "GENERATE", "LIST", "PUT", "GET", "DECRYPT")
+        System.err.println("UNUSED_PURGE_DRAIN_NATIVE inventoryKinds=${inventoryRequests.takeLast(4).map { if (it.kind == "LIST") "LIST" else "UNEXPECTED_KIND" }} " +
+            "sealKinds=${sealHttp.order.takeLast(12).map { if (it in allowed) it else "UNEXPECTED_KIND" }}")
+    }
 
     /** Negative-only teardown: retain the failed native close and its J owner, never call it released. */
     fun expectUnreturnedNativeCloseForTeardown() {

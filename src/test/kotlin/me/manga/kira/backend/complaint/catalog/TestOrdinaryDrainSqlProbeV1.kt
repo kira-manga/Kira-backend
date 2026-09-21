@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.catalog
 
+import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
@@ -51,6 +52,11 @@ internal class TestOrdinaryDrainSqlProbeV1(
     var after: (TestOrdinaryDrainSqlCallV1) -> Unit = {}
     private val owners = linkedMapOf<PersistencePhaseContext, Owners>()
     private val assertion = AtomicReference<AssertionError?>()
+    private var unexpectedFailureDiagnostic = false
+    private var lastSite = "NOT_ENTERED"
+    private var lastSqlHash = "NOT_ENTERED"
+    private var lastBoundary = "NOT_ENTERED"
+    private var lastReturned = false
 
     init { exceptionTranslator = SQLExceptionSubclassTranslator() }
 
@@ -69,6 +75,12 @@ internal class TestOrdinaryDrainSqlProbeV1(
         observed(sql, args) { super.update(sql, *args) }
 
     private fun <T> observed(sql: String, args: Array<out Any?>, action: () -> T): T = try {
+        if (unexpectedFailureDiagnostic) {
+            lastSqlHash = Sha256.hex(sql.toByteArray(Charsets.UTF_8))
+            lastSite = Throwable().stackTrace.filter { it.className.startsWith("me.manga.kira.backend.complaint.infrastructure.terminal.") }
+                .take(6).joinToString(";") { "${it.fileName}:${it.methodName}:${it.lineNumber}" }
+            lastBoundary = "PROBE_ENTERED"; lastReturned = false
+        }
         val phase = checkNotNull(PersistencePhaseOwnership.current())
         val path = ownedCutField(phase, "path") as PersistencePhasePath
         val drain = ownedCutField(phase, "testOrdinaryDrain") as TestRunOrdinaryDrainV1?
@@ -159,8 +171,13 @@ internal class TestOrdinaryDrainSqlProbeV1(
         val call = TestOrdinaryDrainSqlCallV1(phase, path, expected?.step, seal?.step, primary, seal, sql,
             args.map { if (it is ByteArray) it.copyOf() else it }, allPrimary, adminPrimary)
         calls.add(call)
+        if (unexpectedFailureDiagnostic) lastBoundary = "ORACLE_ACCEPTED"
         before(call)
-        action().also { after(call) }
+        if (unexpectedFailureDiagnostic) lastBoundary = "SQL_DISPATCHED"
+        action().also {
+            if (unexpectedFailureDiagnostic) { lastReturned = true; lastBoundary = "SQL_RETURNED" }
+            after(call)
+        }
     } catch (failure: AssertionError) { assertion.compareAndSet(null, failure); throw failure }
 
     /** Also usable after a refused invocation; physical retirement alone does not assert a commit. */
@@ -188,7 +205,27 @@ internal class TestOrdinaryDrainSqlProbeV1(
         }
     }
 
-    fun reset() { assertPhysicallyReleased(); observations.clear(); owners.clear(); calls.clear() }
+    /** Explicit unused-purge fixture opt-in only; unrelated drain probes do not hash/capture stacks. */
+    fun enableUnexpectedFailureDiagnostic() {
+        requireConnectionFree()
+        check(!unexpectedFailureDiagnostic && original == null && calls.isEmpty() && observations.isEmpty())
+        unexpectedFailureDiagnostic = true
+    }
+
+    /** Unexpected TEST setup failure only. No SQL, arguments, rows, tokens or throwable prose. */
+    fun reportUnexpectedFailure() {
+        if (!unexpectedFailureDiagnostic) return
+        System.err.println("UNUSED_PURGE_DRAIN_UNEXPECTED pool=${if (deletion) "DELETION" else "COORDINATOR"} " +
+            "step=${original?.step} pass=${original?.inventoryPass} calls=${calls.size} " +
+            "sealStep=${calls.lastOrNull()?.sealStep} boundary=$lastBoundary returned=$lastReturned " +
+            "sqlSha256=$lastSqlHash site=$lastSite " +
+            "outcomes=${observations.keys.toList().takeLast(8).map { it.databaseOutcome().name }}")
+    }
+
+    fun reset() {
+        assertPhysicallyReleased(); observations.clear(); owners.clear(); calls.clear()
+        lastSite = "NOT_ENTERED"; lastSqlHash = "NOT_ENTERED"; lastBoundary = "NOT_ENTERED"; lastReturned = false
+    }
     fun assertNoLostAssertions() { assertion.get()?.let { throw it } }
 
     private class Owners(val drain: TestRunOrdinaryDrainV1?, val primary: TestRunOwnerDeleteContinuationV1?,
