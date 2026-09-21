@@ -156,7 +156,7 @@ internal class TestActiveCutoffPublicationRowV1 private constructor(
                     state, canonical, semantic, proof)
             } catch (failure: Throwable) { canonical?.fill(0); semantic?.fill(0); proof?.close(); throw failure }
         }
-        private fun readHash(row: ResultSet, name: String): String = checkNotNull(row.getBytes(name)).let { bytes ->
+        private fun readHash(row: ResultSet, name: String): String = checkNotNull(row.getBytes(name)).copyOf().let { bytes ->
             try { requireActiveSeal(bytes.size == 32); hex(bytes) } finally { bytes.fill(0) }
         }
         private fun hex(bytes: ByteArray): String = HexFormat.of().formatHex(bytes)
