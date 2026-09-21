@@ -1,0 +1,156 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 34,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "FAILED_42_GENUINE_RECURRENT_DELETION_POSITIVE",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRecurrentOwnerDeletionAppliesThroughBThenCreatesAndDeletesAgainWithoutAnotherCheckpoint",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "genuineRecurrentOwnerDeletionAppliesThroughBThenCreatesAndDeletesAgainWithoutAnotherCheckpoint()"
+      ]
+    },
+    {
+      "annotation_line": 37,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "FAILED_42_GENUINE_RECURRENT_DELETION_POSITIVE",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRecurrentOwnerDeleteAllUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "genuineRecurrentOwnerDeleteAllUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure()"
+      ]
+    },
+    {
+      "annotation_line": 40,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "FAILED_42_GENUINE_RECURRENT_DELETION_POSITIVE",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRecurrentAdminDeleteUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "genuineRecurrentAdminDeleteUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure()"
+      ]
+    },
+    {
+      "annotation_line": 43,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "FAILED_42_GENUINE_RECURRENT_DELETION_POSITIVE",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRecurrentAdminBatchUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "genuineRecurrentAdminBatchUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure()"
+      ]
+    },
+    {
+      "annotation_line": 46,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "FAILED_42_B_RECONSTRUCTED_PRIOR_RECEIPT_DELETION",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuinelyBReconstructedPriorReceiptPermitsNewRecurrentDeletionWithoutReauthorizationOrReconversion",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d",
+      "xml_names": [
+        "genuinelyBReconstructedPriorReceiptPermitsNewRecurrentDeletionWithoutReauthorizationOrReconversion()"
+      ]
+    },
+    {
+      "annotation_line": 96,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "FAILED_41_RECURRENT_COLD_PREPARED_AND_PROJECTED_CONTINUATION",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRecurrentPreparedColdContinuationAndProjectedReplayRecheckEveryOriginalAndKeepExactBytesCustodyAndSinglePayment",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineRecurrentPreparedColdContinuationAndProjectedReplayRecheckEveryOriginalAndKeepExactBytesCustodyAndSinglePayment()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 6,
+  "expected_total": 6,
+  "selection_basis": {
+    "active_gates": {
+      "focused46": "8METHODS_ROOT_DISPATCHED_ON_9e96_NOT_ASSUMED_PASS",
+      "focused48": "5METHODS_ROOT_DISPATCHED_ON_9e96_NOT_ASSUMED_PASS"
+    },
+    "additional_B_polls": 2,
+    "additional_cold_E_runtimes": 2,
+    "carried_pass_selector": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.retainedDVerifiedPrimaryFinalLeaseExpiryRollsBackActualApplyAndRefund",
+    "carryforward_selectors": [
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.oldInitialDeletionProfileStillRefusesNewWorkAfterGenuineRecurrentSuccess",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRejectsIdentityPrivacyAndCheckpointDriftBeforeCounters",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRequiresExactPriorPublicationReceiptReservationAndNativeApply",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionOwnClaimCannotBorrowAnyPreviousPNL",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionPendingPriorAndDamagedHistoryRefuseNewWorkButNotExactContinuation",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionClaimLoserReplaysBeforeClosedControlsWithoutDoubleCharge",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionWaitedCredentialChangeCannotAuthorizeTheOriginalClaim",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRechecksDatabaseFreshnessAfterCredentialBoundary",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRetainsExactOwnersTemplatesIngressAndNativeLane"
+    ],
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "FAILED_41_RECURRENT_COLD_PREPARED_AND_PROJECTED_CONTINUATION": 1,
+      "FAILED_42_B_RECONSTRUCTED_PRIOR_RECEIPT_DELETION": 1,
+      "FAILED_42_GENUINE_RECURRENT_DELETION_POSITIVE": 4
+    },
+    "deferred_selections": {
+      "focused43": "review/working/app-29-backend-focused-20260921-43/focused-selectors.json",
+      "focused47": "review/working/app-29-backend-focused-20260921-47/focused-selectors.json"
+    },
+    "deletion_chains": 5,
+    "dispatch_authority": "ROOT_ONLY_AFTER_REVIEWED_CORRECTIONS",
+    "genuine_fixtures": 6,
+    "gradle_seconds": 2400,
+    "new_A_publications": 6,
+    "passing_evidence_carry": {
+      "focused36": "35635093191:10PASS",
+      "focused37": "35639268313:8PASS",
+      "focused41": "35643583997:4PASS",
+      "focused42": "35643584837:3PASS",
+      "focused49": "35652104561:RETAINED_D_PASS_ROOT_REPORTED",
+      "native08": "35645621713:1PASS"
+    },
+    "post_SUCCESS_creates": 7,
+    "previous_result": "ROOT_REPORTED_6FAIL_AND_RETAINED_D_PASS",
+    "previous_run": "35652104561",
+    "recurrent_terminal_active_seals": 2,
+    "recurrent_terminal_chains": 1,
+    "remaining_D_E_methods": 9,
+    "remaining_deletion_methods": 9,
+    "required_source": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+    "retained_D_chains": 0,
+    "scope": "Exact six failed49 methods only:5 genuine deletion positives plus recurrent prepared cold continuation/projected replay. Retained-D final APPLY_LEASE passed49 and is carried, not rerun. Await sole root review/composition of MAIN1 readHash ownership10189a7a and TEST1 cold owner0b6a0efc; these author references are not final source pins. Preserve the original controls and six existing fixture chains plus2 extra cold-E assemblies. No new selector, harness, behavioral control or evidence expansion. Root alone binds exact source/tree and dispatches, max2hosted; active48five/46eight are not assumed PASS and deferred47nine/43nine remain explicit."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "84cfac8b9b9ebd0686dc3e76a09b8a3821217eca83e19fc46aa1cf71e073ab4d"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 5
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuineRecurrentOwnerDeletionAppliesThroughBThenCreatesAndDeletesAgainWithoutAnotherCheckpoint",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuineRecurrentOwnerDeleteAllUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuineRecurrentAdminDeleteUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuineRecurrentAdminBatchUsesItsOwnCurrentClaimAndNativeProofUnderCreationClosure",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuinelyBReconstructedPriorReceiptPermitsNewRecurrentDeletionWithoutReauthorizationOrReconversion",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineRecurrentPreparedColdContinuationAndProjectedReplayRecheckEveryOriginalAndKeepExactBytesCustodyAndSinglePayment"
+  ]
+}
