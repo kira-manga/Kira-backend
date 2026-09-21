@@ -1,0 +1,38 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 73,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Four real missing-primary family success paths PASS27; this previously blocked twelve-scenario method exercises real before/after/deferred-COMMIT refusal accounting, custody and failed-original non-revival. Independent of terminal PROJECT and wrong-template negative diagnostic; source unchanged since shared prerequisite corrections.",
+      "expected_invocations_from_annotation": 1,
+      "method": "missingPrimaryApplyBeforeAfterAndUnknownCommitCannotResumeTheFailedOriginal",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "e033c94426490b840a7a3c2b5d3d5bbb43d6b1c3",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "missingPrimaryApplyBeforeAfterAndUnknownCommitCannotResumeTheFailedOriginal()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 1,
+  "expected_total": 1,
+  "selection_basis": {
+    "cohorts": {
+      "Four real missing-primary family success paths PASS27; this previously blocked twelve-scenario method exercises real before/after/deferred-COMMIT refusal accounting, custody and failed-original non-revival. Independent of terminal PROJECT and wrong-template negative diagnostic; source unchanged since shared prerequisite corrections.": 1
+    },
+    "previous_run": "35620220269",
+    "scope": "Four positive missing-primary family paths passed in27. Independently verify three APPLY commit outcomes per family, twelve scenarios in one existing method; no previous passing method replay."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.missingPrimaryApplyBeforeAfterAndUnknownCommitCannotResumeTheFailedOriginal"
+  ]
+}
