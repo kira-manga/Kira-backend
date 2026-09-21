@@ -19,6 +19,8 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuies
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceStepV1
 import me.manga.kira.backend.security.EpochSealExceptionV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalException
+import me.manga.kira.backend.security.TestTerminalCodecExceptionV1
+import me.manga.kira.backend.security.aws.EpochSealStsException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -143,21 +145,33 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
             val entries = ownedCutField(reader, "entries") as Array<*>
             "$sql readerStateAtReport=${(ownedCutField(reader, "stage") as Enum<*>).name} " +
                 "readerRetainedFailure=${retainedFailureCode(failure)} readerCompletedPasses=${ownedCutField(reader, "completedPasses") as Int} " +
-                "readerEntryCounts=${entries.joinToString(",") { (it as List<*>?)?.size?.toString() ?: "NONE" }}"
+                "readerEntryCounts=${entries.joinToString(",") { (it as List<*>?)?.size?.toString() ?: "NONE" }} " +
+                retainedPassAttemptState(reader)
         }.getOrElse { "inventoryDiagnostic=UNAVAILABLE" }
         System.err.println("TERMINAL_QUIESCENCE_RETAINED $retained")
     }
+
+    // Passive scalars only. lastElapsed precedes a rejected local sample; it is not elapsed-at-failure.
+    // Never sample a clock, call a budget method or reset an original attempt from diagnostics.
+    private fun retainedPassAttemptState(reader: Any): String = runCatching {
+        val attempt = ownedCutField(reader, "passAttempt") ?: return@runCatching "passAttempt=NONE"
+        "passAttemptCapNanos=${ownedCutField(attempt, "allowanceNanos") as Long} " +
+            "passAttemptLastObservedElapsedNanos=${ownedCutField(attempt, "lastElapsed") as Long} " +
+            "passAttemptExpired=${ownedCutField(attempt, "expired") as Boolean}"
+    }.getOrDefault("passAttemptDiagnostic=UNAVAILABLE")
 
     private fun retainedFailureCode(problem: Throwable?): String = when (problem) {
         null -> "NONE"
         is JournalPublicationExceptionV1 -> "JOURNAL_PUBLICATION:${problem.code.name}"
         is TestTerminalExceptionV1 -> "TEST_TERMINAL:${problem.code.name}"
+        is TestTerminalCodecExceptionV1 -> "TEST_TERMINAL_CODEC:${problem.code.name}"
         is EpochSealExceptionV1 -> "EPOCH_SEAL:${problem.code.name}"
+        is EpochSealStsException -> "EPOCH_SEAL_STS:${problem.code.name}"
         is OwnerDeleteAllJournalException -> "OWNER_DELETE_ALL_JOURNAL:${problem.code.name}"
         is PersistencePhaseException -> "PERSISTENCE_PHASE:${problem.code.name}"
         is PersistenceBoundaryException -> "PERSISTENCE_BOUNDARY:${problem.code.name}"
         is TestTerminalQuiescenceExceptionV1 -> "QUIESCENCE"
-        else -> "OTHER"
+        else -> "OTHER:${problem.javaClass.name}"
     }
 
     fun assertReleased(requireCommitted: Boolean = true) {
