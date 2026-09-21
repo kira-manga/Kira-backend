@@ -9,6 +9,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.OrdinaryPersisten
 import me.manga.kira.backend.common.infrastructure.persistence.OrdinarySourceGrantCleanupFixture
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCutPool
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcParticipantRole
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
@@ -532,11 +533,13 @@ internal object ComplaintTestNamespaceRegistrationCases {
 
     /** Existing real ordinary JPA/JDBC and counted audit adapter, also used to produce earlier authorized history. */
     internal fun withOrdinaryAudit(runtime: VersionBoundPersistenceConnectedFixture, action: (OrdinarySourceGrantCleanupFixture, AuditService) -> Unit) {
+        // Derive the one original admission from the actual constructed pool, including opt-in claimant races.
+        val ordinaryPoolSize = runtime.pools.descriptors().single { it.role === PersistenceJdbcParticipantRole.ORDINARY }.hikari.sizing.maximumPoolSize
         val factory = ordinaryCleanupFactory(runtime.pools.ordinary, includeAuditEntities = true)
         AutoCloseable { factory.destroy() }.use {
             factory.afterPropertiesSet()
             OrdinarySourceGrantCleanupFixture(OwnedCutPool(runtime.scope, runtime.pools.ordinary), checkNotNull(factory.`object`),
-                ordinaryCleanupReader(runtime.database), maximumPoolSize = 2).use { ordinary ->
+                ordinaryCleanupReader(runtime.database), maximumPoolSize = ordinaryPoolSize).use { ordinary ->
                 val repository = JpaAuditRepositoryAdapter(JpaRepositoryFactory(SharedEntityManagerCreator.createSharedEntityManager(ordinary.entityManagerFactory))
                     .getRepository(SpringDataAuditLogRepository::class.java))
                 val service = AuditService(repository, CurrentUser(), SignedActivationObservation.WALL_CLOCK)

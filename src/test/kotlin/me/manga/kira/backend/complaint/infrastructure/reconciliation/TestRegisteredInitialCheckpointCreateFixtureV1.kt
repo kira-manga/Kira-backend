@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
 import kotlinx.serialization.json.jsonPrimitive
 import me.manga.kira.backend.common.infrastructure.persistence.CounterSnapshot
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcParticipantRole
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
@@ -71,14 +72,18 @@ internal fun withRegisteredInitialCheckpointCreate(tls: VersionBoundPersistenceC
     completeCheckpoint: Boolean = true, shortFreshness: Boolean = false,
     terminalHistory: TestOrdinaryDrainFixtureInputsV1? = null,
     initialCheckpointCreate: TestInitialCheckpointCreateInputV1 = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
+    ordinaryPoolSize: Int = 2,
     action: (TestRegisteredInitialCheckpointCreateFixtureV1) -> Unit) {
     val ordinary = TestActiveOrdinaryRawFixtureV1()
     val raw = TestActiveInitialCheckpointRawFixtureV1()
     val factories = ordinary.factories.let { TestActiveOrdinaryRawHttpV1(it.sts, it.kms, it.s3, raw.input,
         initialCheckpointCreate = initialCheckpointCreate,
-        shortInitialCheckpointFreshness = shortFreshness) }
+        shortInitialCheckpointFreshness = shortFreshness, ordinaryPoolSize = ordinaryPoolSize) }
     withTestActiveFirstCut(tls, ordinaryRawHttp = factories, terminalHistory = terminalHistory, globalScanBeforeActivation = true) { first ->
         first.initial.withExchange { exchange ->
+            val pool = first.runtime.pools.descriptors().single { it.role === PersistenceJdbcParticipantRole.ORDINARY }
+            assertEquals(ordinaryPoolSize, pool.hikari.sizing.maximumPoolSize)
+            assertEquals(ordinaryPoolSize - 1, exchange.ordinary.admission.ownerLimit)
             val candidate = first.initial.candidate()
             val token = exchange.enroll(candidate).session.accessToken
             exchange.assertReleased()

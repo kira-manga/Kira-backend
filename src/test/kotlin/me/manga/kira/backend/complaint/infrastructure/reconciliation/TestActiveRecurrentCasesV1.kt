@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteLiteralCharges
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcParticipantRole
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
@@ -762,13 +763,18 @@ internal object TestActiveRecurrentCasesV1 {
         }
     }
 
-    fun currentConsumerClaimLoser(tls: VersionBoundPersistenceConnectedFixture, path: RecurrentConsumerPath) = withCurrentConsumer(tls) { _, c ->
-        when (path) {
-            RecurrentConsumerPath.CREATE -> TestRegisteredInitialCheckpointCreateRaceCasesV1.claimLoser(c)
-            RecurrentConsumerPath.REPLY -> TestRegisteredInitialCheckpointCreateRaceCasesV1.replyClaimLoser(c)
-            RecurrentConsumerPath.EDIT -> TestRegisteredInitialCheckpointCreateRaceCasesV1.editClaimLoser(c)
+    fun currentConsumerClaimLoser(tls: VersionBoundPersistenceConnectedFixture, path: RecurrentConsumerPath) =
+        withCurrentConsumer(tls, ordinaryPoolSize = 3) { _, c ->
+            // The unchanged P-1 bound needs P=3 for two concurrent originals, not a relabelled admission.
+            val ordinary = c.process.pools.descriptors().single { it.role === PersistenceJdbcParticipantRole.ORDINARY }
+            assertEquals(3, ordinary.hikari.sizing.maximumPoolSize)
+            assertEquals(2, c.exchange.ordinary.admission.ownerLimit)
+            when (path) {
+                RecurrentConsumerPath.CREATE -> TestRegisteredInitialCheckpointCreateRaceCasesV1.claimLoser(c)
+                RecurrentConsumerPath.REPLY -> TestRegisteredInitialCheckpointCreateRaceCasesV1.replyClaimLoser(c)
+                RecurrentConsumerPath.EDIT -> TestRegisteredInitialCheckpointCreateRaceCasesV1.editClaimLoser(c)
+            }
         }
-    }
 
     fun currentConsumerExactGraph(tls: VersionBoundPersistenceConnectedFixture, path: RecurrentConsumerPath) = withCurrentConsumer(tls) { _, c ->
         when (path) {
@@ -806,8 +812,10 @@ internal object TestActiveRecurrentCasesV1 {
     /** Thin reuse of the actual nonempty producer. The Completed observation is never a consumer argument. */
     private fun withCurrentConsumer(tls: VersionBoundPersistenceConnectedFixture, shortFreshness: Boolean = false,
         profile: String = VersionBoundTestInitialCheckpointCreateV1.RECURRENT_PROFILE,
+        ordinaryPoolSize: Int = 2,
         action: (TestActiveRecurrentFixtureV1, TestRegisteredInitialCheckpointCreateFixtureV1) -> Unit) =
-        withRecurrentFixture(tls, initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, profile), shortFreshness = shortFreshness) { f ->
+        withRecurrentFixture(tls, initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, profile), shortFreshness = shortFreshness,
+            ordinaryPoolSize = ordinaryPoolSize) { f ->
             val initial = (f.control().getValue("checkpoint_bytes") as ByteArray).copyOf()
             val before = f.counters()
             val completed = assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, f.checkpoint())

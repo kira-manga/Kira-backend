@@ -59,11 +59,12 @@ internal fun withRecurrentFixture(tls: VersionBoundPersistenceConnectedFixture,
     terminalHistory: TestOrdinaryDrainFixtureInputsV1? = null,
     initialCheckpointDeletion: TestInitialCheckpointDeletionInputV1 = TestInitialCheckpointDeletionInputV1(1, VersionBoundTestInitialCheckpointDeletionV1.PROFILE),
     reserveSecondConsumerCreator: Boolean = false,
+    ordinaryPoolSize: Int = 2,
     action: (TestActiveRecurrentFixtureV1) -> Unit) {
     require(verified || !applied)
     require(!retainedAllAlias || family == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL && verified)
     require(!reserveSecondConsumerCreator || family == ComplaintJournalDeletionKindV1.OWNER_DELETE)
-    val raw = TestActiveRecurrentRawFixtureV1(initialCheckpointCreate, shortFreshness, initialCheckpointDeletion)
+    val raw = TestActiveRecurrentRawFixtureV1(initialCheckpointCreate, shortFreshness, initialCheckpointDeletion, ordinaryPoolSize)
     val native = raw.deletion
     // D/E may supply its exact cold denial recipe; it is never spliced into an activated process.
     val history = terminalHistory ?: TestOrdinaryDrainFixtureInputsV1(maximumRetainedVersions = maximumVersions, maximumFramedBytes = maximumBytes)

@@ -408,6 +408,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             },
             database = template.database.copy(host = tls.database.host, port = tls.endpointPort, name = PgLifecycleDatabaseSettings.DATABASE,
                 runtimeUsername = PgLifecycleDatabaseSettings.CANDIDATE,
+                ordinaryCapacity = ordinaryRawHttp?.ordinaryPoolSize ?: template.database.ordinaryCapacity,
                 runtimePassword = DesiredSecretReferenceV1(reference.logicalKeyId, reference.version.resourceArn, reference.version.versionId),
                 publicTrustPemBase64 = TestDeploymentInputFixture.base64(tls.database.versionBoundTls().publicTrust(false)),
                 protectedTrustParent = tls.database.versionBoundTls().publicTrustParent().toString()),

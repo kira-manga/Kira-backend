@@ -25,4 +25,8 @@ internal class TestActiveOrdinaryRawHttpV1(
     val activeOwnerDeleteQueue: TestActiveOwnerDeleteQueueHttpInputV1? = null,
     val initialCheckpointDeletion: TestInitialCheckpointDeletionInputV1? = null,
     val activeRecurrent: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentInputV1? = null,
-)
+    // Cold TEST construction input; only claimant races opt in to a second P-1 ordinary owner.
+    val ordinaryPoolSize: Int = 2,
+) {
+    init { require(ordinaryPoolSize == 2 || ordinaryPoolSize == 3 && initialCheckpointCreate != null) }
+}
