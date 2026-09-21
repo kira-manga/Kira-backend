@@ -6,7 +6,6 @@ import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersi
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityChargesV1
-import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalPreflightSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalProjectionSqlV1
@@ -249,7 +248,10 @@ internal object CatalogTestRunTerminalCasesV1 {
             val sql = calls.map { it.sql }; val path = calls.first().path
             val controls = sql.withIndex().filter { it.value == CatalogTestRunTerminalSqlV1.lockControl }.map { it.index }
             assertEquals(2, controls.size)
-            val counter = sql.indexOf(JdbcComplaintCapacityStore.LOCK_COUNTERS)
+            val counter = sql.indexOfFirst {
+                it.startsWith("SELECT name, ordinal, accounting_version,") &&
+                    it.endsWith("\nFROM complaint_capacity_counters\nORDER BY name COLLATE \"C\"\nFOR UPDATE")
+            }
             if (path === PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT) {
                 assertFalse(TRY_CATALOG_LOCK in sql)
                 assertTrue(counter > controls.last())
