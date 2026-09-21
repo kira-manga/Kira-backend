@@ -51,6 +51,28 @@ internal class TestOwnerDeleteJournalRoutingV1 private constructor(
         } finally { frame.fill(0) }
     }
 
+    /** Fixed TEST event families on THESE retained keys; no caller-selected domain/frame or raw-key access. */
+    internal fun installationManifestMac(keyId: String, epoch: Long, descriptor: String, objectKey: Boolean): ByteArray =
+        terminalEventMac(TerminalEvent.INSTALLATION_MANIFEST, keyId, epoch, descriptor, objectKey)
+
+    internal fun purgeMac(keyId: String, epoch: Long, descriptor: String, objectKey: Boolean): ByteArray =
+        terminalEventMac(TerminalEvent.TEST_RUN_PURGE, keyId, epoch, descriptor, objectKey)
+
+    private fun terminalEventMac(kind: TerminalEvent, keyId: String, epoch: Long, descriptor: String, objectKey: Boolean): ByteArray {
+        require(epoch > 0 && descriptor.matches(Regex("[0-9a-f]{64}"))) { INVALID_CONFIGURATION }
+        val domain = if (objectKey) "kira-test-terminal-object-key-v1" else "kira-test-terminal-event-id-v1"
+        val frame = TestTerminalFramesV1.bytes(listOf(domain, kind.name, writerGeneration, "TEST",
+            journalConfiguration.scope.id.toString(), epoch.toString(), keyId, descriptor))
+        return try {
+            Mac.getInstance("HmacSHA256").run {
+                init(keys.single { it.binding.logicalKeyId == keyId }.secretKey)
+                doFinal(frame)
+            }
+        } finally { frame.fill(0) }
+    }
+
+    private enum class TerminalEvent { INSTALLATION_MANIFEST, TEST_RUN_PURGE }
+
     /** Fixed-family comparison tags from these actual HMAC keys, never a caller's second retained-material list. */
     fun admissionForbiddenFamily(): ComplaintAdmissionForbiddenFamily {
         val copies = keys.map { it.secretKey.encoded }

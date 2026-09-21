@@ -51,8 +51,11 @@ internal class TestTerminalRoutingV1 private constructor(
         val frame = TestTerminalFramesV1.bytes(listOf(domain, kind.wireKind, writer, "TEST", scope, epoch.toString(), key.binding.logicalKeyId, descriptor))
         try {
             val digest = if (retainedOwner != null) {
-                requireTestTerminal(kind === Kind.SEAL, TestTerminalFailureV1.KEY_FAILURE)
-                retainedOwner.epochSealMac(key.binding.logicalKeyId, epoch, descriptor, objectKey)
+                when (kind) {
+                    Kind.INSTALLATION_MANIFEST -> retainedOwner.installationManifestMac(key.binding.logicalKeyId, epoch, descriptor, objectKey)
+                    Kind.PURGE -> retainedOwner.purgeMac(key.binding.logicalKeyId, epoch, descriptor, objectKey)
+                    Kind.SEAL -> retainedOwner.epochSealMac(key.binding.logicalKeyId, epoch, descriptor, objectKey)
+                }
             } else Mac.getInstance("HmacSHA256").run {
                 init(checkNotNull(key.secret))
                 doFinal(frame)
@@ -82,7 +85,7 @@ internal class TestTerminalRoutingV1 private constructor(
     }
 
     companion object {
-        /** Retained production-key bridge is deliberately seal-only; dormant event fixtures are unchanged. */
+        /** Three fixed TEST families use the original consumer's keys; no second material list or publication authority. */
         internal fun fromRetained(owner: TestOwnerDeleteJournalRoutingV1): TestTerminalRoutingV1 =
             TestTerminalRoutingV1(owner.journalConfiguration, owner.descriptors().map { RoutingKey(it, null) }, owner)
 

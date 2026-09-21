@@ -30,6 +30,47 @@ import java.util.concurrent.CancellationException
 /** Local TEST crypto only. Decoding never establishes S3 custody, producer completion or purge authority. */
 class TestTerminalCodecV1Test {
     @Test
+    fun actualRetainedConsumerCanonicalizesAndRestoresAllThreeFixedFamiliesWithoutRekey() {
+        val f = TestTerminalTestFixture()
+        val original = TestOwnerDeleteJournalRoutingV1.fromAcquired(f.journal, f.acquired())
+        val codec = TestTerminalCodecV1.fromRetained(original) { 0L }
+        for (kind in TestTerminalCodecKindV1.entries) {
+            val attempt = codec.startAttempt(kind)
+            repeat(4) { index ->
+                val route = f.route(kind.name, index)
+                val selected = route.terminalText("routing_key_id")
+                val requested = selected.takeIf { index != 0 }
+                val idField = if (kind == TestTerminalCodecKindV1.EPOCH_SEAL) "sealId" else "eventId"
+                val expected = terminalCanonical(JsonObject(f.value(kind.documentName()) +
+                    (idField to JsonPrimitive(route.terminalText("journal_id")))))
+                val content = when (kind) {
+                    TestTerminalCodecKindV1.INSTALLATION_MANIFEST -> codec.canonicalizeInstallationManifest(f.manifest, attempt, requested)
+                    TestTerminalCodecKindV1.TEST_RUN_PURGE -> codec.canonicalizePurge(f.purge, attempt, requested)
+                    TestTerminalCodecKindV1.EPOCH_SEAL -> codec.canonicalizeEpochSeal(f.ordinarySeal, attempt, requested)
+                }
+                content.use {
+                    assertEquals(route.terminalText("journal_id"), content.route.journalId)
+                    assertEquals(route.terminalText("object_key"), content.route.objectKey)
+                    assertEquals(selected, content.route.routingKeyId)
+                    assertArrayEquals(expected, content.canonicalBytes())
+                    assertEquals(terminalHash(expected), content.canonicalSha256)
+                    codec.restoreCanonical(kind, expected, selected, content.route.objectKey, content.canonicalSha256, attempt).use { restored ->
+                        assertEquals(content.route, restored.route)
+                        assertArrayEquals(expected, restored.canonicalBytes())
+                    }
+                    val wrongKey = f.route(kind.name, (index + 1) % 4).terminalText("routing_key_id")
+                    terminalCodecRejected(INVALID_INPUT) {
+                        codec.restoreCanonical(kind, expected, wrongKey, content.route.objectKey, content.canonicalSha256, attempt)
+                    }
+                }
+            }
+        }
+        terminalCodecRejected(INVALID_INPUT) {
+            codec.canonicalizeInstallationManifest(f.manifest, codec.startAttempt(TestTerminalCodecKindV1.EPOCH_SEAL))
+        }
+    }
+
+    @Test
     fun threeFamiliesMatchIndependentAeadContextAndWireGoldens() {
         for (kind in TestTerminalCodecKindV1.entries) {
             val f = TestTerminalCodecTestFixtureV1()

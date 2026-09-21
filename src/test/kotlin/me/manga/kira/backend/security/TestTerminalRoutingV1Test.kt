@@ -95,20 +95,57 @@ class TestTerminalRoutingV1Test {
     }
 
     @Test
-    fun retainedOrdinaryConsumerMatchesExistingSealCandidatesButCannotDeriveTerminalEvents() {
+    fun retainedOrdinaryConsumerMatchesIndependentFixedFramesForAllThreeTerminalFamilies() {
         val acquired = f.acquired()
         val original = TestOwnerDeleteJournalRoutingV1.fromAcquired(f.journal, acquired)
         val retained = TestTerminalRoutingV1.fromRetained(original)
-        val expected = TestTerminalRoutingV1.fromAcquired(f.journal, acquired).deriveEpochSeal(f.ordinarySeal)
+        val acquiredRouting = TestTerminalRoutingV1.fromAcquired(f.journal, acquired)
         assertEquals(original.descriptors(), retained.descriptors())
-        assertEquals(expected.active, retained.deriveEpochSeal(f.ordinarySeal).active)
-        assertEquals(expected.candidates(), retained.deriveEpochSeal(f.ordinarySeal).candidates())
-        assertEquals(TestTerminalFailureV1.KEY_FAILURE,
-            terminalRejected { retained.deriveInstallationManifest(f.manifest) }.code)
-        assertEquals(TestTerminalFailureV1.KEY_FAILURE,
-            terminalRejected { retained.derivePurge(f.purge) }.code)
-        assertEquals(expected.candidates(), retained.deriveEpochSeal(f.ordinarySeal).candidates(),
-            "Refusing terminal-event use neither replaces nor destroys the original retained seal keys.")
+        val cases = listOf(
+            Triple("INSTALLATION_MANIFEST", retained.deriveInstallationManifest(f.manifest), acquiredRouting.deriveInstallationManifest(f.manifest)),
+            Triple("TEST_RUN_PURGE", retained.derivePurge(f.purge), acquiredRouting.derivePurge(f.purge)),
+            Triple("EPOCH_SEAL", retained.deriveEpochSeal(f.ordinarySeal), acquiredRouting.deriveEpochSeal(f.ordinarySeal)),
+        )
+        val keys = f.vectors.getValue("keys").jsonArray.map { HexFormat.of().parseHex(it.jsonObject.terminalText("synthetic_key_hex")) }
+        val allIds = HashSet<String>()
+        val allObjectKeys = HashSet<String>()
+        try {
+            cases.forEach { (kind, actual, parity) ->
+                assertEquals(parity.active, actual.active)
+                assertEquals(parity.candidates(), actual.candidates())
+                assertEquals(4, actual.candidates().size)
+                assertEquals("test-route-01", actual.active.routingKeyId)
+                val descriptor = f.vectors.getValue("descriptors").jsonObject.getValue(kind).jsonObject
+                val descriptorHash = descriptor.terminalText("sha256")
+                assertEquals(descriptorHash, terminalHash(descriptor.terminalText("canonical_utf8").toByteArray(Charsets.UTF_8)))
+                val idDomain = if (kind == "EPOCH_SEAL") "kira-test-epoch-seal-id-v1" else "kira-test-terminal-event-id-v1"
+                val keyDomain = if (kind == "EPOCH_SEAL") "kira-test-epoch-seal-object-key-v1" else "kira-test-terminal-object-key-v1"
+                val epoch = if (kind == "EPOCH_SEAL") "2" else "3"
+                actual.candidates().forEachIndexed { index, route ->
+                    val expected = f.route(kind, index)
+                    val tail = listOf(kind, TestTerminalTestFixture.WRITER, "TEST", TestTerminalTestFixture.SCOPE, epoch,
+                        expected.terminalText("routing_key_id"), descriptorHash)
+                    val idFrame = terminalFrame(listOf(idDomain) + tail)
+                    val keyFrame = terminalFrame(listOf(keyDomain) + tail)
+                    assertArrayEquals(HexFormat.of().parseHex(expected.terminalText("id_frame_hex")), idFrame)
+                    assertArrayEquals(HexFormat.of().parseHex(expected.terminalText("key_frame_hex")), keyFrame)
+                    assertEquals(expected.terminalText("journal_id"), hmac(keys[index], idFrame))
+                    assertEquals(expected.terminalText("object_id"), hmac(keys[index], keyFrame))
+                    assertEquals(expected.terminalText("journal_id"), route.journalId)
+                    assertEquals(expected.terminalText("object_key"), route.objectKey)
+                    assertNotEquals(route.journalId, hmac(keys[index], keyFrame))
+                    for (otherKind in listOf("INSTALLATION_MANIFEST", "TEST_RUN_PURGE", "EPOCH_SEAL") - kind) {
+                        assertNotEquals(route.journalId, hmac(keys[index], terminalFrame(listOf(idDomain, otherKind) + tail.drop(1))))
+                    }
+                    assertNotEquals(route.journalId, hmac(keys[index], terminalFrame(listOf("kira-complaint-journal-event-id-v1") + tail)))
+                    assertTrue(allIds.add(route.journalId) && allObjectKeys.add(route.objectKey))
+                }
+            }
+        } finally { keys.forEach { it.fill(0) } }
+        assertEquals(12, allIds.size)
+        assertEquals(12, allObjectKeys.size)
+        assertEquals(cases.last().second.candidates(), retained.deriveEpochSeal(f.ordinarySeal).candidates(),
+            "Adding the two fixed terminal event bridges leaves the existing retained seal bytes unchanged.")
     }
 
     @Test

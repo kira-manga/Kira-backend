@@ -213,7 +213,7 @@ internal class TestTerminalCodecV1 private constructor(
     override fun toString(): String = "TestTerminalCodecV1(TEST,redacted,no-authority)"
 
     companion object {
-        /** Cold seal-only codec tied to the original TEST process's HMAC consumer, not a supplied secret list. */
+        /** Cold fixed-family codec tied to the original TEST process's HMAC consumer, not a supplied secret list. */
         internal fun fromRetained(owner: TestOwnerDeleteJournalRoutingV1, nanoTime: () -> Long): TestTerminalCodecV1 {
             requireConnectionFree()
             return TestTerminalCodecV1(owner.journalConfiguration, TestTerminalRoutingV1.fromRetained(owner), SecureRandom(), nanoTime)
