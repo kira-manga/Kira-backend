@@ -1270,7 +1270,7 @@ internal object CatalogTestRunTerminalActiveHistoryCasesV1 {
     }
 
     /** Disposable negative row changes only. Restored contents are used only by ordered teardown, never a successful original. */
-    private fun withChangedRecurrentHistory(f: TestRunPurgeFixtureV1, fault: TerminalCatalogRecurrentRowFaultV1, action: () -> Unit) {
+    internal fun withChangedRecurrentHistory(f: TestRunPurgeFixtureV1, fault: TerminalCatalogRecurrentRowFaultV1, action: () -> Unit) {
         requireConnectionFree()
         val latest = f.observer.queryForMap("SELECT * FROM complaint_test_active_checkpoint_history WHERE data_scope_id = ? ORDER BY ordinal DESC LIMIT 1", f.scope)
         val ordinal = (latest["ordinal"] as Number).toInt(); val token = latest["operation_token"]
