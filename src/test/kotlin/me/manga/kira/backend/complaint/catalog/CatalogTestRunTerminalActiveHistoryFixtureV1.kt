@@ -277,6 +277,7 @@ internal object CatalogRetainedDPrimaryCasesV1 {
             ComplaintJournalDeletionKindV1.OWNER_DELETE, verifyPublication = false) { f, a, _, inputs, _ ->
             assertEquals("PREPARED", a.publication()["state"])
             val record = checkNotNull(a.record); val before = a.counters()
+            val nonTargetRowsBeforeD = nonTargetDomainRows(f.observer, f.scope, record.event.complaintIds().single())
             val identity = a.image().filterKeys { it in setOf("app_installations", "complaint_installation_ids") }
             val otherControlRows = otherControls(f.observer, f.scope)
             var completedRows: Map<String, List<String>>? = null
@@ -288,7 +289,7 @@ internal object CatalogRetainedDPrimaryCasesV1 {
                     if (call.sql == OwnerDeletePersistenceSql.COMPLETE_RECEIPT) {
                         assertEquals(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, call.path)
                         assertNull(completedRows)
-                        assertCompletedPrimary(jdbc, a, "PARTIAL")
+                        assertCompletedPrimary(jdbc, a, "PARTIAL", nonTargetRowsBeforeD)
                         assertApplyAccounting(jdbc, before)
                         completedRows = primaryRows(jdbc, f.scope) - "complaint_recovery_capacity_reservations"
                         completedRecovery = terminalCatalogAllRecoveryWithoutState(jdbc, f.scope)
@@ -308,7 +309,7 @@ internal object CatalogRetainedDPrimaryCasesV1 {
                     assertEquals(checkNotNull(completedRows), primaryRows(f.observer, f.scope) - "complaint_recovery_capacity_reservations",
                         "Later inventory, conversion and seal never rewrite the actual committed N/P/E/proof/domain/audit, even xmin.")
                     assertEquals(checkNotNull(completedRecovery), terminalCatalogAllRecoveryWithoutState(f.observer, f.scope))
-                    assertCompletedPrimary(f.observer, a, "CONVERTED")
+                    assertCompletedPrimary(f.observer, a, "CONVERTED", nonTargetRowsBeforeD)
                     assertEquals(identity, a.image().filterKeys { it in identity.keys })
                     assertEquals(otherControlRows, otherControls(f.observer, f.scope), "No global healthy history is synthesized.")
                     assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
@@ -325,6 +326,7 @@ internal object CatalogRetainedDPrimaryCasesV1 {
             val sealOrderBefore = f.sealHttp.order.toList()
             assertTrue(sealOrderBefore.isNotEmpty(), "The shared native transport already records the genuine A predecessor.")
             val record = checkNotNull(a.record)
+            val nonTargetRowsBeforeD = nonTargetDomainRows(f.observer, f.scope, record.event.complaintIds().single())
             var controlBeforeFault: String? = null
             var injected = 0
             CatalogTerminalHistoryDrainProbeV1(f, a, preparedPrimary = prepared).use { probe ->
@@ -344,7 +346,7 @@ internal object CatalogRetainedDPrimaryCasesV1 {
                         if (fault === TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE) {
                             assertEquals("VERIFIED", jdbc.queryForObject("SELECT state FROM complaint_journal_publications WHERE data_scope_id = ?", String::class.java, f.scope))
                         } else if (fault !== TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER) {
-                            assertCompletedPrimary(jdbc, a, "PARTIAL") // Real domain/E/L/audit/N/P writes already happened on this holder.
+                            assertCompletedPrimary(jdbc, a, "PARTIAL", nonTargetRowsBeforeD) // Real domain/E/L/audit/N/P writes already happened on this holder.
                         }
                         val change = when (fault) {
                             TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER -> "lease_owner = ?::uuid"
@@ -405,8 +407,14 @@ internal object CatalogRetainedDPrimaryCasesV1 {
         }
     }
 
-    private fun assertCompletedPrimary(jdbc: JdbcTemplate, a: TestRegisteredInitialCheckpointDeletionFixtureV1, recoveryState: String) {
+    private fun assertCompletedPrimary(
+        jdbc: JdbcTemplate,
+        a: TestRegisteredInitialCheckpointDeletionFixtureV1,
+        recoveryState: String,
+        nonTargetRowsBeforeD: Map<String, List<String>>,
+    ) {
         val record = checkNotNull(a.record)
+        val target = record.event.complaintIds().single()
         val p = jdbc.queryForMap("SELECT * FROM complaint_journal_publications WHERE data_scope_id = ?", a.scope)
         val n = jdbc.queryForMap("SELECT * FROM complaint_idempotency_receipts WHERE data_scope_id = ? AND operation = 'OWNER_DELETE'", a.scope)
         val e = jdbc.queryForMap("SELECT * FROM complaint_deletion_journal_applied WHERE data_scope_id = ?", a.scope)
@@ -433,13 +441,20 @@ internal object CatalogRetainedDPrimaryCasesV1 {
         val at = listOf(p["created_at"], p["verified_at"], e["applied_at"], l["converted_at"], p["applied_at"], n["completed_at"]).map { (it as Timestamp).toInstant() }
         assertTrue(at.zipWithNext().all { (earlier, later) -> !later.isBefore(earlier) })
         assertEquals(at.last().plus(Duration.ofHours(192)), (n["expires_at"] as Timestamp).toInstant())
-        assertEquals(0L, jdbc.queryForObject("SELECT count(*) FROM complaints WHERE data_scope_id = ?", Long::class.java, a.scope))
-        assertEquals("DELETED", jdbc.queryForObject("SELECT state FROM complaint_resource_ids WHERE data_scope_id = ?", String::class.java, a.scope))
+        assertEquals(0L, jdbc.queryForObject("SELECT count(*) FROM complaints WHERE id = ? AND data_scope_id = ?", Long::class.java, target, a.scope))
+        assertEquals("DELETED", jdbc.queryForObject("SELECT state FROM complaint_resource_ids WHERE id = ? AND data_scope_id = ?", String::class.java, target, a.scope))
+        assertEquals(nonTargetRowsBeforeD, nonTargetDomainRows(jdbc, a.scope, target),
+            "All non-target content and resources, including genuine SYSTEM NOTICE rows and xmin, remain unchanged from before D; no new rows appear.")
         assertEquals(true, jdbc.queryForObject("SELECT actor_user_id IS NULL AND complaint_actor_kind = 'INSTALLATION' AND entity_type = 'complaint' " +
             "AND entity_id = ? AND detail = jsonb_build_object('version', 1) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_DELETED'",
             Boolean::class.java, record.event.complaintIds().single().toString(), a.scope))
         assertEquals(0L, jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_RECOVERY_APPLIED'", Long::class.java, a.scope))
     }
+
+    private fun nonTargetDomainRows(jdbc: JdbcTemplate, scope: UUID, target: UUID): Map<String, List<String>> =
+        listOf("complaints", "complaint_resource_ids").associateWith { table -> jdbc.queryForList(
+            "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = ? AND id <> ? ORDER BY id",
+            String::class.java, scope, target) }
 
     private fun primaryRows(jdbc: JdbcTemplate, scope: UUID): Map<String, List<String>> = listOf(
         "complaint_idempotency_receipts", "installation_deletion_receipts", "complaint_journal_publications", "complaint_recovery_capacity_reservations",
