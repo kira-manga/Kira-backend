@@ -938,6 +938,7 @@ internal class CatalogTestRunTerminalV1 private constructor(
         }
     }
     internal fun observeFailure(problem: Throwable) {
+        val fixtureStage = if (fixtureConfigured) stage else null
         val retained = when {
             problem is Error -> problem
             problem is CancellationException -> CancellationException("TEST terminal catalog cancelled.")
@@ -949,7 +950,24 @@ internal class CatalogTestRunTerminalV1 private constructor(
             val old = failure.get()
             if (old is Error || old is CancellationException && retained !is Error || old is InterruptedException && retained !is Error && retained !is CancellationException ||
                 old != null && retained is CatalogTestRunTerminalExceptionV1) return
-            if (failure.compareAndSet(old, retained)) return
+            if (failure.compareAndSet(old, retained)) {
+                if (old == null && fixtureStage != null) {
+                    // Fixture-only first retained observation, not a root-cause or cleanup verdict.
+                    try {
+                        val category = when (problem) {
+                            is PersistencePhaseException -> "PHASE"
+                            is CatalogTestRunTerminalExceptionV1 -> "TERMINAL"
+                            is Error -> "ERROR"
+                            is CancellationException -> "CANCELLATION"
+                            is InterruptedException, is InterruptedIOException -> "INTERRUPTION"
+                            else -> "OTHER"
+                        }
+                        val phaseCode = (problem as? PersistencePhaseException)?.code?.name ?: "NONE"
+                        System.err.println("TEST_CATALOG_TERMINAL_FIRST_FAILURE stage=${fixtureStage.name} category=$category phaseCode=$phaseCode")
+                    } catch (_: Throwable) { /* Diagnostics must not replace the retained failure or affect cleanup. */ }
+                }
+                return
+            }
         }
     }
     internal fun throwIfSignalled() { failure.get()?.let { if (it is InterruptedException) Thread.currentThread().interrupt(); throw it } }

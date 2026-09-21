@@ -16,6 +16,7 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunTermi
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEventContextV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalPurgeV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalCanonicalV4
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalPreparedRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalRequestV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalV1
@@ -70,7 +71,20 @@ internal fun withTerminalCatalogRun(tls: VersionBoundPersistenceConnectedFixture
                     diagnosticPhase = "QUIESCENCE_RELEASE"
                     probe.assertReleased(); f.assertReleased()
                     diagnosticPhase = "CATALOG_HANDOFF"
-                    CatalogTestRunTerminalFixtureV1(f, d, approval, raw).use(action)
+                    val fixture = try { CatalogTestRunTerminalFixtureV1(f, d, approval, raw) }
+                    catch (problem: CatalogTestRunTerminalExceptionV1) {
+                        try { System.err.println("TEST_CATALOG_TERMINAL_FIXTURE_FAILURE stage=CONSTRUCT category=TERMINAL") }
+                        catch (_: Throwable) { /* Preserve the original constructor failure. */ }
+                        throw problem
+                    }
+                    fixture.use { actual ->
+                        try { action(actual) }
+                        catch (problem: CatalogTestRunTerminalExceptionV1) {
+                            try { System.err.println("TEST_CATALOG_TERMINAL_FIXTURE_FAILURE stage=ACTION category=TERMINAL") }
+                            catch (_: Throwable) { /* Preserve the original action failure and use cleanup. */ }
+                            throw problem
+                        }
+                    }
                 } finally { approval.fill(0); raw.forEach { it.fill(0) } }
             } catch (problem: Throwable) {
                 runCatching { probe.reportUnexpectedFailure(problem, diagnosticPhase) }
