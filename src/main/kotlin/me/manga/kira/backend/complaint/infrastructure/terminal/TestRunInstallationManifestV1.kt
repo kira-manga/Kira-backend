@@ -77,8 +77,12 @@ internal class TestRunInstallationManifestV1 private constructor(internal val dr
         drain.requireManifestPredecessor()
         registration.requireUsable()
         acquisition.requireRetained(routing, registration.process.publicationLanes)
+        // The closed producer's manifest is only the new ORDINARY tail. Earlier retained ACTIVE
+        // ranges remain in the complete native cut; count all of them without relabeling its root.
         requireManifest(!control.needsCapture && epoch == Math.addExact(control.cutoff, 1L) &&
-            ordinarySealManifest.count == ordinaryCut.denial.firstInventory.versionCount)
+            control.initialHistory?.records.orEmpty().fold(ordinarySealManifest.count) { count, record ->
+                Math.addExact(count, record.eventCount)
+            } == ordinaryCut.denial.firstInventory.versionCount)
     }
 
     fun prepare(): TestRunInstallationManifestResultV1 {
