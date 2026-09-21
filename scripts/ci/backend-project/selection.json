@@ -1,0 +1,100 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 28,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Six corrected operational microsecond timestamp predicates; existing genuine archived-predecessor/native/APPLY/refund regression, no fabricated timestamps.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineOwnerDeleteRequiresArchivedPredecessorTwoPaidNativePassesApplyAndPhysicalRefund",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5ab0198c2822e6d414635d3bbecd16d107baa9cb",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "genuineOwnerDeleteRequiresArchivedPredecessorTwoPaidNativePassesApplyAndPhysicalRefund()"
+      ]
+    },
+    {
+      "annotation_line": 18,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInstallationMeHttpIT",
+      "cohort": "Shared D7 TEST cleanup changes pool-actor waiting; retain BOTH same-class me methods to verify sequential retirement/reconstruction and desired lifetime/auth contracts. First previously passed; re-run is affected lifecycle regression, not reassurance.",
+      "expected_invocations_from_annotation": 1,
+      "method": "explicitMeStartupReadsCurrentIdentityDuringMaintenanceWithoutCheckpointOrComplaintMutation",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInstallationMeHttpIT.kt",
+      "source_head": "5ab0198c2822e6d414635d3bbecd16d107baa9cb",
+      "source_sha256": "ee03caa8fd98432df939b57f0be0845096c58935b2100b3135d792369e10a3d4",
+      "xml_names": [
+        "explicitMeStartupReadsCurrentIdentityDuringMaintenanceWithoutCheckpointOrComplaintMutation()"
+      ]
+    },
+    {
+      "annotation_line": 21,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInstallationMeHttpIT",
+      "cohort": "Shared D7 TEST cleanup changes pool-actor waiting; retain BOTH same-class me methods to verify sequential retirement/reconstruction and desired lifetime/auth contracts. First previously passed; re-run is affected lifecycle regression, not reassurance.",
+      "expected_invocations_from_annotation": 1,
+      "method": "explicitMeSubsetPreservesOlderRoutesAndOriginalResourcesAndRejectsRetainedAuthenticationAfterClose",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInstallationMeHttpIT.kt",
+      "source_head": "5ab0198c2822e6d414635d3bbecd16d107baa9cb",
+      "source_sha256": "ee03caa8fd98432df939b57f0be0845096c58935b2100b3135d792369e10a3d4",
+      "xml_names": [
+        "explicitMeSubsetPreservesOlderRoutesAndOriginalResourcesAndRejectsRetainedAuthenticationAfterClose()"
+      ]
+    },
+    {
+      "annotation_line": 39,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "Affected terminal FREEZE signer-policy conversion; original no-A and genuine-A paths, prior failures retained until actual verification.",
+      "expected_invocations_from_annotation": 1,
+      "method": "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "5ab0198c2822e6d414635d3bbecd16d107baa9cb",
+      "source_sha256": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+      "xml_names": [
+        "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging()"
+      ]
+    },
+    {
+      "annotation_line": 91,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "Affected terminal FREEZE signer-policy conversion; original no-A and genuine-A paths, prior failures retained until actual verification.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "5ab0198c2822e6d414635d3bbecd16d107baa9cb",
+      "source_sha256": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+      "xml_names": [
+        "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 5,
+  "expected_total": 5,
+  "selection_basis": {
+    "cohorts": {
+      "Affected terminal FREEZE signer-policy conversion; original no-A and genuine-A paths, prior failures retained until actual verification.": 2,
+      "Shared D7 TEST cleanup changes pool-actor waiting; retain BOTH same-class me methods to verify sequential retirement/reconstruction and desired lifetime/auth contracts. First previously passed; re-run is affected lifecycle regression, not reassurance.": 2,
+      "Six corrected operational microsecond timestamp predicates; existing genuine archived-predecessor/native/APPLY/refund regression, no fabricated timestamps.": 1
+    },
+    "previous_run": "35610407106",
+    "scope": "Three reviewed source corrections; terminal2, recurrent1, sequential me2.19 historical successful methods retained; only affected me1 repeats with lifecycle change. Alias4methods12scenarios and every deferred requirement retained."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInstallationMeHttpIT.kt": "ee03caa8fd98432df939b57f0be0845096c58935b2100b3135d792369e10a3d4"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 2,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInstallationMeHttpIT": 2
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuineOwnerDeleteRequiresArchivedPredecessorTwoPaidNativePassesApplyAndPhysicalRefund",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInstallationMeHttpIT.explicitMeStartupReadsCurrentIdentityDuringMaintenanceWithoutCheckpointOrComplaintMutation",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInstallationMeHttpIT.explicitMeSubsetPreservesOlderRoutesAndOriginalResourcesAndRejectsRetainedAuthenticationAfterClose"
+  ]
+}
