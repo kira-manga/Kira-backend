@@ -2,6 +2,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1
 import javax.sql.DataSource
 
 /** One root's fixed cold composition and partial-shell custody. Neither construction nor descriptors grant activation. */
@@ -19,6 +20,25 @@ internal class VersionBoundPersistencePools private constructor(
     private val catalogBinding = binding(endpoint, PersistenceJdbcParticipantRole.CATALOG_COORDINATOR, ordinaryCapacity, identity)
     private val bindings = listOf(ordinaryBinding, deletionBinding, catalogBinding)
     private var catalog: CatalogCoordinatorPersistence? = null
+    private var testCreatePolicy: TestCreatePolicy? = null
+
+    /** One cold policy pin (including absence). No registration or current-content grant is stored here. */
+    internal fun retainTestInitialCheckpointCreate(policy: VersionBoundTestInitialCheckpointCreateV1?) {
+        requireConnectionFree()
+        policy?.requirePool(this)
+        synchronized(custody) {
+            requireBinding(state === State.BOUND && !root.shutdown.get())
+            val retained = testCreatePolicy
+            if (retained == null) testCreatePolicy = TestCreatePolicy(policy)
+            else requireBinding(retained.policy === policy)
+        }
+    }
+
+    internal fun requireTestInitialCheckpointCreate(policy: VersionBoundTestInitialCheckpointCreateV1?) = synchronized(custody) {
+        requireBinding(testCreatePolicy?.policy === policy)
+    }
+
+    private class TestCreatePolicy(val policy: VersionBoundTestInitialCheckpointCreateV1?)
 
     val ordinary: GuardedDataSource get() = completed { ordinaryBinding.dataSource() }
     val deletion: GuardedDataSource get() = completed { deletionBinding.dataSource() }

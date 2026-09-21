@@ -1,8 +1,5 @@
 package me.manga.kira.backend.complaint.infrastructure.journal
 
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveInitialCheckpointDocumentV1
@@ -229,17 +226,7 @@ internal class TestActiveInitialCheckpointReaderV1 private constructor(
         internal fun requireOriginal(original: TestActiveInitialCheckpointV1) = reader.requireSealProof(this, original)
         internal fun canonicalVerificationBytes(row: TestTerminalDurableRowV1, at: Instant = verifiedAt): ByteArray {
             requireInitialCheckpoint(at.nano % 1000 == 0 && !at.isBefore(lastModified) && !at.isAfter(verifiedAt) && retainUntil.isAfter(at))
-            return CanonicalJson.canonicalize(buildJsonObject {
-                put("schemaVersion", 1); put("objectKind", "EPOCH_SEAL"); put("role", "ORDINARY")
-                put("dataScopeId", row.binding.run.dataScopeId); put("writerGeneration", row.binding.writerGeneration)
-                put("epochStartInclusive", row.binding.epochStartInclusive); put("epochEndInclusive", row.binding.epochEndInclusive)
-                put("operationToken", row.binding.operationToken); put("configurationSha256", row.binding.run.configurationSha256)
-                put("journalConfigurationSha256", row.binding.journalConfigurationSha256)
-                put("objectKey", row.binding.objectKey); put("objectId", row.binding.objectId); put("objectVersion", version)
-                put("canonicalSha256", row.canonicalSha256); put("ciphertextSha256", checkNotNull(row.wireSha256))
-                put("lastModified", lastModified.toString()); put("requestedRetainUntil", checkNotNull(row.retainUntil).toString())
-                put("retainUntil", retainUntil.toString()); put("objectLockMode", "COMPLIANCE"); put("verifiedAt", at.toString())
-            }).toByteArray(Charsets.UTF_8)
+            return me.manga.kira.backend.complaint.infrastructure.terminal.testOrdinarySealVerificationBytesV1(row, version, lastModified, retainUntil, at)
         }
 
         override fun toString(): String = "InitialCheckpointSealProof(native-authenticated-released,redacted)"

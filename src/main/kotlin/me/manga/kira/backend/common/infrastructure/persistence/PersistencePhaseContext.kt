@@ -294,6 +294,7 @@ constructor(
     internal val adminContent: PersistenceComplaintAdminContent = AdminContentBoundary()
     internal val adminStatus: PersistenceComplaintAdminStatus = AdminStatusBoundary()
     internal val adminBatchStatus: PersistenceComplaintAdminBatchStatus = AdminBatchStatusBoundary()
+    private var registeredInitialCheckpointCreate: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateV1? = null
     internal val ownerOperation: PersistenceOwnerOperation = OwnerOperationBoundary()
     internal val ownerEdit: PersistenceOwnerEdit = OwnerEditBoundary()
     internal val adminDelete: PersistenceAdminDelete = AdminDeleteBoundary()
@@ -1382,6 +1383,10 @@ constructor(
     ) {
         selectedHolder.requireMaintenanceFence(fence, selected)
         when {
+            // M/shared is still held. Closed/pending/current eligibility is checked only AFTER a new
+            // exact claim; a losing receipt claim must remain replayable without a freshness gate.
+            // AUTH/receipt SQL separately compares current desired identity in its same row snapshot.
+            registeredInitialCheckpointCreate != null -> checkNotNull(registeredInitialCheckpointCreate).requirePhaseOwner(ownership)
             testOrdinaryDrain != null -> testOrdinaryDrain.requireMaintenanceGate(ownership, path, gate)
             testRunOwnerDelete != null -> testRunOwnerDelete.requireMaintenanceGate(ownership, path, gate)
             testRunOwnerDeleteAll != null -> testRunOwnerDeleteAll.requireMaintenanceGate(ownership, path, gate)
@@ -3451,6 +3456,17 @@ constructor(
         private var claimed = false
         private var boundsChecked = false
 
+        override fun bindRegisteredInitialCheckpointCreate(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateV1,
+            context: me.manga.kira.backend.security.ComplaintIngressContext?) {
+            requireCaller()
+            if (stage !== Stage.PREPARED || registeredInitialCheckpointCreate != null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            original.requirePhaseOwner(ownership) // Entry already happened; this PREPARED phase now owns the caller.
+            original.requirePath(path)
+            if (writeOperation != null) original.requireAdmission(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED))
+            else original.requireReadAdmission(context ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED))
+            registeredInitialCheckpointCreate = original
+        }
+
         private val writeOperation: ComplaintOwnerCreationOperation?
             get() = when (path) {
                 PersistencePhasePath.COMPLAINT_OWNER_CREATE -> ComplaintOwnerCreationOperation.OWNER_CREATE
@@ -3482,6 +3498,7 @@ constructor(
                 refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
             requireStepUpResource(jdbc, expected)
+            ownership.dataSource.requireTestInitialCheckpointCreate(registeredInitialCheckpointCreate?.policy)
             if (issued || (writeOperation != null && admission == null)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             issued = true
             installLimits()
@@ -3490,13 +3507,24 @@ constructor(
 
         override fun retain(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
-            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path) ||
+                !operation.registeredWith(registeredInitialCheckpointCreate)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             retained = operation
         }
 
         override fun requireRetained(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
             if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun requireOwner(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate, selected: PersistencePhaseOwnership) {
+            requireRetained(operation, jdbc)
+            if (selected !== ownership) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun connection(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate): Connection {
+            requireRetained(operation, jdbc)
+            return connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
 
         override fun claimCreate(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate, tuple: ComplaintOwnerOperationTuple) {
@@ -5089,9 +5117,13 @@ internal interface PersistenceOwnerDetail {
 /** The exact phase owns this view and accepts only its own concrete retained SQL operation. */
 internal interface PersistenceOwnerOperation {
     fun bindCreate(handoff: ComplaintAdmittedOwnerCreate)
+    fun bindRegisteredInitialCheckpointCreate(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateV1,
+        context: me.manga.kira.backend.security.ComplaintIngressContext?)
     fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath)
     fun retain(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate)
     fun requireRetained(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate)
+    fun requireOwner(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate, selected: PersistencePhaseOwnership)
+    fun connection(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate): Connection
     fun claimCreate(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate, tuple: ComplaintOwnerOperationTuple)
     fun checkCreateBounds(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate, ledger: ComplaintCapacityLedger)
     fun checkCreateWrite(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate)

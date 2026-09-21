@@ -1697,6 +1697,18 @@ internal class ComplaintIngressAdmission(
             }
         }
 
+        /** Exact retained TEST ingress comparison only; no new admission or replacement quota history. */
+        internal fun requireOwnerCreateOwner(handoff: ComplaintAdmittedOwnerCreate, owner: ComplaintIngressAdmission) {
+            val selected = handoff as? AdmittedCreate ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            if (selected.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            owner.locked { owner.requireCreateState(selected) }
+        }
+
+        /** Local live-registry comparison at PREPARED read entry, before checkout. No admission is started, charged or renewed. */
+        internal fun requireOwnerOperationReadOwner(context: ComplaintIngressContext, owner: ComplaintIngressAdmission) {
+            owner.locked { owner.state(context) }
+        }
+
         internal fun bindOwnerCreate(
             handoff: ComplaintAdmittedOwnerCreate,
             phaseIdentity: Any,

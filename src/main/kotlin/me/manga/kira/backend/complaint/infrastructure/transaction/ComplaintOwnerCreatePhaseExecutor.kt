@@ -18,27 +18,30 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerOperationObs
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerReplyCandidate
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerCreateStore
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerCreate
+import me.manga.kira.backend.security.ComplaintIngressContext
 
 /** Fixed named phases, no application callback, alternate manager or independent physical owner. */
 internal class ComplaintOwnerCreatePhaseExecutor(private val ownership: PersistencePhaseOwnership, private val store: JdbcComplaintOwnerCreateStore) {
-    fun authenticate(identity: ComplaintOwnerOperationIdentity): ComplaintOwnerOperationObservation =
-        read(identity, null, PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION)
+    fun authenticate(identity: ComplaintOwnerOperationIdentity, context: ComplaintIngressContext? = null): ComplaintOwnerOperationObservation =
+        read(identity, null, PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION, context)
 
-    fun preflight(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple): ComplaintOwnerOperationObservation =
-        read(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT)
+    fun preflight(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple, context: ComplaintIngressContext? = null): ComplaintOwnerOperationObservation =
+        read(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT, context)
 
-    fun replyPreflight(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple): ComplaintOwnerOperationObservation =
-        read(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT)
+    fun replyPreflight(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple, context: ComplaintIngressContext? = null): ComplaintOwnerOperationObservation =
+        read(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT, context)
 
-    fun status(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple): ComplaintOwnerOperationObservation =
-        read(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS)
+    fun status(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple, context: ComplaintIngressContext? = null): ComplaintOwnerOperationObservation =
+        read(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS, context)
 
     @Suppress("TooGenericExceptionCaught")
     private fun read(
         identity: ComplaintOwnerOperationIdentity,
         tuple: ComplaintOwnerOperationTuple?,
         path: PersistencePhasePath,
+        context: ComplaintIngressContext?,
     ): ComplaintOwnerOperationObservation {
+        store.requireResources(ownership)
         val phase = when (path) {
             PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION -> ownership.enterComplaintOwnerOperationAuthentication()
             PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT -> ownership.enterComplaintOwnerCreatePreflight()
@@ -48,6 +51,7 @@ internal class ComplaintOwnerCreatePhaseExecutor(private val ownership: Persiste
         }
         var operation: ComplaintOwnerCreateOperation? = null
         try {
+            store.bind(phase, context) // Registered reads pin the live ingress BEFORE begin/checkout; legacy absence is unchanged.
             phase.begin()
             operation = when (path) {
                 PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION -> store.authenticate(identity)
@@ -89,11 +93,13 @@ internal class ComplaintOwnerCreatePhaseExecutor(private val ownership: Persiste
         admission: ComplaintAdmittedOwnerCreate,
     ): ComplaintOwnerOperationObservation {
         check((create == null) != (reply == null))
+        store.requireResources(ownership)
         val phase = if (reply != null) ownership.enterComplaintOwnerReply() else ownership.enterComplaintOwnerCreate()
         var operation: ComplaintOwnerCreateOperation? = null
         var refusal: ComplaintOwnerOperationFailure? = null
         try {
             phase.ownerOperation.bindCreate(admission)
+            store.bind(phase)
             phase.begin()
             operation = if (reply != null) store.reply(identity, reply, platform) else store.create(identity, checkNotNull(create), platform)
             phase.commit()

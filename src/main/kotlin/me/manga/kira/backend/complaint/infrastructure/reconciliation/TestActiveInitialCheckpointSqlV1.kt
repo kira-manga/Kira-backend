@@ -30,7 +30,30 @@ internal object TestActiveInitialCheckpointSqlV1 {
         AND c.checkpoint_bytes IS NULL AND c.checkpoint_hash IS NULL
     """.trimIndent()
     /** Same frozen21 identity comparison positions as C. Dynamic ACTIVE enrollment is legal, not an initial reserve snapshot. */
-    val current = """
+    val current = current(noHistory)
+
+    /** Same registered first-seal comparisons, but only the completed, lease-free initial checkpoint. */
+    val currentForOwnerCreate = current("""
+        c.retention_lease_owner IS NULL AND c.retention_lease_token = 0 AND c.retention_lease_expires_at IS NULL
+        AND c.seal_format IS NULL AND c.seal_rotation_id IS NULL AND c.seal_rotation_sequence IS NULL
+        AND c.seal_preparing_fencing_token IS NULL AND c.seal_routing_key_id IS NULL AND c.seal_epoch_start IS NULL AND c.seal_preceding_hash IS NULL
+        AND c.lease_owner IS NULL AND c.lease_expires_at IS NULL AND c.checkpoint_fencing_token = c.lease_token
+        AND c.checkpoint_fencing_token > i.preparing_fencing_token AND c.checkpoint_generation = d.desired_generation
+        AND c.checkpoint_catalog_generation = d.generation AND c.checkpoint_catalog_hash = d.activation_hash
+        AND c.checkpoint_writer_generation = d.event_writer AND c.checkpoint_cutoff_epoch = 1
+        AND c.checkpoint_configuration_hash = d.configuration_hash AND c.checkpoint_database_identity = d.database_identity
+        AND c.checkpoint_restore_identity = d.restore_identity AND c.checkpoint_schema = d.implementation_schema
+        AND c.checkpoint_result = 'SUCCESS' AND c.checkpoint_object_count = 0 AND c.checkpoint_byte_count = 0
+        AND complaint_bytes_match(c.checkpoint_bytes, c.checkpoint_hash, 65536)
+        AND complaint_finite_times(c.checkpoint_started_at, c.checkpoint_completed_at)
+        AND c.checkpoint_started_at >= c.seal_verified_at AND c.checkpoint_completed_at >= c.checkpoint_started_at
+        AND c.checkpoint_completed_at <= c.updated_at AND c.checkpoint_completed_at <= s.sampled_at
+        AND NOT g.scan_requested
+        AND NOT EXISTS (SELECT 1 FROM complaint_journal_scan_runs x WHERE x.data_scope_id = e.scope)
+    """.trimIndent())
+
+    // No caller-selectable predicate: the two fixed readers share the complete registered identity and lineage.
+    private fun current(history: String) = """
         $expected
         SELECT (e.scope = d.scope AND r.test_only AND r.state = 'ACTIVE' AND (${ComplaintInstallationTestRunRows.activeShape})
             AND r.accounting_version = 1 AND r.configuration_hash = e.configuration_hash AND r.installation_limit = e.installation_limit
@@ -43,7 +66,7 @@ internal object TestActiveInitialCheckpointSqlV1 {
             AND c.restore_identity = d.restore_identity AND c.event_writer_generation = d.event_writer
             AND c.catalog_writer_generation = d.catalog_writer AND c.trust_bundle_hash = d.trust_hash
             AND c.accepted_catalog_generation = d.generation AND c.accepted_catalog_hash = d.activation_hash
-            AND NOT c.maintenance_closed AND NOT c.creation_closed AND c.pending_projection_token IS NULL AND ($noHistory)
+            AND NOT c.maintenance_closed AND NOT c.creation_closed AND c.pending_projection_token IS NULL AND ($history)
             AND NOT g.test_only AND g.implementation_schema = 1 AND g.desired_generation = b.desired_generation
             AND g.desired_configuration_hash IS NOT DISTINCT FROM b.configuration_hash
             AND g.database_identity = d.database_identity AND g.restore_identity = d.restore_identity

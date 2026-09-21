@@ -113,6 +113,9 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     val initialCheckpoint = document.initialCheckpoint?.also(
         me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveInitialCheckpointV1::requireInput,
     )
+    val initialCheckpointCreate = document.initialCheckpointCreate?.also(
+        me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1::requireInput,
+    )
     val sealerSessionName = document.sealer.bootstrapSessionName
     val sealerLimits = document.sealer.sdkLimits.let {
         AwsEpochSealStsLimits(it.requestTimeoutMillis, it.connectTimeoutMillis, it.readTimeoutMillis, it.maxResponseBytes, it.clockUncertaintyMillis)
@@ -142,6 +145,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         // but its presence is committed in full D; it cannot be added to an already registered run.
         if (!combinedInitialRecovery) valid((document.profile == ACTIVE_FIRST_CUT_SUCCESSOR_PROFILE) == (activeFirstCutSuccessor != null))
         valid((document.profile == INITIAL_CHECKPOINT_PROFILE || combinedInitialRecovery) == (initialCheckpoint != null))
+        valid(initialCheckpointCreate == null || initialCheckpoint != null)
         valid((document.profile == ACTIVE_SEAL_RECOVERY_PROFILE || combinedInitialRecovery) == (activeOrdinarySealRecovery != null))
         valid((activeFirstCut != null) == (ordinaryPublication != null))
         // Explicit independent opt-in before full D; never a replacement for the ordinary grant.

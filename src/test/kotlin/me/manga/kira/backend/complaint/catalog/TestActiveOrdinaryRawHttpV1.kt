@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOrdinarySealRecoveryInputV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointHttpInputV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointCreateInputV1
 import software.amazon.awssdk.http.SdkHttpClient
 
 /**
@@ -16,4 +17,7 @@ internal class TestActiveOrdinaryRawHttpV1(
     // Separate immutable TEST recipe selection before intake/D; absent preserves every old scenario.
     val initialCheckpoint: TestActiveInitialCheckpointHttpInputV1? = null,
     val activeSealRecovery: TestActiveOrdinarySealRecoveryInputV1? = null,
+    val initialCheckpointCreate: TestInitialCheckpointCreateInputV1? = null,
+    // Explicit TEST-only birth configuration. Tightens J before parsing/D; never changes a live deadline.
+    val shortInitialCheckpointFreshness: Boolean = false,
 )

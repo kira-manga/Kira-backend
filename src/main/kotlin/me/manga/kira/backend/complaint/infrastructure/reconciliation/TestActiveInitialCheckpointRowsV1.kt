@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveInitialCh
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableBindingV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableKindV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableRowV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalRunContextV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestActiveInitialCheckpointReaderV1
 import java.sql.ResultSet
 import java.sql.Timestamp
@@ -49,6 +50,9 @@ internal object TestActiveInitialCheckpointRowsV1 {
         val version: String, val retainUntil: Instant, val verifiedAt: Instant,
         private val canonical: ByteArray, private val proof: ByteArray,
     ) : AutoCloseable {
+        /** Detached persisted bytes only, not an instance of the native SealProof issuer. */
+        fun verificationBytes(): ByteArray = proof.copyOf()
+
         fun requireNative(original: TestActiveInitialCheckpointV1, observed: TestActiveInitialCheckpointReaderV1.SealProof) {
             observed.requireOriginal(original)
             requireInitialCheckpoint(observed.version == version && observed.retainUntil == retainUntil &&
@@ -125,11 +129,16 @@ internal object TestActiveInitialCheckpointRowsV1 {
         override fun toString(): String = "InitialCheckpointScan(detached-full-preimage,redacted,no-proof)"
     }
 
-    fun intent(row: ResultSet, original: TestActiveInitialCheckpointV1, current: Current): TestTerminalDurableRowV1 {
-        requireInitialCheckpoint(boolean(row, "valid") && hash(row, "seal_encoding_hash") == original.identity.sealEncodingSha256)
-        val binding = TestTerminalDurableBindingV1(current.operationToken.toString(), original.runContext, original.routing.journalConfiguration.sha256,
+    fun intent(row: ResultSet, original: TestActiveInitialCheckpointV1, current: Current): TestTerminalDurableRowV1 =
+        intentComparisons(row, original.identity, original.runContext, original.routing.journalConfiguration.sha256, current)
+
+    /** Shared fixed V26 comparison decoder. Neither its inputs nor its result grant any current/native authority. */
+    fun intentComparisons(row: ResultSet, identity: TestActiveFirstCutIdentityV1, run: TestTerminalRunContextV1,
+        journalSha256: String, current: Current): TestTerminalDurableRowV1 {
+        requireInitialCheckpoint(boolean(row, "valid") && hash(row, "seal_encoding_hash") == identity.sealEncodingSha256)
+        val binding = TestTerminalDurableBindingV1(current.operationToken.toString(), run, journalSha256,
             TestTerminalDurableKindV1.EPOCH_SEAL, 0, checkNotNull(row.getString("object_id")), checkNotNull(row.getString("object_key")),
-            checkNotNull(row.getString("routing_key_id")), original.writer, 1, 1, row.getLong("preparing_fencing_token"),
+            checkNotNull(row.getString("routing_key_id")), identity.writer.toString(), 1, 1, row.getLong("preparing_fencing_token"),
             checkNotNull(row.getTimestamp("retention_floor")).toInstant(), checkNotNull(row.getTimestamp("created_at")).toInstant())
         requireInitialCheckpoint(binding.preparingFencingToken == current.preparingToken && current.preparingToken > current.captureToken && !binding.createdAt.isBefore(current.capturedAt))
         val bytes = checkNotNull(row.getBytes("canonical_bytes"))
@@ -156,6 +165,13 @@ internal object TestActiveInitialCheckpointRowsV1 {
     }
 
     fun boolean(row: ResultSet, name: String): Boolean = row.getBoolean(name).also { requireInitialCheckpoint(!row.wasNull()) }
+
+    /** One 17-column mapping for the writer and the current-reader equality check; no SQL is performed here. */
+    fun documentArguments(value: TestActiveInitialCheckpointDocumentV1, bytes: ByteArray, sha256: String): Array<Any?> =
+        arrayOf(value.desiredGeneration, value.fencingToken, value.catalogGeneration, hex(value.catalogSha256),
+            value.writerGeneration, 1L, hex(value.configurationSha256), value.databaseIdentity, value.restoreIdentity,
+            1, Timestamp.from(value.startedAt), Timestamp.from(value.completedAt), 0L, 0L, "SUCCESS", bytes.copyOf(), hex(sha256))
+
     fun long(row: ResultSet, name: String): Long = row.getLong(name).also { requireInitialCheckpoint(!row.wasNull()) }
     fun hash(row: ResultSet, name: String): String = checkNotNull(row.getBytes(name)).let {
         try { requireInitialCheckpoint(it.size == 32); HexFormat.of().formatHex(it) } finally { it.fill(0) }
