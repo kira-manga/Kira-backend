@@ -88,8 +88,7 @@ internal fun withInitialAdmission(tls: VersionBoundPersistenceConnectedFixture, 
                 } else sealing(step)
             }
             p.f.http.beforeRead = { p.f.signed.releasedSql(); fixture.assertSqlReleased() }
-            try { action(fixture); probe.assertNoLostAssertions() }
-            finally {
+            AutoCloseable {
                 p.f.http.beforeRead = p.f.signed::releasedSql
                 p.f.http.afterReadClientClose = {}
                 native.offsetNanos = 0 // Fixture cleanup only, never a renewed original budget.
@@ -98,7 +97,7 @@ internal fun withInitialAdmission(tls: VersionBoundPersistenceConnectedFixture, 
                 probe.afterSql = {}
                 assertSame(probe, field.get(executor)); field.set(executor, original)
                 fixture.cleanupIdentities()
-            }
+            }.use { action(fixture); probe.assertNoLostAssertions() }
         }
     }
 
@@ -174,8 +173,9 @@ internal class InitialAdmissionFixture(
             val jdbc = InitialIdentityProbe(ordinary)
             val audit = ComplaintInstallationEnrollmentAudit { scope, allocation, at -> service.recordInstallationEnrollment(scope, allocation, at) }
             val adapter = ComplaintInstallationExchangeAdapter(registration, ordinary.ownership, jdbc, audit)
-            try { action(InitialIdentityExchangeFixture(this, ordinary, jdbc, adapter, service)) }
-            finally { jdbc.assertNoLostAssertions(); requireConnectionFree() }
+            AutoCloseable { jdbc.assertNoLostAssertions(); requireConnectionFree() }.use {
+                action(InitialIdentityExchangeFixture(this, ordinary, jdbc, adapter, service))
+            }
         }
 
     fun controls(preserved: Boolean = false): List<String> = observer.queryForList(

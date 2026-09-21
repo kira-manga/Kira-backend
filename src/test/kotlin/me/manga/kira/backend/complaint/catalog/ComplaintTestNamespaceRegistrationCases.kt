@@ -533,7 +533,7 @@ internal object ComplaintTestNamespaceRegistrationCases {
     /** Existing real ordinary JPA/JDBC and counted audit adapter, also used to produce earlier authorized history. */
     internal fun withOrdinaryAudit(runtime: VersionBoundPersistenceConnectedFixture, action: (OrdinarySourceGrantCleanupFixture, AuditService) -> Unit) {
         val factory = ordinaryCleanupFactory(runtime.pools.ordinary, includeAuditEntities = true)
-        try {
+        AutoCloseable { factory.destroy() }.use {
             factory.afterPropertiesSet()
             OrdinarySourceGrantCleanupFixture(OwnedCutPool(runtime.scope, runtime.pools.ordinary), checkNotNull(factory.`object`),
                 ordinaryCleanupReader(runtime.database), maximumPoolSize = 2).use { ordinary ->
@@ -542,7 +542,7 @@ internal object ComplaintTestNamespaceRegistrationCases {
                 val service = AuditService(repository, CurrentUser(), SignedActivationObservation.WALL_CLOCK)
                 action(ordinary, service)
             }
-        } finally { factory.destroy() }
+        }
     }
 
     private fun globalImage(p: ProjectionActivationObservation): String = checkNotNull(p.f.rows.observer.queryForObject(
