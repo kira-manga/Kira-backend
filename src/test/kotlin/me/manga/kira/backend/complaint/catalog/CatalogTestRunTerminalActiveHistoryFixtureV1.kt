@@ -983,7 +983,8 @@ private fun withDrainedActiveHistoryCatalog(f: TestRunPurgeFixtureV1, inputs: Te
             try {
                 diagnosticStage = "QUIESCE"
                 terminalCatalogHistoryBoundaries(f, { probe.assertReleased(requireCommitted = false) }) {
-                    assertEquals(TestRunTerminalQuiescenceResultV1.TERMINAL_PREFIX_QUIESCENT_AND_SEALED, d.quiesce(approval, raw))
+                    try { assertEquals(TestRunTerminalQuiescenceResultV1.TERMINAL_PREFIX_QUIESCENT_AND_SEALED, d.quiesce(approval, raw)) }
+                    catch (problem: Throwable) { runCatching { probe.reportUnexpectedFailure(problem, "QUIESCE") }; throw problem }
                 }
                 diagnosticStage = "QUIESCENCE_RELEASE"
                 probe.assertReleased(); f.assertReleased(); assertEquals(history, terminalCatalogActiveRows(f))
