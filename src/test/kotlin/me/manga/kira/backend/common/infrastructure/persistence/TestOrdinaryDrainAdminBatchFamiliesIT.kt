@@ -16,8 +16,10 @@ class TestOrdinaryDrainAdminBatchFamiliesIT {
     @AfterAll fun closeDatabase() { if (database.isInitialized()) database.value.close() }
 
     @Test
-    fun preparedAndVerifiedBatchPrimariesCompleteBeforeInventoryWithoutRenewedAuthority() = withFixture {
-        TestOrdinaryDrainAdminBatchFamiliesCasesV1.retainedPrimaries(it)
+    fun preparedAndVerifiedBatchPrimariesCompleteBeforeInventoryWithoutRenewedAuthority() {
+        for (prepared in listOf(true, false)) withFixture {
+            TestOrdinaryDrainAdminBatchFamiliesCasesV1.retainedPrimaries(it, prepared)
+        }
     }
 
     @Test
@@ -36,8 +38,10 @@ class TestOrdinaryDrainAdminBatchFamiliesIT {
     }
 
     @Test
-    fun postDrainMissingBatchReceiptAndPaidAuditRefuseBeforeManifestProviders() = withFixture {
-        TestInstallationManifestFamilyJoinCasesV1.missingReceiptAndPaidAuditRefuse(it, adminBatch = true)
+    fun postDrainMissingBatchReceiptAndPaidAuditRefuseBeforeManifestProviders() {
+        for (publication in listOf(false, true)) withFixture {
+            TestInstallationManifestFamilyJoinCasesV1.missingReceiptAndPaidAuditRefuse(it, publication, adminBatch = true)
+        }
     }
 
     private fun withFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =

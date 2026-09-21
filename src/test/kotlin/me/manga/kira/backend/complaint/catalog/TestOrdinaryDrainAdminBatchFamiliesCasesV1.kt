@@ -26,8 +26,8 @@ import java.sql.ResultSet
 
 /** Existing registered/native fixture and genuine batch producer, never inserted work/receipt/P/U or a successful cut. */
 internal object TestOrdinaryDrainAdminBatchFamiliesCasesV1 {
-    fun retainedPrimaries(tls: VersionBoundPersistenceConnectedFixture) {
-        for (prepared in listOf(true, false)) withBatchRun(tls, prepared = prepared, verifiedOnly = !prepared) { f, batch ->
+    fun retainedPrimaries(tls: VersionBoundPersistenceConnectedFixture, prepared: Boolean) {
+        withBatchRun(tls, prepared = prepared, verifiedOnly = !prepared) { f, batch ->
             assertEquals(if (prepared) "PREPARED" else "VERIFIED", f.history.publicationState(batch.eventId))
             assertEquals("AUTHORIZED_DELETE", f.history.adminReceiptState(batch))
             assertEquals(1, update(f, "UPDATE users SET enabled = false, role = 'USER' WHERE id = ?", batch.actor))

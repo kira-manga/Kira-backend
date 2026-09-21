@@ -72,9 +72,9 @@ internal object TestInstallationManifestFamilyJoinCasesV1 {
         assertThrows<TestOrdinaryDrainExceptionV1> { drain.requireInventoryKind("OWNER_DELETE_ALL") }
     }
 
-    /** Two fresh genuine histories only; damage is after drain and never restored/adopted by a successor. */
-    fun missingReceiptAndPaidAuditRefuse(tls: VersionBoundPersistenceConnectedFixture, adminBatch: Boolean = false) {
-        for (publication in listOf(false, true)) withManifestFamilyJoinRun(tls, adminBatch = adminBatch) { f, admin, drain ->
+    /** One selected genuine history on its caller's fresh root; post-drain damage is never restored/adopted by a successor. */
+    fun missingReceiptAndPaidAuditRefuse(tls: VersionBoundPersistenceConnectedFixture, publication: Boolean, adminBatch: Boolean = false) {
+        withManifestFamilyJoinRun(tls, adminBatch = adminBatch) { f, admin, drain ->
             val adminKind = if (adminBatch) "ADMIN_BATCH_DELETE" else "ADMIN_DELETE"
             val preparation = if (publication) prepare(f, drain) else null
             manifestRaw(f) { connection ->

@@ -106,8 +106,10 @@ class TestInstallationManifestPublicationIT {
     }
 
     @Test
-    fun postDrainMissingAdminReceiptAndPaidAuditEvidenceRefuseBeforeManifestProviders() = withFixture {
-        TestInstallationManifestFamilyJoinCasesV1.missingReceiptAndPaidAuditRefuse(it)
+    fun postDrainMissingAdminReceiptAndPaidAuditEvidenceRefuseBeforeManifestProviders() {
+        for (publication in listOf(false, true)) withFixture {
+            TestInstallationManifestFamilyJoinCasesV1.missingReceiptAndPaidAuditRefuse(it, publication)
+        }
     }
 
     private fun completion(step: TestInstallationManifestPublicationStepV1, cut: TestRegistrationCompletionCut) =
