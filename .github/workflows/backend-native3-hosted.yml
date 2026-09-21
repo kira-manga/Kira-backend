@@ -1,0 +1,75 @@
+name: Backend App29 host admission diagnostic only
+
+# Primary admitted: admission-only, no runtime download/build/test or native qualification.
+on:
+  push:
+    branches: [remediation/backend-app29-logical-native3-admission-20260921-01]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: backend-native3-admission-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  admission:
+    if: >-
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.event.repository.private == false &&
+      github.event.created == true && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      CONTROL: ${{ github.workspace }}/carrier/scripts/ci/backend-project
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Exact carrier controls without retained credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: carrier
+          persist-credentials: false
+          fetch-depth: 2
+          sparse-checkout: scripts/ci/backend-project
+          sparse-checkout-cone-mode: false
+          show-progress: false
+
+      - name: Exact independently reviewed source, not the moving worktree
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: a16ec218e5134881236e7fecff6584ef584026ba
+          path: backend
+          persist-credentials: false
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Diagnose unchanged host admission, without runtime work
+        id: owned
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          cd "$CONTROL"
+          sha256sum --check --strict SHA256SUMS
+          /usr/bin/python3.12 -I -B "$CONTROL/run-hosted-native.py" --admit-outputs
+
+      - name: Validate fixed public files, not a native test result
+        id: public
+        if: always() && steps.owned.outputs.evidence != ''
+        env:
+          KIRA_QCAP_EVIDENCE: ${{ steps.owned.outputs.evidence }}
+          KIRA_QCAP_EVIDENCE_IDENTITY: ${{ steps.owned.outputs.evidence_identity }}
+        run: /usr/bin/python3.12 -I -B "$CONTROL/run-hosted-native.py" --publish-outputs
+
+      - name: Retain only the explicitly validated public files
+        if: always() && steps.public.outputs.upload == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-native3-admission-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 3
+          if-no-files-found: error
+          overwrite: false
+          include-hidden-files: false
+          path: ${{ steps.public.outputs.paths }}
