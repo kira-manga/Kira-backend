@@ -13,6 +13,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseE
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseFixture
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
+import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFact
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
@@ -27,7 +28,9 @@ import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -39,6 +42,7 @@ import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.datasource.SingleConnectionDataSource
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.io.InterruptedIOException
@@ -63,6 +67,162 @@ import java.util.concurrent.atomic.AtomicReference
 class TestActiveOwnerDeleteQueueIT {
     private val database = lazy { PgLifecycleDatabaseFixture(TestActiveOwnerDeleteQueueIT::class.java).also { it.start() } }
     @AfterAll fun closeDatabase() { if (database.isInitialized()) database.value.close() }
+
+    @Test fun genuineCompletedRecurrentHistoryAllowsOriginalEpochTwoReplayAndHeldLeaseAckAfterCreationCheckpointAgeAndClosure() =
+        withRecurrentQueue(shortFreshness = true) { h ->
+            completeRecurrentQueueHistory(h)
+            val limits = h.process.consumers.journalConfiguration.declaration().limits.deadlines
+            assertEquals(30_000, limits.checkpointMaxAgeMillis)
+            val expiry = (h.control().getValue("checkpoint_completed_at") as Timestamp).toInstant().plusMillis(limits.checkpointMaxAgeMillis.toLong())
+            requireConnectionFree()
+            awaitLifecycleFact(31_000) { h.observer.queryForObject("SELECT clock_timestamp() > ?::timestamptz", Boolean::class.java, Timestamp.from(expiry)) == true }
+            h.withFreshQueue { b ->
+                assertNotSame(h.raw.queue, b.raw); assertSame(h.record, b.record)
+                val openCounters = b.counters()
+                // Existing privacy input only: no fake checkpoint, balance reset, or reserve refund.
+                assertEquals(2, b.observer.update("UPDATE complaint_journal_control SET creation_closed = true WHERE data_scope_id IN (?, ?) AND NOT creation_closed", UUID(0, 0), b.scope))
+                assertEquals(22, b.observer.update("UPDATE complaint_capacity_counters SET configuration_closed = true WHERE NOT configuration_closed"))
+                try {
+                    val before = b.counters(); val rows = b.domainImage(); val history = recurrentQueueHistoryImage(h)
+                    val producers = recurrentQueueProducerCounts(h)
+                    val oldToken = (b.control().getValue("lease_token") as Number).toLong()
+                    val checkpointFence = (b.control().getValue("checkpoint_fencing_token") as Number).toLong()
+                    assertTrue(checkpointFence <= oldToken)
+                    val returned = mutableListOf<TestActiveQueueSqlCallV1>()
+                    b.after = { returned.add(it) }
+                    var held = false
+                    b.raw.beforeSqs = { request -> if (request.target() == "AmazonSQS.ReceiveMessage") {
+                        b.assertProviderBoundary()
+                        val control = b.control(); val owner = checkNotNull(b.original)
+                        assertEquals(owner.attemptId, control["lease_owner"])
+                        assertEquals(oldToken + 1, control["lease_token"]); assertEquals(owner.leaseToken, control["lease_token"])
+                        assertEquals(checkpointFence, control["checkpoint_fencing_token"])
+                        assertTrue(checkpointFence < owner.leaseToken, "The current checkpoint fence is not the newly acquired B fence.")
+                        assertEquals(true, control["creation_closed"])
+                        assertTrue(b.observer.queryForObject("SELECT clock_timestamp() > ?::timestamptz", Boolean::class.java, Timestamp.from(expiry)) == true)
+                        held = true
+                    } }
+                    val original = b.begin(); val completed = b.poll(original)
+                    assertTrue(held); assertEquals(1, completed.primaryAcknowledged); assertEquals(0, completed.dlqAcknowledged)
+                    b.assertReleased(); b.assertNoAuthority(); b.assertExpectedAppliedObjects(); b.assertOriginalContentUnchanged()
+                    assertEquals(rows, b.domainImage(), "The original epoch2 APPLIED/event/receipt/reserve/audit bytes and xmin remain exact; this is replay, not new APPLY.")
+                    assertEquals(before, b.counters(), "The actual original B observation was already paid; neither history nor replay is charged again.")
+                    assertEquals(history, recurrentQueueHistoryImage(h)); assertEquals(producers, recurrentQueueProducerCounts(h))
+                    assertEquals("SETTLED", b.observation()?.get("state")); assertEquals(1L, b.count("complaint_test_active_queue_observations"))
+                    assertEquals(listOf("synthetic-primary-receipt-1"), b.raw.ackRequests)
+                    assertEquals(listOf("STS", "GetQueueUrl:PRIMARY", "GetQueueAttributes:PRIMARY", "ReceiveMessage:PRIMARY", "GET", "DECRYPT",
+                        "DeleteMessage:PRIMARY", "GetQueueUrl:DLQ", "GetQueueAttributes:DLQ", "ReceiveMessage:DLQ"), b.raw.order)
+                    assertNull(b.control()["lease_owner"]); assertNull(b.control()["lease_expires_at"])
+                    assertEquals(oldToken + 1, b.control()["lease_token"])
+                    assertTrue(b.deletionObservations.isNotEmpty(), "The original native ciphertext reaches the actual registered replay APPLY holder.")
+                    assertFalse(b.calls.any { it.sql == appliedSql(b) }, "Already committed E is not reinserted.")
+                    assertRecurrentQueueReads(b.calls, returned)
+                    assertEquals(setOf(TestActiveOwnerDeleteQueueStepV1.READ, TestActiveOwnerDeleteQueueStepV1.ACQUIRE,
+                        TestActiveOwnerDeleteQueueStepV1.APPLY, TestActiveOwnerDeleteQueueStepV1.RECHECK, TestActiveOwnerDeleteQueueStepV1.SETTLE),
+                        b.calls.filter { it.sql == TestActiveOwnerDeleteQueueSqlV1.recurrentCurrent }.map { it.step }.toSet())
+                    (b.coordinator.observations.keys + b.deletionObservations.keys).forEach { phase ->
+                        assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+                        assertTrue(phase.testActiveOwnerDeleteQueueCleanupProven(original))
+                    }
+                    b.assertSameOriginalRefused(original)
+                } finally {
+                    assertEquals(22, b.observer.update("UPDATE complaint_capacity_counters SET configuration_closed = false"))
+                    assertEquals(2, b.observer.update("UPDATE complaint_journal_control SET creation_closed = false WHERE data_scope_id IN (?, ?)", UUID(0, 0), b.scope))
+                }
+                assertEquals(openCounters, b.counters(), "Closure cleanup changes no capacity balance.")
+            }
+        }
+
+    @Test fun recurrentQueueCannotReplaceMissingOrPartiallyCheckpointedOriginalArchiveWithControlSuccessAndCount() {
+        listOf(false, true).forEach { partial -> withRecurrentQueue { h ->
+            completeRecurrentQueueHistory(h)
+            h.withFreshQueue { b ->
+                val original = recurrentQueueHistoryImage(h); val checkpoint = (b.control().getValue("checkpoint_bytes") as ByteArray).copyOf()
+                mutateRecurrentQueueHistory(b, source = false) { jdbc ->
+                    assertEquals(1, if (partial) jdbc.update("UPDATE complaint_test_active_checkpoint_history SET checkpoint_bytes = NULL, checkpoint_hash = NULL, checkpointed_at = NULL WHERE data_scope_id = ? AND ordinal = 2", b.scope)
+                        else jdbc.update("DELETE FROM complaint_test_active_checkpoint_history WHERE data_scope_id = ? AND ordinal = 2", b.scope))
+                }
+                val damaged = recurrentQueueHistoryImage(h)
+                assertEquals(original - "complaint_test_active_checkpoint_history", damaged - "complaint_test_active_checkpoint_history")
+                assertFalse(original == damaged); assertEquals(if (partial) 2 else 1, h.history().size)
+                assertArrayEquals(checkpoint, b.control()["checkpoint_bytes"] as ByteArray)
+                val returned = mutableListOf<TestActiveQueueSqlCallV1>(); b.after = { returned.add(it) }
+                assertRecurrentQueueReadRefusal(h, b)
+                val reads = b.calls.filter { it.sql in recurrentQueueReadOrder() }
+                assertEquals(if (partial) recurrentQueueReadOrder().dropLast(1) else listOf(TestActiveOwnerDeleteQueueSqlV1.current), reads.map { it.sql })
+                assertEquals(if (partial) reads else emptyList<TestActiveQueueSqlCallV1>(), returned.filter { it.sql in recurrentQueueReadOrder() })
+            }
+        } }
+    }
+
+    @Test fun recurrentQueueRechecksOriginalSourceXminBeforeReplayApplyAndArchiveXminAfterCommittedReplayBeforeAck() {
+        listOf(false, true).forEach { afterApply -> withRecurrentQueue { h ->
+            completeRecurrentQueueHistory(h)
+            h.withFreshQueue { b ->
+                val immutable = h.immutableImage(); val domain = b.domainImage(); val counters = b.counters()
+                val producers = recurrentQueueProducerCounts(h)
+                val returned = mutableListOf<TestActiveQueueSqlCallV1>(); b.after = { returned.add(it) }
+                var cut: TestActiveQueueSqlCallV1? = null
+                var damaged: Map<String, List<String>>? = null
+                b.before = { call ->
+                    val selected = if (afterApply) call.step === TestActiveOwnerDeleteQueueStepV1.RECHECK && b.deletionObservations.isNotEmpty()
+                        else call.step === TestActiveOwnerDeleteQueueStepV1.APPLY
+                    if (cut == null && selected && call.sql == TestActiveOwnerDeleteQueueSqlV1.lockGlobal) {
+                        cut = call
+                        assertEquals(1, b.raw.order.count { it == "GET" }); assertEquals(1, b.raw.order.count { it == "DECRYPT" })
+                        assertTrue(b.raw.ackRequests.isEmpty())
+                        assertEquals(domain, b.domainImage(), "The actual epoch2 event was already APPLIED before this queue original.")
+                        if (afterApply) b.deletionObservations.keys.forEach { phase ->
+                            assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+                            assertTrue(phase.testActiveOwnerDeleteQueueCleanupProven(checkNotNull(b.original)))
+                        }
+                        val history = recurrentQueueHistoryImage(h)
+                        mutateRecurrentQueueHistory(b, source = !afterApply) { jdbc ->
+                            val table = if (afterApply) "complaint_test_active_checkpoint_history" else "complaint_test_active_recurrent_seal_intents"
+                            val ordinal = if (afterApply) "ordinal" else "rotation_sequence"
+                            assertEquals(1, jdbc.update("UPDATE $table SET charged_storage_bytes = charged_storage_bytes WHERE data_scope_id = ? AND $ordinal = 2", b.scope))
+                        }
+                        assertEquals(immutable, h.immutableImage(), "Every source/archive/checkpoint/native byte is identical; only the selected physical xmin changed.")
+                        val changed = recurrentQueueHistoryImage(h)
+                        val table = if (afterApply) "complaint_test_active_checkpoint_history" else "complaint_test_active_recurrent_seal_intents"
+                        assertFalse(history.getValue(table) == changed.getValue(table)); assertEquals(history - table, changed - table)
+                        damaged = recurrentQueueImage(h, b)
+                    }
+                }
+                val original = b.begin()
+                assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { b.poll(original) }
+                val boundary = checkNotNull(cut)
+                b.assertReleased(); b.assertNoAuthority(); b.assertExpectedAppliedObjects()
+                assertEquals(damaged, recurrentQueueImage(h, b)); assertEquals(counters, b.counters()); assertEquals(producers, recurrentQueueProducerCounts(h))
+                assertEquals(domain, b.domainImage()); assertEquals(1L, b.count("complaint_deletion_journal_applied"))
+                assertEquals(0, original.primaryAcked); assertTrue(b.raw.ackRequests.isEmpty()); assertFalse(b.raw.order.any { it.startsWith("DeleteMessage:") })
+                assertEquals("POLLING", b.observation()?.get("state")); assertFalse(b.calls.any { it.sql == appliedSql(b) })
+                assertRecurrentQueueReads(b.calls, returned)
+                assertEquals(recurrentQueueReadOrder(), b.calls.filter { it.phase === boundary.phase && it.sql in recurrentQueueReadOrder() }.map { it.sql })
+                assertRecurrentQueueFailureOutcomes(b, original, boundary.phase)
+                b.assertSameOriginalRefused(original)
+            }
+        } }
+    }
+
+    @Test fun genuinelyPaidButUncheckpointedRecurrenceWithNoStagingAndExpiredRealLeaseCannotBecomeQueueApplyOrAck() = withRecurrentQueue { h ->
+        val before = h.counters(); var stopped = false
+        h.probe.before = { call -> if (!stopped && call.step === TestActiveRecurrentStepV1.SUCCESS && call.sql == TestActiveRecurrentSqlV1.authenticate) {
+            stopped = true; error("Synthetic stop before the actual recurrent checkpoint SUCCESS commit.")
+        } }
+        assertThrows<TestActiveRecurrentExceptionV1> { h.checkpoint() }
+        assertTrue(stopped); h.assertReleased(); h.probe.before = {}
+        assertEquals("SEAL_VERIFIED", h.control()["seal_state"]); assertEquals(2L, h.control()["rotation_sequence"])
+        assertEquals(3L, h.control()["publication_epoch"]); assertNull(h.control()["checkpoint_bytes"]); assertNull(h.control()["checkpoint_result"])
+        assertEquals(2, h.history().size); assertNull(h.history().last()["checkpoint_bytes"])
+        assertTrue(h.scans().isEmpty() && h.entries().isEmpty(), "Real completed inventory cleanup, not leftover staging, precedes this refusal.")
+        h.assertCharge(before, ComplaintCapacityVector.units(ComplaintCapacityCounter.STORAGE_BYTES, 6_291_456))
+        awaitInitialCheckpointLeaseExpiry(h.observer, h.scope)
+        h.withFreshQueue { b ->
+            assertRecurrentQueueReadRefusal(h, b)
+            assertEquals(listOf(TestActiveOwnerDeleteQueueSqlV1.current), b.calls.filter { it.sql in recurrentQueueReadOrder() }.map { it.sql })
+        }
+    }
 
     @Test fun genuineRegisteredFamiliesApplyTheOriginalNativePutAndAckOnlyAfterCommittedReleasedApply() = forEachFamily { f ->
         val before = f.counters()
@@ -1060,6 +1220,101 @@ class TestActiveOwnerDeleteQueueIT {
             val refund = OwnerDeleteLiteralCharges.content[counter] * f.precursor.reports.size
             assertEquals(old.copy(free = old.free + refund - observation, actual = old.actual + used - refund + observation,
                 recovery = old.recovery - used), after.getValue(counter), counter.storedName)
+        }
+    }
+
+    /** Thin existing-fixture join: one real initial B APPLY, then the caller's actual recurrence. */
+    private fun withRecurrentQueue(shortFreshness: Boolean = false, action: (TestActiveRecurrentFixtureV1) -> Unit) =
+        VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, activeFirstCut = true).use {
+            it.bind(); withRecurrentFixture(it, shortFreshness = shortFreshness, action = action)
+        }
+
+    private fun completeRecurrentQueueHistory(h: TestActiveRecurrentFixtureV1) {
+        val initial = (h.control().getValue("checkpoint_bytes") as ByteArray).copyOf(); val before = h.counters()
+        val completed = assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, h.checkpoint())
+        h.assertSuccessful()
+        assertEquals(2L, completed.cutoffEpoch); assertEquals(2L, h.control()["rotation_sequence"]); assertEquals(3L, h.control()["publication_epoch"])
+        assertEquals(1L, h.document().objectCount); assertEquals(h.record.stored.bytes.size.toLong(), h.document().byteCount)
+        assertEquals(2L, h.record.event.comparison.epoch); assertEquals("APPLIED", h.precursor.publication()["state"])
+        assertEquals(1L, h.queue.count("complaint_deletion_journal_applied")); assertEquals(1, h.raw.queue.ackRequests.size)
+        assertEquals(listOf(1, 2), h.history().map { (it.getValue("ordinal") as Number).toInt() })
+        assertArrayEquals(initial, h.history().first()["checkpoint_bytes"] as ByteArray)
+        assertArrayEquals(h.control()["checkpoint_bytes"] as ByteArray, h.history().last()["checkpoint_bytes"] as ByteArray)
+        assertEquals(listOf("STS", "PASS1", "GET1", "DECRYPT", "PASS2", "GET2", "DECRYPT"), h.raw.order)
+        h.assertCharge(before, ComplaintCapacityVector.units(ComplaintCapacityCounter.STORAGE_BYTES, 6_291_456))
+    }
+
+    private fun recurrentQueueProducerCounts(h: TestActiveRecurrentFixtureV1) = h.precursor.native.counts() + listOf(
+        h.probe.calls.size, h.applyCalls.size, h.queue.calls.size, h.raw.order.size, h.raw.requests.size,
+        h.raw.sts.requests.size, h.raw.kms.requests.size, h.raw.queue.order.size, h.raw.queue.requests.size,
+        h.raw.queue.sts.requests.size, h.raw.queue.kms.requests.size, h.raw.queue.sqs.requests.size)
+
+    private fun recurrentQueueHistoryImage(h: TestActiveRecurrentFixtureV1): Map<String, List<String>> = listOf(
+        "complaint_test_active_seal_intents", "complaint_test_active_recurrent_seal_intents", "complaint_test_active_checkpoint_history",
+    ).associateWith { table -> h.observer.queryForList(
+        "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text COLLATE \"C\"",
+        String::class.java, h.scope) }
+
+    private fun recurrentQueueImage(h: TestActiveRecurrentFixtureV1, b: TestActiveOwnerDeleteQueueFixtureV1) =
+        b.image() + recurrentQueueHistoryImage(h) + ("queue_current_controls" to b.observer.queryForList(
+            "SELECT jsonb_build_array(to_jsonb(c), c.xmin::text)::text FROM complaint_journal_control c WHERE data_scope_id IN (?, ?) ORDER BY data_scope_id",
+            String::class.java, UUID(0, 0), b.scope))
+
+    /** Explicit negative physical damage only. Never insert, repair, or reuse damaged history positively. */
+    private fun mutateRecurrentQueueHistory(b: TestActiveOwnerDeleteQueueFixtureV1, source: Boolean, action: (JdbcTemplate) -> Unit) {
+        val table = if (source) "complaint_test_active_recurrent_seal_intents" else "complaint_test_active_checkpoint_history"
+        val trigger = if (source) "complaint_test_active_recurrent_seal_immutable" else "complaint_test_active_history_immutable"
+        // The existing raw observer also permits a separate committed input at a before-SQL callback.
+        // The selected phase has not queried either immutable table; no held source lock is evaded.
+        b.precursor.raw { connection ->
+            connection.autoCommit = false
+            try {
+                connection.createStatement().use { it.queryTimeout = 1; it.execute("ALTER TABLE $table DISABLE TRIGGER $trigger") }
+                action(JdbcTemplate(SingleConnectionDataSource(connection, true)))
+                connection.createStatement().use { it.queryTimeout = 1; it.execute("ALTER TABLE $table ENABLE TRIGGER $trigger") }
+                connection.commit()
+            } finally { connection.rollback() }
+        }
+    }
+
+    private fun recurrentQueueReadOrder() = listOf(TestActiveOwnerDeleteQueueSqlV1.current,
+        TestActiveOwnerDeleteQueueSqlV1.recurrentCurrent, TestActiveOwnerDeleteQueueSqlV1.recurrentInitialHeaders,
+        TestActiveOwnerDeleteQueueSqlV1.recurrentHeaders, TestActiveOwnerDeleteQueueSqlV1.recurrentInitialPayload,
+        TestActiveOwnerDeleteQueueSqlV1.recurrentPayload, TestActiveOwnerDeleteQueueSqlV1.recurrentHistory,
+        TestActiveOwnerDeleteQueueSqlV1.current)
+
+    private fun assertRecurrentQueueReads(calls: List<TestActiveQueueSqlCallV1>, returned: List<TestActiveQueueSqlCallV1>) {
+        val order = recurrentQueueReadOrder()
+        val reads = calls.filter { it.sql in order }
+        assertTrue(reads.isNotEmpty())
+        assertTrue(reads.all { it in returned }, "Every expected real RowMapper/ResultSetExtractor dispatch returned; no fabricated proof or swallowed extractor assertion.")
+        reads.groupBy { it.phase }.values.forEach { phase ->
+            assertEquals(0, phase.size % order.size)
+            phase.chunked(order.size).forEach { assertEquals(order, it.map { call -> call.sql }) }
+        }
+        listOf(TestActiveOwnerDeleteQueueSqlV1.recurrentInitialHeaders, TestActiveOwnerDeleteQueueSqlV1.recurrentHeaders,
+            TestActiveOwnerDeleteQueueSqlV1.recurrentHistory).forEach { assertFalse(it.endsWith("FOR UPDATE")) }
+    }
+
+    private fun assertRecurrentQueueReadRefusal(h: TestActiveRecurrentFixtureV1, b: TestActiveOwnerDeleteQueueFixtureV1) {
+        val image = recurrentQueueImage(h, b); val counters = b.counters(); val producers = recurrentQueueProducerCounts(h)
+        val original = b.begin()
+        assertThrows<TestActiveOwnerDeleteQueueExceptionV1> { b.poll(original) }
+        b.assertReleased(); b.assertNoAuthority(); b.assertExpectedAppliedObjects()
+        assertEquals(image, recurrentQueueImage(h, b)); assertEquals(counters, b.counters()); assertEquals(producers, recurrentQueueProducerCounts(h))
+        assertEquals(1L, b.count("complaint_deletion_journal_applied")); assertEquals(0, original.primaryAcked)
+        assertTrue(b.raw.order.isEmpty() && b.raw.requests.isEmpty() && b.raw.ackRequests.isEmpty())
+        assertTrue(b.deletionObservations.isEmpty()); assertTrue(b.calls.all { it.step === TestActiveOwnerDeleteQueueStepV1.READ })
+        assertFalse(b.calls.any { it.sql == TestActiveOwnerDeleteQueueSqlV1.acquire || it.sql == TestActiveOwnerDeleteQueueSqlV1.insertObservation })
+        assertRecurrentQueueFailureOutcomes(b, original, b.calls.last().phase)
+        b.assertSameOriginalRefused(original)
+    }
+
+    private fun assertRecurrentQueueFailureOutcomes(b: TestActiveOwnerDeleteQueueFixtureV1, original: TestActiveOwnerDeleteQueueV1,
+        failed: PersistencePhaseContext) {
+        (b.coordinator.observations.keys + b.deletionObservations.keys).forEach { phase ->
+            assertEquals(if (phase === failed) PersistenceDatabaseOutcome.ROLLED_BACK else PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+            assertTrue(phase.testActiveOwnerDeleteQueueCleanupProven(original))
         }
     }
 
