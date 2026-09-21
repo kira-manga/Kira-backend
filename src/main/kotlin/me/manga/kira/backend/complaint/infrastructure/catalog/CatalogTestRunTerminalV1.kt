@@ -11,7 +11,9 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseO
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackException
 import me.manga.kira.backend.complaint.domain.catalog.CatalogTestRunTerminalRecordV1
+import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleException
 import me.manga.kira.backend.complaint.domain.terminal.TestOrdinaryDenialStatementV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDenialStatementV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableBindingV1
@@ -956,6 +958,8 @@ internal class CatalogTestRunTerminalV1 private constructor(
                     try {
                         val category = when (problem) {
                             is PersistencePhaseException -> "PHASE"
+                            is CatalogReadbackException -> "READBACK"
+                            is OfflineTrustBundleException -> "TRUST"
                             is CatalogTestRunTerminalExceptionV1 -> "TERMINAL"
                             is Error -> "ERROR"
                             is CancellationException -> "CANCELLATION"
@@ -963,7 +967,17 @@ internal class CatalogTestRunTerminalV1 private constructor(
                             else -> "OTHER"
                         }
                         val phaseCode = (problem as? PersistencePhaseException)?.code?.name ?: "NONE"
-                        System.err.println("TEST_CATALOG_TERMINAL_FIRST_FAILURE stage=${fixtureStage.name} category=$category phaseCode=$phaseCode")
+                        val failureCode = when (problem) {
+                            is PersistencePhaseException -> problem.code.name
+                            is CatalogReadbackException -> problem.code.name
+                            is OfflineTrustBundleException -> problem.code.name
+                            else -> "NONE"
+                        }
+                        // Current observations can be NONE after unwind; never infer an absent earlier phase.
+                        System.err.println("TEST_CATALOG_TERMINAL_FIRST_FAILURE stage=${fixtureStage.name} category=$category phaseCode=$phaseCode " +
+                            "failureCode=$failureCode failureClass=${problem.javaClass.name} " +
+                            "observedPreflight=${selectedPreflight?.name ?: "NONE"} observedPhase=${selectedPhase?.kind?.name ?: "NONE"} " +
+                            "signDispatched=$signDispatched signReturned=$signReturned putDispatched=$putDispatched putAcknowledged=${acknowledgement != null}")
                     } catch (_: Throwable) { /* Diagnostics must not replace the retained failure or affect cleanup. */ }
                 }
                 return
