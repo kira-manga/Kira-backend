@@ -71,6 +71,10 @@ import java.util.UUID
 
 internal enum class ActivationEvidencePrefix { GENESIS, ROTATED, INVENTORY_ROTATED, PENDING_OVERLAP }
 
+// One initial CREATE supplies genuine A/B history; the new specimen then pays CREATE + REPLY.
+// This fixed synthetic quota is chosen before consumers/intake/full D, never reset on a live run.
+private const val RECURRENT_CONSUMER_CREATION_MEMBERS = 3
+
 /** Same synthetic fixture P selected before either LIVE first-D or TEST intake; never a counter rewrite after capture. */
 internal fun testActivationCapacityPolicy(original: ComplaintCapacityPolicyV1, manifestPublication: Boolean): ComplaintCapacityPolicyV1 =
     ComplaintCapacityPolicyV1.of(
@@ -149,8 +153,11 @@ internal fun withActivationEvidence(
         require(ordinarySealHttp != null && ordinaryDrain != null)
         TestOwnerDeleteJournalConfigurationV1.registeredAdminErasure(declaration)
     } else TestOwnerDeleteJournalConfigurationV1.of(declaration, ownerDeleteAll = ownerDeleteAll)
+    val selectedCreateGlobal = if (ordinaryRawHttp?.initialCheckpointCreate?.profile == VersionBoundTestInitialCheckpointCreateV1.RECURRENT_PROFILE) {
+        RECURRENT_CONSUMER_CREATION_MEMBERS
+    } else createGlobal // Every older profile/default retains its original quota and saturation oracle.
     JournalPublicationLanesV1(journal).use { lanes ->
-        CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal, ordinarySealHttp,
+        CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, selectedCreateGlobal, ordinarySealHttp,
             if (ordinarySealHttp?.protectedIntake == true) tls else null, ordinaryDrain, activeFirstCut, activeSealRecovery, ordinaryRawHttp, activeFirstCutSuccessor,
             globalPredecessor).use(action)
     }
@@ -306,6 +313,16 @@ internal class CatalogTestRunActivationEvidenceFixture(
                     it, pools, native.consumers.journalRouting, checkNotNull(firstCut), checkNotNull(native.ordinarySeal),
                 )
             }
+            val recurrent = native.activeRecurrent?.let { original ->
+                if (pools === native.pools) original else projectedRecurrent.getOrPut(pools) {
+                    val raw = checkNotNull(ordinaryRawHttp?.initialCheckpoint)
+                    val inputs = ComplaintTestDeploymentInputsV1.fromDecoded(checkNotNull(intakeDocument))
+                    me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveRecurrentV1.fromIndependentInputs(
+                        checkNotNull(inputs.activeRecurrent), native.consumers.journalRouting, pools, checkNotNull(native.ordinarySeal),
+                        inputs.sealerMapping, raw.credentials, inputs.sealerLimits, original.clock, original.nanoTime,
+                        raw.sts, raw.kms, raw.s3)
+                }
+            }
             val checkpointGraph = native.initialCheckpoint?.let { original ->
                 if (pools === native.pools) original to native.initialCheckpointCreate else {
                     projectedCheckpointGraphs.getOrPut(pools) {
@@ -321,7 +338,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
                         ).also { projectedInitialCheckpoints.add(it) }
                         val create = ordinaryRawHttp?.initialCheckpointCreate?.let {
                             VersionBoundTestInitialCheckpointCreateV1.fromIndependentInputs(
-                                it, pools, native.consumers.journalRouting, checkpoint)
+                                it, pools, native.consumers.journalRouting, checkpoint, recurrent)
                         }
                         checkpoint to create
                     }
@@ -329,16 +346,6 @@ internal class CatalogTestRunActivationEvidenceFixture(
             }
             val checkpoint = checkpointGraph?.first
             val initialCheckpointCreate = checkpointGraph?.second
-            val recurrent = native.activeRecurrent?.let { original ->
-                if (pools === native.pools) original else projectedRecurrent.getOrPut(pools) {
-                    val raw = checkNotNull(ordinaryRawHttp?.initialCheckpoint)
-                    val inputs = ComplaintTestDeploymentInputsV1.fromDecoded(checkNotNull(intakeDocument))
-                    me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveRecurrentV1.fromIndependentInputs(
-                        checkNotNull(inputs.activeRecurrent), native.consumers.journalRouting, pools, checkNotNull(native.ordinarySeal),
-                        inputs.sealerMapping, raw.credentials, inputs.sealerLimits, original.clock, original.nanoTime,
-                        raw.sts, raw.kms, raw.s3)
-                }
-            }
             val initialCheckpointDeletion = native.initialCheckpointDeletion?.let { original ->
                 if (pools === native.pools) original else projectedDeletionPolicies.getOrPut(pools) {
                     VersionBoundTestInitialCheckpointDeletionV1.fromIndependentInputs(

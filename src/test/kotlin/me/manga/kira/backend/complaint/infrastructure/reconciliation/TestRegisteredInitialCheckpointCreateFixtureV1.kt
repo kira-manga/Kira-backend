@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
+import kotlinx.serialization.json.jsonPrimitive
 import me.manga.kira.backend.common.infrastructure.persistence.CounterSnapshot
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
@@ -119,11 +120,10 @@ internal class TestRegisteredInitialCheckpointCreateFixtureV1(
         registration, checkpoint.assembly)
     val phases = ComplaintOwnerCreatePhaseExecutor(exchange.ordinary.ownership, store)
     val adapter = ComplaintOwnerCreateAdapter(actor.scope, jwt, phases, ingress)
-    private val replyAdapter by lazy {
-        val selected = JdbcComplaintOwnerCreateStore.registeredInitialCheckpointWithReplies(jdbc, exchange.service, exchange.ordinary.ownership,
-            registration, checkpoint.assembly)
-        ComplaintOwnerCreateAdapter(actor.scope, jwt, ComplaintOwnerCreatePhaseExecutor(exchange.ordinary.ownership, selected), ingress)
-    }
+    val replyStore by lazy { JdbcComplaintOwnerCreateStore.registeredInitialCheckpointWithReplies(jdbc, exchange.service, exchange.ordinary.ownership,
+        registration, checkpoint.assembly) }
+    val replyExecutor by lazy { ComplaintOwnerCreatePhaseExecutor(exchange.ordinary.ownership, replyStore) }
+    private val replyAdapter by lazy { ComplaintOwnerCreateAdapter(actor.scope, jwt, replyExecutor, ingress) }
 
     val editStore by lazy { JdbcComplaintOwnerEditStore.registeredInitialCheckpoint(jdbc, exchange.service, exchange.ordinary.ownership,
         registration, checkpoint.assembly) }
@@ -226,6 +226,16 @@ internal class TestRegisteredInitialCheckpointCreateFixtureV1(
     fun createPhases() = jdbc.observations.keys.filter { poolTestField<PersistencePhasePath>(it, "path") === REGISTERED_CREATE }
     fun replySql(): List<String> = jdbc.calls.filter { it.first === REGISTERED_REPLY }.map { it.second }
     fun replyPhases() = jdbc.observations.keys.filter { poolTestField<PersistencePhasePath>(it, "path") === REGISTERED_REPLY }
+
+    /** Observation oracle only, sampled outside a request; old profiles must still select the initial query. */
+    fun currentCheckpointSql(): String {
+        requireConnectionFree()
+        val profile = checkNotNull(process.initialCheckpointCreate).inventory().getValue("profile").jsonPrimitive.content
+        return if (profile == VersionBoundTestInitialCheckpointCreateV1.RECURRENT_PROFILE &&
+            (checkpoint.control().getValue("rotation_sequence") as Number).toLong() > 1L) {
+            TestRegisteredRecurrentCheckpointCurrentSqlV1.current
+        } else TestActiveInitialCheckpointSqlV1.currentForOwnerCreate
+    }
 
     /** Independent observer only. Never enlisted into the original phase's Spring resource map. */
     fun <T> raw(action: (Connection) -> T): T = checkNotNull(observer.dataSource).connection.use(action)

@@ -22,6 +22,7 @@ import me.manga.kira.backend.complaint.catalog.withTestActiveFirstCut
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentCheckpointDocumentV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointCreateInputV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -52,12 +53,16 @@ internal fun withRecurrentFixture(tls: VersionBoundPersistenceConnectedFixture,
     family: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE,
     applied: Boolean = true, maximumVersions: Long = 10_000, maximumBytes: Long? = null, verified: Boolean = true,
     retainedAllAlias: Boolean = false,
+    initialCheckpointCreate: TestInitialCheckpointCreateInputV1 = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
+    shortFreshness: Boolean = false,
+    terminalHistory: TestOrdinaryDrainFixtureInputsV1? = null,
     action: (TestActiveRecurrentFixtureV1) -> Unit) {
     require(verified || !applied)
     require(!retainedAllAlias || family == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL && verified)
-    val raw = TestActiveRecurrentRawFixtureV1()
+    val raw = TestActiveRecurrentRawFixtureV1(initialCheckpointCreate, shortFreshness)
     val native = raw.deletion
-    val history = TestOrdinaryDrainFixtureInputsV1(maximumRetainedVersions = maximumVersions, maximumFramedBytes = maximumBytes)
+    // D/E may supply its exact cold denial recipe; it is never spliced into an activated process.
+    val history = terminalHistory ?: TestOrdinaryDrainFixtureInputsV1(maximumRetainedVersions = maximumVersions, maximumFramedBytes = maximumBytes)
     withTestActiveFirstCut(tls, ordinaryRawHttp = raw.factories, terminalHistory = history, globalScanBeforeActivation = true) { first ->
         first.initial.withExchange { exchange ->
             val owners = List(if (family == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) 2 else 1) {
@@ -205,6 +210,18 @@ internal class TestActiveRecurrentFixtureV1(val queue: TestActiveOwnerDeleteQueu
     fun intents() = observer.queryForList("SELECT * FROM complaint_test_active_recurrent_seal_intents WHERE data_scope_id = ? ORDER BY rotation_sequence", scope)
     fun history() = observer.queryForList("SELECT * FROM complaint_test_active_checkpoint_history WHERE data_scope_id = ? ORDER BY ordinal", scope)
     fun counters() = precursor.counters()
+    /** The original enrolled actor/store survives A/B and the real recurrent producer; no new graph is made. */
+    fun retainedCreator(): TestRegisteredInitialCheckpointCreateFixtureV1 = precursor.creators.single().also {
+        assertSame(process, it.process); assertSame(registration, it.registration)
+        assertSame(precursor.exchange.ordinary.ownership, it.exchange.ordinary.ownership)
+        it.assertReleased()
+        it.jdbc.calls.clear()
+        it.jdbc.observations.clear() // Passive prefix observations only, after asserting every lease retired.
+    }
+    fun providerCounts(): List<Int> = precursor.creators.first().providerCounts() + precursor.native.counts() + listOf(
+        raw.sts.requests.size, raw.kms.requests.size, raw.requests.size, raw.budgets.size,
+        raw.queue.sts.requests.size, raw.queue.kms.requests.size, raw.queue.sqs.requests.size,
+        raw.queue.requests.size, raw.queue.budgets.size)
     fun immutableImage() = listOf("complaint_test_active_seal_intents", "complaint_test_active_recurrent_seal_intents",
         "complaint_test_active_checkpoint_history").associateWith { table -> observer.queryForList(
             "SELECT to_jsonb(t)::text FROM $table t WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text", String::class.java, scope) }
