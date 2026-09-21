@@ -23,6 +23,7 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogChainReaderP
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredDeploymentDocumentV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredDeploymentInputsV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredDeploymentJsonV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationFixture
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredProcessAssemblyV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDInputsV1
@@ -191,7 +192,7 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
         prepareRuntime {}
     }
 
-    private fun prepareRuntime(beforeLease: (VersionBoundComplaintProcessConfiguration) -> Unit) {
+    private fun prepareRuntime(beforeLease: (VersionBoundComplaintProcessConfiguration) -> Unit) = try {
         val pin = Sha256.hex(envelope)
         startRuntime()
         genesisWire = CatalogSignerRotationReadbackHttpFixture(this)
@@ -222,6 +223,9 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
         assertEquals(1L, receipt.token)
         assertArrayEquals(selectedHash, process.configurationHashBytes())
         released()
+    } catch (failure: ComplaintDesiredInstallationExceptionV1) {
+        observeDesiredFailure("PREPARE_RUNTIME", "PREPARE", failure)
+        throw failure
     }
 
     /** Same genuine AUTHOR/first-D prefix; unlike prepare(), no controlled ordinary runtime, refresh or lease is created. */
@@ -242,7 +246,7 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
     }
 
     private fun prepareFirstD(profile: String, totalAttemptMillis: Long, epochInventory: Boolean = false,
-        selectedCapacity: ComplaintCapacityPolicyV1? = null) {
+        selectedCapacity: ComplaintCapacityPolicyV1? = null) = try {
         desired.prepare()
         // Fixture P is provisioned once before the actual AUTHOR/first-D. Later TEST setup may not rewrite it.
         val base = selectedCapacity?.let { selected -> desired.document.copy(capacity = DesiredCapacityInputV1(
@@ -314,6 +318,9 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
         frozenFiles = Files.walk(source.releaseRoot.resolve("genesis")).use { entries ->
             entries.filter { Files.isRegularFile(it, NOFOLLOW_LINKS) }.toList().associateWith(Files::readAllBytes)
         }
+    } catch (failure: ComplaintDesiredInstallationExceptionV1) {
+        observeDesiredFailure("PREPARE_FIRST_D", "PREPARE", failure)
+        throw failure
     }
 
     private fun startRuntime() {
@@ -366,24 +373,41 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
     fun assertFrozenUnchanged() = frozenFiles.forEach { (path, bytes) -> assertArrayEquals(bytes, Files.readAllBytes(path)) }
 
     /** Fixture retirement only, never a successful freeze result or renewed operation/campaign allowance. */
-    fun retireRuntime() {
+    fun retireRuntime() = retireRuntime("RETIRE_RUNTIME")
+
+    private fun retireRuntime(sourceStage: String) {
         if (runtimeRetired) return
-        clock.onSample = {}
-        originalLease?.campaign?.close()
-        val assembly = runtime
-        if (assembly != null) {
-            val owners = listOf("targetOwner", "operatorOwner").mapNotNull { ownedCutField(assembly, it) as? PersistenceJdbcLifecycleOwner }
-            owners.forEach { it.requestShutdown() }
-            owners.forEach { PgLifecycleTestScope(it).close() }
-            owners.forEach { it.versionBoundPools?.close() }
-            assembly.close()
-            assembly.requireCleanup(PersistenceTimeBudget.start(10_000))
+        var stage = "RETIRE_OWNERS"
+        try {
+            clock.onSample = {}
+            originalLease?.campaign?.close()
+            val assembly = runtime
+            if (assembly != null) {
+                val owners = listOf("targetOwner", "operatorOwner").mapNotNull { ownedCutField(assembly, it) as? PersistenceJdbcLifecycleOwner }
+                owners.forEach { it.requestShutdown() }
+                owners.forEach { PgLifecycleTestScope(it).close() }
+                owners.forEach { it.versionBoundPools?.close() }
+                stage = "ASSEMBLY_CLOSE"
+                assembly.close()
+                stage = "REQUIRE_CLEANUP"
+                assembly.requireCleanup(PersistenceTimeBudget.start(10_000))
+            }
+            runtimeRetired = true
+        } catch (failure: ComplaintDesiredInstallationExceptionV1) {
+            observeDesiredFailure(sourceStage, stage, failure)
+            throw failure
         }
-        runtimeRetired = true
+    }
+
+    /** Fixed source labels/code only; never inspect or retry the original cleanup from diagnostics. */
+    private fun observeDesiredFailure(sourceStage: String, stage: String, failure: ComplaintDesiredInstallationExceptionV1) {
+        try {
+            println("TEST_D7_DESIRED_FAILURE source=$sourceStage stage=$stage code=${failure.code.name}")
+        } catch (_: Throwable) { /* Preserve the exact original failure even if diagnostic formatting/output fails. */ }
     }
 
     override fun close() {
-        val stopped = runCatching(::retireRuntime)
+        val stopped = runCatching { retireRuntime("D7_CLOSE") }
         val authors = originalFreeze?.invocations.orEmpty()
         val retired = authors.map { runCatching(it::fixtureCleanup) } + desired.firstDInvocations.map { runCatching(it::fixtureCleanup) } +
             desired.invocations.map { runCatching(it::fixtureCleanup) }
@@ -411,6 +435,12 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
             ready.getOrThrow()
             desired.close()
         }
+        try {
+            if (stopped.isFailure || retired.any { it.isFailure } || ready.isFailure || sourceClosed.isFailure || desiredClosed.isFailure) {
+                println("TEST_D7_CLOSE_FAILURE stopReturned=${stopped.isSuccess} retirementFailures=${retired.count { it.isFailure }} " +
+                    "restorationReady=${ready.isSuccess} sourceCloseReturned=${sourceClosed.isSuccess} desiredCloseReturned=${desiredClosed.isSuccess}")
+            }
+        } catch (_: Throwable) { /* Diagnostics cannot change original aggregation, suppression or cleanup gates. */ }
         rethrowSignerRotationFixtureFailures(listOf(stopped) + retired + listOf(ready, sourceClosed, desiredClosed))
     }
 
