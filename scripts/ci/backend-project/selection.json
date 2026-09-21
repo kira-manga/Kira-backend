@@ -1,0 +1,150 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 42,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_RECURRENT_CONSUMER_OWNERSHIP_FRESHNESS_COMMIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCreateReplyAndEditEachRejectForeignOwnerTemplateAndIngressHandoffs",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentCreateReplyAndEditEachRejectForeignOwnerTemplateAndIngressHandoffs()"
+      ]
+    },
+    {
+      "annotation_line": 45,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_RECURRENT_CONSUMER_OWNERSHIP_FRESHNESS_COMMIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCreateReplyAndEditClaimLosersReplayBeforeClosedControlsWithoutDoubleCharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentCreateReplyAndEditClaimLosersReplayBeforeClosedControlsWithoutDoubleCharge()"
+      ]
+    },
+    {
+      "annotation_line": 51,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_RECURRENT_CONSUMER_OWNERSHIP_FRESHNESS_COMMIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCreateRechecksActualDatabaseFreshnessAfterTheOriginalActorBoundary",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentCreateRechecksActualDatabaseFreshnessAfterTheOriginalActorBoundary()"
+      ]
+    },
+    {
+      "annotation_line": 54,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_RECURRENT_CONSUMER_OWNERSHIP_FRESHNESS_COMMIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentReplyResourceWaitCrossesCheckpointExpiryAndRollsBackTheProvisionalChild",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentReplyResourceWaitCrossesCheckpointExpiryAndRollsBackTheProvisionalChild()"
+      ]
+    },
+    {
+      "annotation_line": 57,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_RECURRENT_CONSUMER_OWNERSHIP_FRESHNESS_COMMIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentReplyContentWaitCrossesCheckpointExpiryBeforeCompletingAnyReceipt",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentReplyContentWaitCrossesCheckpointExpiryBeforeCompletingAnyReceipt()"
+      ]
+    },
+    {
+      "annotation_line": 60,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_RECURRENT_CONSUMER_OWNERSHIP_FRESHNESS_COMMIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentEditResourceWaitCrossesCheckpointExpiryAndRollsBackItsOriginalAllocation",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentEditResourceWaitCrossesCheckpointExpiryAndRollsBackItsOriginalAllocation()"
+      ]
+    },
+    {
+      "annotation_line": 63,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_RECURRENT_CONSUMER_OWNERSHIP_FRESHNESS_COMMIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentEditContentWaitCrossesCheckpointExpiryBeforeAnyMutationOrRejectionReceipt",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentEditContentWaitCrossesCheckpointExpiryBeforeAnyMutationOrRejectionReceipt()"
+      ]
+    },
+    {
+      "annotation_line": 66,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_RECURRENT_CONSUMER_OWNERSHIP_FRESHNESS_COMMIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCreateWaitedCredentialChangeCannotAuthorizeTheOriginalWrite",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentCreateWaitedCredentialChangeCannotAuthorizeTheOriginalWrite()"
+      ]
+    },
+    {
+      "annotation_line": 69,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "REMAINING_RECURRENT_CONSUMER_OWNERSHIP_FRESHNESS_COMMIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCreateBeforeAfterAndUnknownCommitCutsPreserveFailureAndExactReceiptSemantics",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentCreateBeforeAfterAndUnknownCommitCutsPreserveFailureAndExactReceiptSemantics()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 9,
+  "expected_total": 9,
+  "selection_basis": {
+    "cohorts": {
+      "REMAINING_RECURRENT_CONSUMER_OWNERSHIP_FRESHNESS_COMMIT": 9
+    },
+    "previous_run": "35635093191",
+    "scope": "Nine remaining consumer methods,13 genuine chains. Conditional on focused36 positive prerequisite; no unchanged passing-method replay."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 9
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentCreateReplyAndEditEachRejectForeignOwnerTemplateAndIngressHandoffs",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentCreateReplyAndEditClaimLosersReplayBeforeClosedControlsWithoutDoubleCharge",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentCreateRechecksActualDatabaseFreshnessAfterTheOriginalActorBoundary",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentReplyResourceWaitCrossesCheckpointExpiryAndRollsBackTheProvisionalChild",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentReplyContentWaitCrossesCheckpointExpiryBeforeCompletingAnyReceipt",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentEditResourceWaitCrossesCheckpointExpiryAndRollsBackItsOriginalAllocation",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentEditContentWaitCrossesCheckpointExpiryBeforeAnyMutationOrRejectionReceipt",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentCreateWaitedCredentialChangeCannotAuthorizeTheOriginalWrite",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentCreateBeforeAfterAndUnknownCommitCutsPreserveFailureAndExactReceiptSemantics"
+  ]
+}
