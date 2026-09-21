@@ -1,0 +1,108 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 103,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun recovery context, immutable history/ownership, actual physical release, sticky native cleanup, exact native count and reserved-headroom boundaries; no passing-method replay.",
+      "expected_invocations_from_annotation": 1,
+      "method": "currentDesiredDatabaseRestoreCatalogLeaseCancellationAndMonotonicCutsFailClosed",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "currentDesiredDatabaseRestoreCatalogLeaseCancellationAndMonotonicCutsFailClosed()"
+      ]
+    },
+    {
+      "annotation_line": 109,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun recovery context, immutable history/ownership, actual physical release, sticky native cleanup, exact native count and reserved-headroom boundaries; no passing-method replay.",
+      "expected_invocations_from_annotation": 1,
+      "method": "oneNativeVersionFitsItsExactCountLimitButAnExtraVersionIsNeverFiltered",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "oneNativeVersionFitsItsExactCountLimitButAnExtraVersionIsNeverFiltered()"
+      ]
+    },
+    {
+      "annotation_line": 116,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun recovery context, immutable history/ownership, actual physical release, sticky native cleanup, exact native count and reserved-headroom boundaries; no passing-method replay.",
+      "expected_invocations_from_annotation": 1,
+      "method": "insufficientOrdinaryHeadroomNeverSpendsTheTerminalReserve",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "insufficientOrdinaryHeadroomNeverSpendsTheTerminalReserve()"
+      ]
+    },
+    {
+      "annotation_line": 125,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun recovery context, immutable history/ownership, actual physical release, sticky native cleanup, exact native count and reserved-headroom boundaries; no passing-method replay.",
+      "expected_invocations_from_annotation": 1,
+      "method": "immutableSourceHistoryScanOwnershipAndReplayGuardsCannotBecomeRefundAuthority",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "immutableSourceHistoryScanOwnershipAndReplayGuardsCannotBecomeRefundAuthority()"
+      ]
+    },
+    {
+      "annotation_line": 133,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun recovery context, immutable history/ownership, actual physical release, sticky native cleanup, exact native count and reserved-headroom boundaries; no passing-method replay.",
+      "expected_invocations_from_annotation": 1,
+      "method": "unresolvedPhysicalReleaseCannotIssueCompletionDespiteVisibleDatabaseSuccess",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "unresolvedPhysicalReleaseCannotIssueCompletionDespiteVisibleDatabaseSuccess()"
+      ]
+    },
+    {
+      "annotation_line": 136,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun recovery context, immutable history/ownership, actual physical release, sticky native cleanup, exact native count and reserved-headroom boundaries; no passing-method replay.",
+      "expected_invocations_from_annotation": 1,
+      "method": "stickyNativeCloseCannotInventACloseReceiptOrReleaseTheFailedOriginalSlot",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "stickyNativeCloseCannotInventACloseReceiptOrReleaseTheFailedOriginalSlot()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 6,
+  "expected_total": 6,
+  "selection_basis": {
+    "cohorts": {
+      "Previously unrun recovery context, immutable history/ownership, actual physical release, sticky native cleanup, exact native count and reserved-headroom boundaries; no passing-method replay.": 6
+    },
+    "previous_run": "35626472788",
+    "scope": "C partition:6methods15fixtures across changed context, immutable history/ownership, physical release, sticky native close, exact version count and terminal reserve boundaries. Shared family/commit/bookkeeping prerequisites PASS. Independent of D7 Catalog fixture and A/B partitions; no passing method replay."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 6
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.currentDesiredDatabaseRestoreCatalogLeaseCancellationAndMonotonicCutsFailClosed",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.immutableSourceHistoryScanOwnershipAndReplayGuardsCannotBecomeRefundAuthority",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.unresolvedPhysicalReleaseCannotIssueCompletionDespiteVisibleDatabaseSuccess",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.stickyNativeCloseCannotInventACloseReceiptOrReleaseTheFailedOriginalSlot",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.oneNativeVersionFitsItsExactCountLimitButAnExtraVersionIsNeverFiltered",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.insufficientOrdinaryHeadroomNeverSpendsTheTerminalReserve"
+  ]
+}
