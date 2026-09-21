@@ -54,6 +54,9 @@ import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteAuthorizati
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestAdminDeleteJournalPublisherFactoryV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteAllJournalPublisherFactoryV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalReadbackV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintAdminDeletePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintAdminDeleteReadPhaseExecutor
@@ -161,35 +164,35 @@ internal class TestRegisteredInitialCheckpointDeletionFixtureV1(
     val actor = creators.first().actor
     val audit = exchange.service
     val ingress = process.consumers.ingressAdmission
-    val admission = retained?.admission ?: DeletionPersistenceAdmission()
-    val deletionOwner = retained?.deletionOwner ?: PersistencePhaseOwnership.deletion(admission, GuardedJdbcTransactionManager(runtime.pools.deletion))
-    val deletion = retained?.deletion ?: TestRegisteredInitialDeletionProbeJdbcV1(this)
-    val binding = retained?.binding ?: TestOwnerDeleteProcessBindingV1.fromRegistered(registration, assembly, exchange.ordinary.ownership,
+    val admission: DeletionPersistenceAdmission = retained?.admission ?: DeletionPersistenceAdmission()
+    val deletionOwner: PersistencePhaseOwnership = retained?.deletionOwner ?: PersistencePhaseOwnership.deletion(admission, GuardedJdbcTransactionManager(runtime.pools.deletion))
+    val deletion: TestRegisteredInitialDeletionProbeJdbcV1 = retained?.deletion ?: TestRegisteredInitialDeletionProbeJdbcV1(this)
+    val binding: TestOwnerDeleteProcessBindingV1 = retained?.binding ?: TestOwnerDeleteProcessBindingV1.fromRegistered(registration, assembly, exchange.ordinary.ownership,
         exchange.jdbc, deletionOwner, deletion)
     val graph = binding.lower
-    val noKeys = retained?.noKeys ?: NeverOwnerDeleteAllDataKeys()
-    val codec = retained?.codec ?: TestOwnerDeleteJournalCodecV1(graph.routing, noKeys)
-    val capacity = retained?.capacity ?: JdbcComplaintCapacityStore(deletion, graph.policy.digestBytes())
-    val ownerStore = retained?.ownerStore ?: JdbcComplaintOwnerDeleteStore(deletion, capacity, audit, graph, codec)
-    val ownerReads = retained?.ownerReads ?: ComplaintOwnerDeleteReadPhaseExecutor(exchange.ordinary.ownership, JdbcComplaintOwnerDeleteReceiptStore(exchange.jdbc, graph))
-    val ownerVerification = retained?.ownerVerification ?: JdbcComplaintOwnerDeleteVerificationStore(deletion, graph, ownerStore)
-    private val ownerApply = retained?.ownerApply ?: JdbcComplaintOwnerDeleteApplyStore(deletion, capacity, audit, graph, ownerStore, ownerVerification)
-    val ownerPhases = retained?.ownerPhases ?: ComplaintOwnerDeletePhaseExecutor(deletionOwner, ownerStore, ownerReads, ownerVerification, ownerApply)
-    val allPreflights = retained?.allPreflights ?: ComplaintInstallationDeletionPreflightPhaseExecutor(exchange.ordinary.ownership,
+    val noKeys: NeverOwnerDeleteAllDataKeys = retained?.noKeys ?: NeverOwnerDeleteAllDataKeys()
+    val codec: TestOwnerDeleteJournalCodecV1 = retained?.codec ?: TestOwnerDeleteJournalCodecV1(graph.routing, noKeys)
+    val capacity: JdbcComplaintCapacityStore = retained?.capacity ?: JdbcComplaintCapacityStore(deletion, graph.policy.digestBytes())
+    val ownerStore: JdbcComplaintOwnerDeleteStore = retained?.ownerStore ?: JdbcComplaintOwnerDeleteStore(deletion, capacity, audit, graph, codec)
+    val ownerReads: ComplaintOwnerDeleteReadPhaseExecutor = retained?.ownerReads ?: ComplaintOwnerDeleteReadPhaseExecutor(exchange.ordinary.ownership, JdbcComplaintOwnerDeleteReceiptStore(exchange.jdbc, graph))
+    val ownerVerification: JdbcComplaintOwnerDeleteVerificationStore = retained?.ownerVerification ?: JdbcComplaintOwnerDeleteVerificationStore(deletion, graph, ownerStore)
+    private val ownerApply: JdbcComplaintOwnerDeleteApplyStore = retained?.ownerApply ?: JdbcComplaintOwnerDeleteApplyStore(deletion, capacity, audit, graph, ownerStore, ownerVerification)
+    val ownerPhases: ComplaintOwnerDeletePhaseExecutor = retained?.ownerPhases ?: ComplaintOwnerDeletePhaseExecutor(deletionOwner, ownerStore, ownerReads, ownerVerification, ownerApply)
+    val allPreflights: ComplaintInstallationDeletionPreflightPhaseExecutor = retained?.allPreflights ?: ComplaintInstallationDeletionPreflightPhaseExecutor(exchange.ordinary.ownership,
         JdbcComplaintInstallationDeletionPreflightStore(exchange.jdbc, testGraph = graph))
-    val allStore = retained?.allStore ?: JdbcComplaintOwnerDeleteAllStore(deletion, capacity, audit, graph, codec)
-    val allPhases = retained?.allPhases ?: ComplaintOwnerDeleteAllPhaseExecutor(deletionOwner, allStore, allPreflights)
-    val allVerification = retained?.allVerification ?: JdbcComplaintOwnerDeleteAllVerificationStore(deletion, graph, allStore)
-    val allVerifyPhases = retained?.allVerifyPhases ?: ComplaintOwnerDeleteAllVerificationPhaseExecutor(deletionOwner, allVerification)
-    val adminStore = retained?.adminStore ?: JdbcComplaintAdminDeleteStore(deletion, capacity, audit, graph, codec)
-    val adminReads = retained?.adminReads ?: ComplaintAdminDeleteReadPhaseExecutor(exchange.ordinary.ownership, JdbcComplaintAdminDeleteReceiptStore(exchange.jdbc, graph))
-    val adminVerification = retained?.adminVerification ?: JdbcComplaintAdminDeleteVerificationStore(deletion, graph, adminStore)
-    private val adminApply = retained?.adminApply ?: JdbcComplaintAdminDeleteApplyStore(deletion, capacity, audit, graph, adminStore, adminVerification)
-    val adminPhases = retained?.adminPhases ?: ComplaintAdminDeletePhaseExecutor(deletionOwner, adminStore, adminReads, adminVerification, adminApply)
+    val allStore: JdbcComplaintOwnerDeleteAllStore = retained?.allStore ?: JdbcComplaintOwnerDeleteAllStore(deletion, capacity, audit, graph, codec)
+    val allPhases: ComplaintOwnerDeleteAllPhaseExecutor = retained?.allPhases ?: ComplaintOwnerDeleteAllPhaseExecutor(deletionOwner, allStore, allPreflights)
+    val allVerification: JdbcComplaintOwnerDeleteAllVerificationStore = retained?.allVerification ?: JdbcComplaintOwnerDeleteAllVerificationStore(deletion, graph, allStore)
+    val allVerifyPhases: ComplaintOwnerDeleteAllVerificationPhaseExecutor = retained?.allVerifyPhases ?: ComplaintOwnerDeleteAllVerificationPhaseExecutor(deletionOwner, allVerification)
+    val adminStore: JdbcComplaintAdminDeleteStore = retained?.adminStore ?: JdbcComplaintAdminDeleteStore(deletion, capacity, audit, graph, codec)
+    val adminReads: ComplaintAdminDeleteReadPhaseExecutor = retained?.adminReads ?: ComplaintAdminDeleteReadPhaseExecutor(exchange.ordinary.ownership, JdbcComplaintAdminDeleteReceiptStore(exchange.jdbc, graph))
+    val adminVerification: JdbcComplaintAdminDeleteVerificationStore = retained?.adminVerification ?: JdbcComplaintAdminDeleteVerificationStore(deletion, graph, adminStore)
+    private val adminApply: JdbcComplaintAdminDeleteApplyStore = retained?.adminApply ?: JdbcComplaintAdminDeleteApplyStore(deletion, capacity, audit, graph, adminStore, adminVerification)
+    val adminPhases: ComplaintAdminDeletePhaseExecutor = retained?.adminPhases ?: ComplaintAdminDeletePhaseExecutor(deletionOwner, adminStore, adminReads, adminVerification, adminApply)
     private val factories = mutableListOf<AutoCloseable>()
-    val ownerPublisher by lazy { retained?.ownerPublisher ?: binding.ownerPublisher(ownerStore).also(factories::add) }
-    val allPublisher by lazy { retained?.allPublisher ?: binding.allPublisher(allStore).also(factories::add) }
-    val adminPublisher by lazy { retained?.adminPublisher ?: binding.adminPublisher(adminStore).also(factories::add) }
+    val ownerPublisher: TestOwnerDeleteJournalPublisherFactoryV1 by lazy { retained?.ownerPublisher ?: binding.ownerPublisher(ownerStore).also(factories::add) }
+    val allPublisher: TestOwnerDeleteAllJournalPublisherFactoryV1 by lazy { retained?.allPublisher ?: binding.allPublisher(allStore).also(factories::add) }
+    val adminPublisher: TestAdminDeleteJournalPublisherFactoryV1 by lazy { retained?.adminPublisher ?: binding.adminPublisher(adminStore).also(factories::add) }
     var ownerLane: JournalPublicationLanesV1.TestOwnerDeleteReservation? = null
         private set
     var allLane: JournalPublicationLanesV1.TestOwnerDeleteAllReservation? = null
