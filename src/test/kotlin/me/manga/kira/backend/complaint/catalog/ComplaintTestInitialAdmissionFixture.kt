@@ -41,11 +41,15 @@ internal val INITIAL_CAPTURE = PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMIS
 internal val INITIAL_RELEASE = PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_RELEASE
 
 /** The existing protected-input -> real signed PROJECT -> genuine registration composition. */
-internal fun withInitialAdmission(tls: VersionBoundPersistenceConnectedFixture, action: (InitialAdmissionFixture) -> Unit) =
+internal fun withInitialAdmission(tls: VersionBoundPersistenceConnectedFixture, activeFirstCut: Boolean = false,
+    ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
+    action: (InitialAdmissionFixture) -> Unit) =
     TestOrdinarySealHttpFixtureV1(protectedIntake = true).use { native ->
         ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, ordinarySealHttp = native,
             // Only closed setup predecessor leases: not the tested release or natural-expiry qualification.
-            expireClosedSetupPredecessors = true) { p, runtime, registration, probe ->
+            expireClosedSetupPredecessors = true, activeFirstCut = activeFirstCut,
+            ordinaryDrain = if (activeFirstCut) TestOrdinaryDrainFixtureInputsV1() else null,
+            ordinaryRawHttp = ordinaryRawHttp) { p, runtime, registration, probe ->
             val fixture = InitialAdmissionFixture(p, runtime, registration, probe, native)
             val executor = runtime.pools.catalogCoordinator.testInitialAdmission
             val field = executor.javaClass.getDeclaredField("jdbc").apply { check(trySetAccessible()) }

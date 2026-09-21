@@ -1,5 +1,8 @@
 package me.manga.kira.backend.complaint.infrastructure.capacity
 
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutOperationV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveFirstSealStorageV1
+
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 
 import me.manga.kira.backend.audit.domain.CountedAdminDeleteAuditEntry
@@ -108,6 +111,8 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForTestInstallationManifest(operation: TestInstallationManifestOperationV1): LockedTestInstallationManifest = LockedTestInstallationManifest.lock(this, operation)
     internal fun lockForTestInstallationManifestPublication(operation: TestInstallationManifestPublicationOperationV1): LockedTestInstallationManifestPublication = LockedTestInstallationManifestPublication.lock(this, operation)
     internal fun lockForTestRunPurge(operation: TestRunPurgeOperationV1): LockedTestRunPurge = LockedTestRunPurge.lock(this, operation)
+    internal fun lockForTestActiveFirstCut(operation: TestActiveFirstCutOperationV1): LockedTestActiveFirstCut = LockedTestActiveFirstCut.lock(this, operation)
+
     internal fun lockForTestOrdinarySeal(operation: TestOrdinarySealOperationV1): LockedTestOrdinarySeal = LockedTestOrdinarySeal.lock(this, operation)
     internal fun lockForTestOrdinaryDrain(operation: TestOrdinaryDrainOperationV1): LockedTestOrdinaryDrain = LockedTestOrdinaryDrain.lock(this, operation)
 
@@ -1778,6 +1783,55 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 try {
                     operation.beginCounterLock(store.jdbc)
                     return LockedTestRunSealedAudit(store, operation, store.readLockedCounters())
+                } catch (problem: Throwable) {
+                    operation.failed(problem)
+                }
+            }
+        }
+    }
+
+    /** Independently paid ordinary STORAGE charge. No test/terminal reserve is spent or refunded. */
+    internal class LockedTestActiveFirstCut private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: TestActiveFirstCutOperationV1,
+        private val counters: LockedCounters,
+    ) {
+        private var issued = false
+        private var completed = false
+
+        internal fun completedFor(candidate: TestActiveFirstCutOperationV1): Boolean = operation === candidate && completed
+
+        internal fun charge(candidate: TestActiveFirstCutOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                operation.requireCounterCharge(this, store.jdbc)
+                issued = true
+                val expected = checkNotNull(store.expectedPolicyDigest)
+                val before = counters.ledger.balance
+                val after = counters.ledger.chargeCreation(expected, TestActiveFirstSealStorageV1.ROW).balance
+                check(after.recoveryReserved == before.recoveryReserved && after.testReserved == before.testReserved &&
+                    after.hardLimit == before.hardLimit && after.creationLimit == before.creationLimit)
+                val counter = ComplaintCapacityCounter.STORAGE_BYTES
+                check(store.jdbc.update(CHARGE_ENROLLMENT_COUNTER,
+                    after.free[counter], after.actual[counter], after.testReserved[counter], counter.storedName, counter.storedOrdinal, expected,
+                    before.hardLimit[counter], before.creationLimit[counter], before.free[counter], before.actual[counter],
+                    before.recoveryReserved[counter], before.testReserved[counter]) == 1)
+                operation.requireCounterCharge(this, store.jdbc)
+                completed = true
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        override fun toString(): String = "LockedTestActiveFirstCut(original-independent-ordinary-2MiB-charge,redacted)"
+
+        companion object {
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: TestActiveFirstCutOperationV1): LockedTestActiveFirstCut {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    val locked = LockedTestActiveFirstCut(store, operation, store.readLockedCounters())
+                    operation.requireCounterRead(store.jdbc)
+                    return locked
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }

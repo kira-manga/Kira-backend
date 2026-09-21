@@ -83,6 +83,8 @@ internal data class ComplaintTestDeploymentDocumentV1(
     val sealer: DesiredSealerInputV1,
     val retention: TestOrdinarySealRetentionInputV1,
     val ordinaryDenial: TestOrdinaryDenialAuthorityInputV1? = null,
+    val activeFirstCut: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveFirstCutInputV1? = null,
+    val ordinaryPublication: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOrdinaryPublicationInputV1? = null,
 )
 
 /** One ordinary runtime principal only, never the LIVE install operator or catalog author. */

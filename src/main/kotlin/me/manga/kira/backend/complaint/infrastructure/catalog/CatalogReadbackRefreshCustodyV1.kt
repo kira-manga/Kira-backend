@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.infrastructure.catalog
 
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutV1
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
@@ -132,6 +133,24 @@ internal class CatalogReadbackRefreshCustodyV1 {
     }
 
     internal fun releaseTestInitialAdmissionAfterCleanup(original: ComplaintTestInitialAdmissionV1) {
+        requireConnectionFree()
+        original.requireCustody(this)
+        original.requireActualCleanup()
+        requireCatalogReadback(active.compareAndSet(original, null), CatalogReadbackFailure.CLOSE_FAILURE)
+    }
+
+    internal fun reserveTestActiveFirstCut(original: TestActiveFirstCutV1) {
+        requireConnectionFree()
+        original.requireCustody(this)
+        requireCatalogReadback(active.compareAndSet(null, original), CatalogReadbackFailure.LIMIT_EXCEEDED)
+    }
+
+    internal fun requireTestActiveFirstCut(original: TestActiveFirstCutV1) {
+        original.requireCustody(this)
+        requireCatalogReadback(active.get() === original, CatalogReadbackFailure.INVALID_POLICY)
+    }
+
+    internal fun releaseTestActiveFirstCutAfterCleanup(original: TestActiveFirstCutV1) {
         requireConnectionFree()
         original.requireCustody(this)
         original.requireActualCleanup()

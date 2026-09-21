@@ -38,8 +38,10 @@ internal fun withCompletionActivationRows(
     ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
     registeredAdminDelete: Boolean = false,
     registeredAdminBatchDelete: Boolean = false,
+    activeFirstCut: Boolean = false,
+    ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     action: (CompletionActivationObservation) -> Unit,
-) = withSignedActivationRows(tls, prefix, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete) { signed ->
+) = withSignedActivationRows(tls, prefix, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, ordinaryRawHttp = ordinaryRawHttp) { signed ->
     val before = signed.rows.counters.snapshot()
     val original = signed.begin()
     val prepared = try {

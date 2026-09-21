@@ -85,6 +85,9 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     }
     private val initialRegistry = binary(document.activation.initialWriterRegistryBase64, 131_072)
     val activationTotalAttemptMillis = document.activation.totalAttemptMillis
+    val activeFirstCut = document.activeFirstCut?.also(
+        me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1::requireInput,
+    )
     val ordinaryDenial = document.ordinaryDenial?.let(TestOrdinaryDenialAuthorityPolicyV1::fromIndependentInput)
     val sealerMapping = document.sealer.let { sealer ->
         val authorities = journal.declaration().authorities
@@ -98,6 +101,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
             sealer.installedPolicyBundle,
         )
     }
+    val ordinaryPublication = document.ordinaryPublication
     val sealerSessionName = document.sealer.bootstrapSessionName
     val sealerLimits = document.sealer.sdkLimits.let {
         AwsEpochSealStsLimits(it.requestTimeoutMillis, it.connectTimeoutMillis, it.readTimeoutMillis, it.maxResponseBytes, it.clockUncertaintyMillis)
@@ -120,6 +124,8 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     init {
         valid(document.schemaVersion == 1 && implementationSchema == 1 && desiredGeneration > 0)
         // Old recipes/default bytes stay distinct. Admin requires its own J AND denial recipe.
+        valid((document.profile == ACTIVE_FIRST_CUT_PROFILE) == (activeFirstCut != null))
+        valid((activeFirstCut != null) == (ordinaryPublication != null))
         valid(when (document.profile) {
             PROFILE -> !journal.adminDelete && !journal.ownerDeleteAll && ordinaryDenial == null
             OWNER_ERASURE_PROFILE -> !journal.adminDelete && journal.ownerDeleteAll && ordinaryDenial == null
@@ -127,6 +133,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
             OWNER_ERASURE_DRAIN_PROFILE -> !journal.adminDelete && journal.ownerDeleteAll && ordinaryDenial != null
             ADMIN_ERASURE_DRAIN_PROFILE -> journal.registeredAdminDelete && !journal.adminBatchDelete && ordinaryDenial != null
             ADMIN_BATCH_ERASURE_DRAIN_PROFILE -> journal.registeredAdminBatchDelete && ordinaryDenial != null
+            ACTIVE_FIRST_CUT_PROFILE -> journal.registeredAdminBatchDelete && ordinaryDenial != null && activeFirstCut != null
             else -> false
         })
         valid(database.runtimeUsername != VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME &&
@@ -155,6 +162,10 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         // Validate the private source-session spelling before any secret acquisition; it is excluded from D.
         sealerMapping.bootstrap.principal.callerArn(sealerSessionName)
         sealerMapping.bootstrap.principal.callerUserId(sealerSessionName)
+        ordinaryPublication?.let {
+            sealerMapping.ordinary.principal.callerArn(it.sessionName)
+            sealerMapping.ordinary.principal.callerUserId(it.sessionName)
+        }
         val (registry, _) = VersionBoundTestActivationConfigurationV1.checkIndependentInputs(
             catalog, journal, activationSigningKey, initialRegistry, activationTotalAttemptMillis,
         )
@@ -208,6 +219,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         const val OWNER_ERASURE_PROFILE = "PRE_CUTOVER_TEST_OWNER_ERASURE_ORDINARY_SEAL_V1"
         const val DRAIN_PROFILE = "PRE_CUTOVER_TEST_ORDINARY_DRAIN_V1"
         const val OWNER_ERASURE_DRAIN_PROFILE = "PRE_CUTOVER_TEST_OWNER_ERASURE_ORDINARY_DRAIN_V1"
+        const val ACTIVE_FIRST_CUT_PROFILE = "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ACTIVE_FIRST_CUT_V1"
         const val ADMIN_ERASURE_DRAIN_PROFILE = "PRE_CUTOVER_TEST_ADMIN_ERASURE_ORDINARY_DRAIN_V1"
         const val ADMIN_BATCH_ERASURE_DRAIN_PROFILE = "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ORDINARY_DRAIN_V1"
 

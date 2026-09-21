@@ -266,8 +266,9 @@ internal object FullTestCatalogInputs {
         key: CatalogSigningKeyV1 = key(),
         registryBytes: ByteArray = registryBytes(),
         totalAttemptMillis: Long = 30_000,
+        activeFirstCut: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveFirstCutInputV1? = null,
     ): VersionBoundTestActivationConfigurationV1 = VersionBoundTestActivationConfigurationV1.fromRetained(
-        pools, reader, journal, key, registryBytes, totalAttemptMillis,
+        pools, reader, journal, key, registryBytes, totalAttemptMillis, activeFirstCut,
     )
 
     fun goldenBytes(projected: Boolean): ByteArray {

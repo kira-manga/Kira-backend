@@ -87,6 +87,20 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         return PersistenceJdbcLifecycleOwner.catalogTestRunActivation(this)
     }
 
+    /** Matching cold descriptor only; the named root permanently seals this physical role. */
+    internal fun bindCatalogTestRunActivationOwnerWithEpochRotation(): PersistenceJdbcLifecycleOwner {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcLifecycleOwner.catalogTestRunActivationWithEpochRotation(this)
+    }
+
+    internal fun createCatalogTestRunActivationRootWithEpochRotation(): PersistenceJdbcDriverRoot {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcDriverRoot(
+            endpoint, ordinaryCapacity, PersistencePathStyle.POSIX, versionBound = this,
+            epochRotationEnabled = true, catalogTestRunActivation = true,
+        )
+    }
+
     internal fun createCatalogTestRunActivationRoot(): PersistenceJdbcDriverRoot {
         requireFinalizerConfiguration()
         return PersistenceJdbcDriverRoot(

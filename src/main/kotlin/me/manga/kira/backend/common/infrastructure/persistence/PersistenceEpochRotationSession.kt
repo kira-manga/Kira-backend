@@ -1,11 +1,14 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.infrastructure.catalog.CAPTURE_EPOCH_ROTATION_CONTROL
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationCaptureOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationRowV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_EPOCH_ROTATION_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_EPOCH_ROTATION_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutCaptureOperationV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutStateV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSqlV1
+import java.util.UUID
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
@@ -22,7 +25,7 @@ internal class PersistenceEpochRotationSession private constructor(
     private val entry: PersistencePhysicalEntry,
     private val epoch: PersistenceProducerEpoch,
     private val resource: EpochRotationPersistence,
-    private val attempt: CatalogEpochRotationAttemptV1,
+    private val attempt: PersistenceEpochRotationAttemptV1,
 ) {
     private val caller = checkNotNull(entry.control).caller
     private val total = attempt.budget
@@ -33,6 +36,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     @Volatile private var work: PersistenceTimeBudget? = null
     private var retained: CatalogEpochRotationCaptureOperation? = null
+    private var retainedTest: TestActiveFirstCutCaptureOperationV1? = null
     private var stage = Stage.PREPARED
     private var clippingRead = false
     private var readCapKind: PersistenceJdbcGuardCallKind? = null
@@ -62,7 +66,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     internal fun retain(operation: CatalogEpochRotationCaptureOperation) {
         requireWork()
-        check(stage === Stage.EXCLUSIVE && retained == null && operation.belongsTo(this))
+        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && attempt.owns(operation) && operation.belongsTo(this))
         retained = operation
     }
 
@@ -101,6 +105,96 @@ internal class PersistenceEpochRotationSession private constructor(
         requireWork()
         check(context.transaction.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED && !context.transaction.uncertain())
         stage = Stage.COMMITTED
+    }
+
+    internal fun retain(operation: TestActiveFirstCutCaptureOperationV1) {
+        requireWork()
+        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && attempt.owns(operation) && operation.belongsTo(this))
+        retainedTest = operation
+    }
+
+    /** Fixed ACTIVE authentication/row-lock order; no caller SQL, pooled connection or LIVE dispatch. */
+    internal fun lockControl(operation: TestActiveFirstCutCaptureOperationV1) {
+        requireOperation(operation)
+        check(stage === Stage.EXCLUSIVE)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        connection.prepareStatement(TestActiveFirstCutSqlV1.authenticate).use { statement ->
+            operation.authenticationArguments().forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeQuery().use { row -> check(row.next() && row.getBoolean("valid") && !row.wasNull() && !row.next()) }
+        }
+        lockTestRow(TestActiveFirstCutSqlV1.lockGlobal, emptyArray(), "data_scope_id", UUID(0L, 0L))
+        lockTestRow(TestActiveFirstCutSqlV1.lockScope, operation.scopeArguments(), "data_scope_id", operation.expectedScope())
+        lockTestRow(TestActiveFirstCutSqlV1.lockRun, operation.scopeArguments(), "data_scope_id", operation.expectedScope())
+        lockTestRow(TestActiveFirstCutSqlV1.lockSlot, operation.scopeArguments(), "operation_token", operation.expectedSlot())
+        stage = Stage.LOCKED
+    }
+
+    internal fun readControl(operation: TestActiveFirstCutCaptureOperationV1): TestActiveFirstCutStateV1 {
+        requireOperation(operation)
+        val initial = stage === Stage.LOCKED
+        check(initial || stage === Stage.WRITTEN)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        val observed = connection.prepareStatement(TestActiveFirstCutSqlV1.read).use { statement ->
+            operation.readArguments().forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeQuery().use { row ->
+                check(row.next())
+                val value = TestActiveFirstCutStateV1.copy(row)
+                check(!row.next())
+                value
+            }
+        }
+        requireWork()
+        stage = if (initial) Stage.SAMPLED else Stage.REREAD
+        return observed
+    }
+
+    internal fun captureControl(operation: TestActiveFirstCutCaptureOperationV1) {
+        requireOperation(operation)
+        check(stage === Stage.SAMPLED)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        updateTest(TestActiveFirstCutSqlV1.capture, operation.captureArguments())
+        updateTest(TestActiveFirstCutSqlV1.captureSlot, operation.captureSlotArguments())
+        stage = Stage.WRITTEN
+    }
+
+    internal fun commit(operation: TestActiveFirstCutCaptureOperationV1) {
+        requireOperation(operation)
+        check(stage === Stage.REREAD && operation.completedFor(this))
+        connection.commit()
+        requireWork()
+        check(context.transaction.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED && !context.transaction.uncertain())
+        stage = Stage.COMMITTED
+    }
+
+    internal fun requireReleased(operation: TestActiveFirstCutCaptureOperationV1) {
+        if (!caller.isCurrent() || retainedTest !== operation || retained != null || !attempt.owns(operation) || !operation.completedFor(this)) throw failure()
+        if (stage !== Stage.RELEASED || problem.get() != null || !entry.jdbc.terminalCompletion().reclaimed()) throw failure()
+        if (context.transaction.databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) throw failure()
+        requireWork()
+    }
+
+    private fun requireOperation(operation: TestActiveFirstCutCaptureOperationV1) {
+        requireWork()
+        check(retainedTest === operation && retained == null && attempt.owns(operation) && operation.belongsTo(this))
+        attempt.requireCore(resource)
+    }
+
+    private fun lockTestRow(sql: String, values: Array<Any?>, column: String, expected: UUID) {
+        requireWork()
+        connection.prepareStatement(sql).use { statement ->
+            values.forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeQuery().use { row -> check(row.next() && row.getObject(column, UUID::class.java) == expected && !row.next()) }
+        }
+        requireWork()
+    }
+
+    private fun updateTest(sql: String, values: Array<Any?>) {
+        requireWork()
+        connection.prepareStatement(sql).use { statement ->
+            values.forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            check(statement.executeUpdate() == 1)
+        }
+        requireWork()
     }
 
     /** This is a retirement request only. The existing producer/native/Timer/first-close finalizer owns actual release. */
@@ -221,7 +315,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     private fun requireOperation(operation: CatalogEpochRotationCaptureOperation) {
         requireWork()
-        check(retained === operation && operation.belongsTo(this))
+        check(retained === operation && retainedTest == null && attempt.owns(operation) && operation.belongsTo(this))
         attempt.requireCore(resource)
     }
 
@@ -270,7 +364,7 @@ internal class PersistenceEpochRotationSession private constructor(
             maintenanceStage = MaintenanceStage.READING_GATE
             val gate = PersistenceComplaintMaintenanceGateV1.read(connection)
             requireMaintenanceRemaining()
-            gate.requireUnownedOpen() // The direct epoch owner is never a TEST activation continuation.
+            attempt.requireMaintenanceGate(resource, gate) // Closed actual LIVE/ACTIVE-TEST original; never a supplied continuation.
             maintenanceStage = MaintenanceStage.GATE_OBSERVED
             requireMaintenanceRemaining()
             maintenanceStage = MaintenanceStage.ACCEPTED
@@ -365,7 +459,7 @@ internal class PersistenceEpochRotationSession private constructor(
             entry: PersistencePhysicalEntry,
             epoch: PersistenceProducerEpoch,
             resource: EpochRotationPersistence,
-            attempt: CatalogEpochRotationAttemptV1,
+            attempt: PersistenceEpochRotationAttemptV1,
         ): PersistenceEpochRotationSession = PersistenceEpochRotationSession(entry, epoch, resource, attempt)
     }
 }

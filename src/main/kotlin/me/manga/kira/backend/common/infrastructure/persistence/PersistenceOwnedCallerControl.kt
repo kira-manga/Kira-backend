@@ -1,6 +1,5 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -45,7 +44,7 @@ internal class PersistenceOwnedCallerControl private constructor(
     fun matchesRecord(value: PersistencePhysicalRecord): Boolean = record === value
 
     /** Fixed identity comparisons at F→G, not a clock/campaign callback or independently supplied authority. */
-    internal fun matchesEpochRotation(resource: EpochRotationPersistence, attempt: CatalogEpochRotationAttemptV1, total: PersistenceTimeBudget): Boolean =
+    internal fun matchesEpochRotation(resource: EpochRotationPersistence, attempt: PersistenceEpochRotationAttemptV1, total: PersistenceTimeBudget): Boolean =
         epochRotation?.let { it.resource === resource && it.attempt === attempt && it.total === total } == true
 
     /** The concrete binding calls this only at its exact successful F→G admission. */
@@ -84,7 +83,7 @@ internal class PersistenceOwnedCallerControl private constructor(
     override fun toString(): String = "PersistenceOwnedCallerControl"
 
     companion object {
-        internal fun forEpochRotation(resource: EpochRotationPersistence, attempt: CatalogEpochRotationAttemptV1): PersistenceOwnedCallerControl {
+        internal fun forEpochRotation(resource: EpochRotationPersistence, attempt: PersistenceEpochRotationAttemptV1): PersistenceOwnedCallerControl {
             val total = attempt.budget
             val budget = total.systemCappedSnapshot(resource.descriptor().opening.loginBudgetMillis)
             return PersistenceOwnedCallerControl(
@@ -106,7 +105,7 @@ internal class PersistenceOwnedCallerControl private constructor(
     }
 }
 
-private class EpochRotationCallerBinding(val resource: EpochRotationPersistence, val attempt: CatalogEpochRotationAttemptV1, val total: PersistenceTimeBudget)
+private class EpochRotationCallerBinding(val resource: EpochRotationPersistence, val attempt: PersistenceEpochRotationAttemptV1, val total: PersistenceTimeBudget)
 
 /** Prebuilt before reservation. This detached cell can contain only a disposition and immutable refusal. */
 private class OwnedCallerState(val value: PersistenceOwnedCallerDisposition, val refusal: PersistenceFactoryResult.Refused? = null)

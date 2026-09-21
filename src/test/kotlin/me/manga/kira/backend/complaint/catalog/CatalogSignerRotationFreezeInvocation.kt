@@ -11,6 +11,8 @@ import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.admission.TestInitialAdmissionSqlV1
+import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRecoveryRegistrationSqlV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.ACQUIRE_COORDINATOR_LEASE
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeRequestV1
@@ -322,6 +324,7 @@ internal class CatalogSignerRotationProbeJdbc(
     override fun <T : Any?> query(sql: String, rse: ResultSetExtractor<T>): T? {
         val path = PersistencePhaseOwnership.current()?.let { poolTestField<PersistencePhasePath>(it, "path") }
         return if (path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT ||
+            (path?.testActiveFirstCut == true && sql == TRY_CATALOG_LOCK) ||
             ((observeDeliveryQueries || observeActivationQueries) && sql == DELIVERY_GATES)
         ) {
             observed(sql, emptyArray()) { super.query(sql, rse) }
@@ -331,7 +334,9 @@ internal class CatalogSignerRotationProbeJdbc(
     }
 
     override fun <T : Any?> query(sql: String, rse: ResultSetExtractor<T>, vararg args: Any?): T? =
-        if (((observeDeliveryQueries || observeActivationQueries || observeTestActivationQueries) && sql == DELIVERY_AUTHENTICATE) ||
+        if ((PersistencePhaseOwnership.current()?.let { poolTestField<PersistencePhasePath>(it, "path").testActiveFirstCut } == true &&
+                sql in setOf(TestActiveFirstCutSqlV1.authenticate, CatalogTestRunActivationSqlV1.lockRecoveryRegistrationHistory)) ||
+            ((observeDeliveryQueries || observeActivationQueries || observeTestActivationQueries) && sql == DELIVERY_AUTHENTICATE) ||
             (observeTestActivationQueries && sql in setOf(
                 CatalogTestRunActivationSqlV1.readHistory, CatalogTestRunActivationSqlV1.lockHistory,
                 CatalogTestRunActivationSqlV1.readSignedHistory, CatalogTestRunActivationSqlV1.lockSignedHistory,
@@ -396,6 +401,8 @@ internal class CatalogSignerRotationProbeJdbc(
             observations[phase] = StepUpPhaseObservation(phase, ownedPoolLease(holder.connection), identity)
         }
         val step = when {
+            path.testActiveFirstCut && firstCutStep(sql) != null -> checkNotNull(firstCutStep(sql))
+
             path.testRunSealing && sql == DELIVERY_AUTHENTICATE -> "test-run-sealing-authenticate"
 
             path.testRunSealing && sealingStep(sql) != null -> checkNotNull(sealingStep(sql))
@@ -455,6 +462,9 @@ internal class CatalogSignerRotationProbeJdbc(
         PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
         PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_CAPTURE,
         PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_RELEASE,
+        PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_READ,
+        PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_LEASE,
+        PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_REQUEST,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
@@ -548,6 +558,21 @@ internal class CatalogSignerRotationProbeJdbc(
         CatalogTestRunActivationProjectionSqlV1.lockResources -> "test-project-resources-lock"
         CatalogTestRunActivationProjectionSqlV1.lockNotices -> "test-project-notices-lock"
         CatalogTestRunActivationProjectionSqlV1.lockAudits -> "test-project-audits-lock"
+        else -> null
+    }
+
+    private fun firstCutStep(sql: String): String? = when (sql) {
+        TestActiveFirstCutSqlV1.authenticate -> "test-first-cut-authenticate"
+        TestActiveFirstCutSqlV1.lockGlobal -> "test-first-cut-global-lock"
+        TestActiveFirstCutSqlV1.lockScope -> "test-first-cut-control-lock"
+        CatalogTestRunActivationSqlV1.lockRecoveryRegistrationHistory -> "test-first-cut-history-lock"
+        TestNamespaceRecoveryRegistrationSqlV1.tail -> "test-first-cut-tail"
+        TestActiveFirstCutSqlV1.lockRun -> "test-first-cut-run-lock"
+        TestActiveFirstCutSqlV1.lockSlot -> "test-first-cut-slot-lock"
+        TestActiveFirstCutSqlV1.read -> "test-first-cut-read"
+        TestActiveFirstCutSqlV1.acquireLease -> "test-first-cut-acquire"
+        TestActiveFirstCutSqlV1.request -> "test-first-cut-request"
+        TestActiveFirstCutSqlV1.insertSlot -> "test-first-cut-insert"
         else -> null
     }
 

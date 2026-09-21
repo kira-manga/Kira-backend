@@ -62,8 +62,10 @@ internal fun withSignedActivationRows(
     ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
     registeredAdminDelete: Boolean = false,
     registeredAdminBatchDelete: Boolean = false,
+    activeFirstCut: Boolean = false,
+    ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     action: (SignedActivationObservation) -> Unit,
-) = withPreparedActivationRows(tls, prefix, selectedSigner, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete) { rows ->
+) = withPreparedActivationRows(tls, prefix, selectedSigner, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, ordinaryRawHttp = ordinaryRawHttp) { rows ->
     SignedActivationObservation(tls, rows).use { observed ->
         observed.probe(tls) // The real template is installed before any owner/input exists.
         tls.startCatalogTestRunActivation()
@@ -182,7 +184,8 @@ internal class SignedActivationObservation(
         previous.close() // End the actual original root before opening the new graph.
         rows.awaitRealLeaseExpiry() // No SQL backdating, replacement lease result or old budget revival.
         // The endpoint participates in full D: transport-loss fixtures keep it unchanged from freeze through cold replay.
-        VersionBoundPersistenceConnectedFixture(tls.database, testActivation = true, endpointPort = tls.endpointPort).use { fresh ->
+        VersionBoundPersistenceConnectedFixture(tls.database, testActivation = true, activeFirstCut = rows.evidence.activeFirstCutInput != null,
+            endpointPort = tls.endpointPort).use { fresh ->
             fresh.bind(nanoClock = nanoClock)
             probe(fresh)
             fresh.startCatalogTestRunActivation()

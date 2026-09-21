@@ -16,6 +16,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.preferCatalogFreez
 import me.manga.kira.backend.complaint.infrastructure.catalog.withCatalogFreezeCleanup
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveCutoffPublicationV1
 import me.manga.kira.backend.security.AcquiredVersionedSecret
 import me.manga.kira.backend.security.JwtKeyProvider
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
@@ -36,6 +37,9 @@ import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.BasicFileAttributes
 import java.time.Instant
+import java.time.Clock
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.util.concurrent.CancellationException
 
 /**
@@ -52,6 +56,9 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
     private val stsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
     private val kmsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
     private val s3HttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
+    private val ordinaryStsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
+    private val ordinaryKmsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
+    private val ordinaryS3HttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
 ) : AutoCloseable {
     private val caller = Thread.currentThread()
     private val setupBudget = PersistenceTimeBudget.start(60_000, nanoClock)
@@ -69,6 +76,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
     private var owner: PersistenceJdbcLifecycleOwner? = null
     private var lanes: JournalPublicationLanesV1? = null
     private var seal: VersionBoundTestOrdinarySealV1? = null
+    private var activePublication: VersionBoundTestActiveCutoffPublicationV1? = null
     private var assembled: VersionBoundTestNamespaceProcessV1? = null
     private var closeFailure: Throwable? = null
 
@@ -86,18 +94,23 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         }
 
     @Suppress("TooGenericExceptionCaught")
-    fun assemble(manifest: Path, secretCredentials: AwsSessionCredentials, sealBootstrapCredentials: AwsSessionCredentials) {
+    fun assemble(manifest: Path, secretCredentials: AwsSessionCredentials, sealBootstrapCredentials: AwsSessionCredentials,
+        ordinaryPublicationCredentials: AwsSessionCredentials? = null) {
         var failureCode = ComplaintTestDeploymentFailureV1.INPUT_REFUSED
         try {
             checkpoint()
             requireTestDeployment(!entered, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             entered = true
             val inputs = readManifest(manifest)
+            requireTestDeployment((inputs.activeFirstCut != null) == (ordinaryPublicationCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
+            if (ordinaryPublicationCredentials != null) requireTestDeployment(
+                ordinaryPublicationCredentials.accessKeyId() != sealBootstrapCredentials.accessKeyId(), ComplaintTestDeploymentFailureV1.INPUT_REFUSED,
+            )
             checkpoint() // All grammar/identity/policy validation precedes the first immutable lookup.
             failureCode = ComplaintTestDeploymentFailureV1.PROVIDER_REFUSED
             val acquired = inputs.allBindings().map { acquire(it, secretCredentials) }
             failureCode = ComplaintTestDeploymentFailureV1.PROCESS_REFUSED
-            assembleAcquired(inputs, acquired, sealBootstrapCredentials)
+            assembleAcquired(inputs, acquired, sealBootstrapCredentials, ordinaryPublicationCredentials)
             checkpoint()
             checkNotNull(assembled).requireUnchangedConfiguration()
             ready = true
@@ -179,6 +192,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         inputs: ComplaintTestDeploymentInputsV1,
         acquired: List<AcquiredVersionedSecret>,
         credentials: AwsSessionCredentials,
+        ordinaryCredentials: AwsSessionCredentials?,
     ) {
         checkpoint()
         val expected = inputs.allBindings()
@@ -200,20 +214,31 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             inputs.publicTrustPem(), inputs.protectedTrustParent,
         ).also { persistence = it }
         checkpoint()
-        val retainedOwner = configuration.bindLifecycleOwner().also { owner = it } // BEFORE shell binding or any partial-pool failure.
+        val retainedOwner = (if (inputs.activeFirstCut == null) configuration.bindLifecycleOwner()
+            else configuration.bindLifecycleOwnerWithEpochRotation()).also { owner = it } // BEFORE shell binding or any partial-pool failure.
         val pools = retainedOwner.bindVersionBoundPools(runtimeLaunchProfile, nanoClock)
         val publication = JournalPublicationLanesV1(inputs.journal).also { lanes = it }
         val activation = VersionBoundTestActivationConfigurationV1.fromRetained(
-            pools, inputs.catalog, inputs.journal, inputs.activationSigningKey, inputs.initialWriterRegistryBytes(), inputs.activationTotalAttemptMillis,
+            pools, inputs.catalog, inputs.journal, inputs.activationSigningKey, inputs.initialWriterRegistryBytes(), inputs.activationTotalAttemptMillis, inputs.activeFirstCut,
         )
         val ordinarySeal = VersionBoundTestOrdinarySealV1.fromIndependentInputs(
             routing, publication, inputs.sealerMapping, inputs.retention, credentials, inputs.sealerSessionName,
             inputs.sealerLimits, nanoClock::nanoTime, wallClock, stsHttpFixture, kmsHttpFixture, s3HttpFixture,
         ).also { seal = it } // BEFORE full-D encoding. The seal borrows publication; this assembly owns it.
         checkpoint()
+        val ordinaryPublication = inputs.ordinaryPublication?.let {
+            VersionBoundTestActiveCutoffPublicationV1.fromIndependentInputs(
+                routing, publication, inputs.sealerMapping, checkNotNull(ordinaryCredentials), it.sessionName, credentials,
+                inputs.sealerLimits, AssemblyClock(wallClock), nanoClock::nanoTime,
+                ordinaryStsHttpFixture, ordinaryKmsHttpFixture, ordinaryS3HttpFixture,
+            ).also { retained -> activePublication = retained }
+        }
+        val activeFirstCut = inputs.activeFirstCut?.let {
+            me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1.fromRetained(it, pools, inputs.journal, ordinarySeal)
+        }
         assembled = VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, inputs.implementationSchema, inputs.desiredGeneration, inputs.databaseIdentity, inputs.restoreIdentity,
-            publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial,
+            publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial, activeFirstCut, ordinaryPublication,
         )
         // No public-trust preparation, JDBC connection, STS/KMS/S3 construction, activation or registration was performed.
     }
@@ -277,6 +302,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         attempt { owner?.requestShutdown() }
         attempt { closeChannel() }
         attempt { closeResolver() }
+        attempt { activePublication?.close() }
         attempt { seal?.close() }
         attempt { lanes?.close() }
         attempt { owner?.versionBoundPools?.close() }
@@ -317,7 +343,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
     companion object {
         /** Begin BEFORE manifest I/O; default launch remains UNKNOWN and cannot be upgraded on this owner. */
         fun begin(): ComplaintTestProcessAssemblyV1 = ComplaintTestProcessAssemblyV1(
-            SystemPersistenceNanoClock, Instant::now, PersistencePoolLaunchProfile.UNKNOWN, null, null, null, null,
+            SystemPersistenceNanoClock, Instant::now, PersistencePoolLaunchProfile.UNKNOWN, null, null, null, null, null, null, null,
         )
 
         /** Only raw provider HTTP/clocks and the existing explicit cold controlled launch selection may vary in tests. */
@@ -329,7 +355,15 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             sts: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
             kms: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
             s3: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
-        ): ComplaintTestProcessAssemblyV1 = ComplaintTestProcessAssemblyV1(nanoClock, wallClock, runtimeLaunchProfile, secretHttpFactory, sts, kms, s3)
+            ordinarySts: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+            ordinaryKms: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+            ordinaryS3: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+        ): ComplaintTestProcessAssemblyV1 = ComplaintTestProcessAssemblyV1(
+            nanoClock, wallClock, runtimeLaunchProfile, secretHttpFactory, sts, kms, s3,
+            // Distinct raw responders are fixed before intake/full D, never by editing a retained recipe.
+            // Absent opt-in preserves the historical shared fixture spelling; production remains all-null.
+            ordinarySts ?: sts, ordinaryKms ?: kms, ordinaryS3 ?: s3,
+        )
     }
 }
 
@@ -354,4 +388,11 @@ private fun boundedTestDeploymentFailure(problem: Throwable, otherwise: Complain
         if (problem.code === PersistenceBoundaryFailureCode.TIME_BUDGET_EXHAUSTED) ComplaintTestDeploymentFailureV1.TIME_BUDGET_EXHAUSTED else otherwise,
     )
     else -> ComplaintTestDeploymentExceptionV1(otherwise)
+}
+
+/** Retained original test clock spelling only; not a deadline, renew callback or provider authority. */
+private class AssemblyClock(private val source: () -> Instant, private val zone: ZoneId = ZoneOffset.UTC) : Clock() {
+    override fun getZone(): ZoneId = zone
+    override fun withZone(zone: ZoneId): Clock = AssemblyClock(source, zone)
+    override fun instant(): Instant = source()
 }

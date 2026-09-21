@@ -82,6 +82,15 @@ internal class CatalogTestRunActivationReadbackV3 private constructor(
             provider: CatalogReadbackPort, initialBundleBytes: ByteArray, currentBundleBytes: ByteArray,
             policy: CatalogReadbackPolicy, expectedHead: CatalogLocalHead, expected: CatalogTestRunActivationCanonicalV3,
             history: CatalogTestRunActivationHistoryV1,
+        ): CatalogTestRunActivationReadbackV3 = verifyActiveCurrent(
+            provider, initialBundleBytes, currentBundleBytes, policy, expectedHead, expected, history,
+        )
+
+        /** Pure raw/history comparison for fixed ACTIVE owners; not an ACTIVE admission/lease issuer. */
+        internal fun verifyActiveCurrent(
+            provider: CatalogReadbackPort, initialBundleBytes: ByteArray, currentBundleBytes: ByteArray,
+            policy: CatalogReadbackPolicy, expectedHead: CatalogLocalHead, expected: CatalogTestRunActivationCanonicalV3,
+            history: CatalogTestRunActivationHistoryV1,
         ): CatalogTestRunActivationReadbackV3 {
             history.requireExpected(expectedHead.generation, prepared = true, signed = true, completed = true)
             return verifyCaptured(provider, initialBundleBytes, currentBundleBytes, policy, expectedHead, expected, history)

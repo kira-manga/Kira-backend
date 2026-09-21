@@ -313,6 +313,14 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
             }
         }
 
+        /** Current ACTIVE comparison only. The holder separately authenticates the ACTIVE run/open gate/full D. */
+        internal fun readActiveCurrent(rows: ResultSet, generation: Long, maximumGenerations: Int): CatalogTestRunActivationHistoryV1 {
+            check(generation in 2L..maximumGenerations.toLong())
+            return readBounded(rows, generation, maximumGenerations, retainRaw = true, signed = true, completed = true).also {
+                it.requireExpected(generation, prepared = true, signed = true, completed = true)
+            }
+        }
+
         private fun readBounded(rows: ResultSet, expectedGeneration: Long, maximumGenerations: Int, retainRaw: Boolean,
             signed: Boolean, completed: Boolean): CatalogTestRunActivationHistoryV1 {
             val predecessorCount = Math.toIntExact(expectedGeneration - 1L)

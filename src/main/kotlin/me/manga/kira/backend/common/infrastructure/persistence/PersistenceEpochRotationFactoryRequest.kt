@@ -1,6 +1,5 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
@@ -10,7 +9,7 @@ internal class PersistenceEpochRotationFactoryRequest(
     private val binding: PersistencePhysicalFactoryBinding,
     private val participant: PersistenceJdbcParticipant,
     private val resource: EpochRotationPersistence,
-    private val attempt: CatalogEpochRotationAttemptV1,
+    private val attempt: PersistenceEpochRotationAttemptV1,
 ) {
     private val claimed = AtomicBoolean()
     private val retained = AtomicReference<PersistencePhysicalEntry?>()
@@ -106,7 +105,7 @@ internal class PersistenceEpochRotationFactoryRequest(
 internal class PreparedEpochRotationSession private constructor(
     private val entry: PersistencePhysicalEntry,
     private val binding: PersistencePhysicalFactoryBinding,
-    private val attempt: CatalogEpochRotationAttemptV1,
+    private val attempt: PersistenceEpochRotationAttemptV1,
     private val total: PersistenceTimeBudget,
     internal val resource: EpochRotationPersistence,
     internal val epoch: PersistenceProducerEpoch,
@@ -125,7 +124,7 @@ internal class PreparedEpochRotationSession private constructor(
             entry: PersistencePhysicalEntry,
             binding: PersistencePhysicalFactoryBinding,
             resource: EpochRotationPersistence,
-            attempt: CatalogEpochRotationAttemptV1,
+            attempt: PersistenceEpochRotationAttemptV1,
         ): PreparedEpochRotationSession {
             check(!binding.ownershipLockHeld())
             attempt.requireCore(resource)

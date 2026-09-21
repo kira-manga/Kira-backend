@@ -22,7 +22,7 @@ import me.manga.kira.backend.security.VersionBoundTestComplaintConsumerConfigura
 internal object ComplaintEffectiveTestConfigurationV1 {
     fun encode(owner: VersionBoundTestNamespaceProcessV1): ByteArray {
         requireConnectionFree()
-        require(CanonicalJson.CANON_VERSION == "kcj-1" && owner.pools.epochRotation == null) { INVALID_TEST_PROCESS_CONFIGURATION }
+        require(CanonicalJson.CANON_VERSION == "kcj-1" && (owner.pools.epochRotation == null) == (owner.activeFirstCut == null)) { INVALID_TEST_PROCESS_CONFIGURATION }
         val journal = owner.consumers.journalConfiguration
         require(!journal.registeredAdminDelete || owner.ordinaryDenial != null && owner.ordinarySeal != null) { INVALID_TEST_PROCESS_CONFIGURATION }
         owner.publicationLanes.requireTestJournal(journal)
@@ -34,7 +34,8 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             put("kind", "kira-complaint-effective-test-configuration")
             put("schemaVersion", 1)
             put("canonicalizerId", "kcj-1")
-            put("profile", if (journal.registeredAdminBatchDelete) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+            put("profile", if (owner.activeFirstCut != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ACTIVE_FIRST_CUT_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+                else if (journal.registeredAdminBatchDelete) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (journal.registeredAdminDelete) "PRE_CUTOVER_TEST_ADMIN_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (journal.ownerDeleteAll) "PRE_CUTOVER_TEST_OWNER_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else "PRE_CUTOVER_TEST_OWNER_DELETE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER")
@@ -58,6 +59,12 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             // Independently retained purpose/implementation/timing policy, before D and activation.
             // Legacy absence deliberately leaves its existing preimage byte-for-byte unchanged.
             owner.ordinaryDenial?.let { put("ordinaryDenial", it.inventory()) }
+            // Explicit retained physical resource + paid row policy; old absent profiles are byte-identical.
+            owner.activeFirstCut?.let {
+                it.requireRetained(owner.pools, journal, owner.ordinarySeal)
+                put("activeFirstCut", it.inventory())
+            }
+            owner.activeCutoffPublication?.let { put("activeCutoffPublication", it.inventory()) }
         }
         return CanonicalJson.canonicalize(result).toByteArray(Charsets.UTF_8)
     }

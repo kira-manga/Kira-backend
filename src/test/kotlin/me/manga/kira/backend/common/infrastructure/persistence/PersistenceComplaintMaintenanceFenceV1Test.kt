@@ -91,8 +91,13 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_RELEASE,
         )
         val sealing = setOf(PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL, PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT)
-        val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + initialAdmission + sealing
-        assertEquals(114, PersistencePhasePath.entries.size)
+        val activeFirstCut = setOf(
+            PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_READ,
+            PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_LEASE,
+            PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_REQUEST,
+        )
+        val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + initialAdmission + sealing + activeFirstCut
+        assertEquals(117, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
         assertEquals(3, adminWriters.size)
@@ -100,7 +105,8 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         assertEquals(5, terminalWriters.size)
         assertEquals(3, registration.size)
         assertEquals(2, initialAdmission.size)
-        assertEquals(69, writers.size)
+        assertEquals(3, activeFirstCut.size)
+        assertEquals(72, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,
@@ -167,6 +173,8 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         assertFalse(registration.any { it.catalogTestRunActivation }) // Separate normal-root ownership, never a named-projector route.
         assertEquals(initialAdmission, PersistencePhasePath.entries.filter { it.testInitialAdmission }.toSet())
         assertFalse(initialAdmission.any { it.readOnly || it.catalogTestRunActivation || it.testRunSealing })
+        assertEquals(activeFirstCut, PersistencePhasePath.entries.filter { it.testActiveFirstCut }.toSet())
+        assertFalse(activeFirstCut.any { it.readOnly || it.catalogTestRunActivation || it.testRunSealing || it.testInitialAdmission })
         assertEquals(sealing, PersistencePhasePath.entries.filter { it.testRunSealing }.toSet())
         assertFalse(sealing.any { it.readOnly || it.catalogTestRunActivation })
         assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT.readOnly)

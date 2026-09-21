@@ -10,9 +10,10 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.withLock
 
 /**
- * One original TEST catalog transaction cut (PROJECT or initial admission), at the same endpoint
+ * One original TEST transaction cut (PROJECT, initial admission, or first ACTIVE native capture), at the same endpoint
  * for freeze/COMPLETE/PROJECT/registration and the selected transaction. Opaque TCP bytes
  * go to the real PostgreSQL server: no TLS termination, credential capture, protocol replies or
  * plaintext parsing. One nonblocking actor, <=8 lifetime-total connections (not concurrent), two
@@ -58,6 +59,24 @@ internal class PgLifecycleTlsCommitForwarder(private val database: PgLifecycleDa
         val calls: Any = poolTestField(lower, "calls")
         val entry: PersistencePhysicalEntry = poolTestField(calls, "entry")
         check(scope.catalogEntries().any { it === entry })
+        armEntry(entry)
+    }
+
+    /** Exact original NONPOOLED session and its same-root capacity-one ledger, never a supplied connection/result. */
+    fun arm(session: PersistenceEpochRotationSession, scope: PgLifecycleTestScope) {
+        val resource = poolTestField<EpochRotationPersistence>(session, "resource")
+        check(scope.owner.epochRotation === resource)
+        val entry = poolTestField<PersistencePhysicalEntry>(session, "entry")
+        val participant = poolTestField<PersistenceJdbcParticipant>(scope.root, "epochRotationParticipant")
+        val binding = poolTestField<PersistencePhysicalFactoryBinding>(participant, "binding")
+        binding.ledger.lock.withLock {
+            check(binding.ledger.entries.filterNotNull().single() === entry)
+            check(entry.policy === PersistenceDriverAttemptPolicy.TRACKED_EPOCH_ROTATION_CONJUNCTION)
+        }
+        armEntry(entry)
+    }
+
+    private fun armEntry(entry: PersistencePhysicalEntry) {
         val socket = pgRetainedSockets(entry).single()
         check(socket.isConnected && !socket.isClosed && socket.port == port)
         val address = socket.localSocketAddress

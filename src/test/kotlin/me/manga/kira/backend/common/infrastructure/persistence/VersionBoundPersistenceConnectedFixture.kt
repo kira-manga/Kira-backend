@@ -33,6 +33,7 @@ internal class VersionBoundPersistenceConnectedFixture(
     private val desiredOperator: Boolean = false,
     private val catalogAuthor: Boolean = false,
     private val testActivation: Boolean = false,
+    private val activeFirstCut: Boolean = false,
     internal val endpointPort: Int = database.port,
     private val testIntake: ComplaintTestProcessAssemblyV1? = null,
     private val testRegistrationPredecessor: VersionBoundPersistenceConnectedFixture? = null,
@@ -93,6 +94,7 @@ internal class VersionBoundPersistenceConnectedFixture(
         testIntake?.lifecycleOwner ?: when {
             desiredOperator -> configuration.bindDesiredInstallationOperatorOwner()
             catalogAuthor -> configuration.bindCatalogGenesisAuthoringOwner()
+            testActivation && activeFirstCut -> configuration.bindCatalogTestRunActivationOwnerWithEpochRotation()
             testActivation -> configuration.bindCatalogTestRunActivationOwner()
             epochRotation -> configuration.bindLifecycleOwnerWithEpochRotation()
             else -> configuration.bindLifecycleOwner()
@@ -109,6 +111,7 @@ internal class VersionBoundPersistenceConnectedFixture(
 
     init {
         check(listOf(desiredOperator, catalogAuthor, testActivation, epochRotation).count { it } <= 1)
+        check(!activeFirstCut || testActivation) // Cold named-root descriptor only; its nonpooled participant stays sealed.
         check(testIntake == null || (client == ConnectedTlsClient.MATCHED && !desiredOperator && !catalogAuthor && !testActivation && !epochRotation))
         suppliedPassword.fill(0) // The connected path must use its captured acquisition, never a later caller buffer.
     }

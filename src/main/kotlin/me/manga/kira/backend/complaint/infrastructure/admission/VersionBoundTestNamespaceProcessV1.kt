@@ -12,6 +12,8 @@ import me.manga.kira.backend.security.ComplaintOwnerDeleteAllAdmissionPolicy
 import me.manga.kira.backend.security.VersionBoundTestComplaintConsumerConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenialAuthorityPolicyV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveCutoffPublicationV1
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -34,6 +36,8 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     val catalogActivation: VersionBoundTestActivationConfigurationV1,
     val ordinarySeal: VersionBoundTestOrdinarySealV1?,
     val ordinaryDenial: TestOrdinaryDenialAuthorityPolicyV1?,
+    val activeFirstCut: VersionBoundTestActiveFirstCutV1?,
+    val activeCutoffPublication: VersionBoundTestActiveCutoffPublicationV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val canonical: ByteArray
@@ -125,7 +129,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         require(implementationSchema == 1 && desiredGeneration > 0 && isV4(databaseIdentity) && isV4(restoreIdentity)) {
             INVALID_TEST_PROCESS_CONFIGURATION
         }
-        require(pools.epochRotation == null && consumers.coordinationMode == "memory" && consumers.declaredInstances == 1) {
+        require((pools.epochRotation == null) == (activeFirstCut == null) && consumers.coordinationMode == "memory" && consumers.declaredInstances == 1) {
             INVALID_TEST_PROCESS_CONFIGURATION
         }
         require(consumers.jwt.boundUserKeyProvider != null && consumers.journalRouting.journalConfiguration === consumers.journalConfiguration) {
@@ -147,6 +151,9 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
                 consumers.ownerCreatePolicy.pruneBatch == consumers.ownerEditPolicy.pruneBatch &&
                 consumers.ownerCreatePolicy.pruneBatch == consumers.ownerDeletePolicy.pruneBatch,
         ) { INVALID_TEST_PROCESS_CONFIGURATION }
+        require((activeFirstCut == null) == (activeCutoffPublication == null)) { INVALID_TEST_PROCESS_CONFIGURATION }
+        activeFirstCut?.requireRetained(pools, journal, ordinarySeal)
+        activeCutoffPublication?.requireRetained(consumers.journalRouting, publicationLanes)
         catalogActivation.requireRetained(pools, catalogReadback, journal)
         ordinarySeal?.requireRetained(consumers.journalRouting, publicationLanes)
         ordinarySeal?.requireCatalogReferences(catalogActivation.putAuthority, catalogActivation.signAuthority)
@@ -174,11 +181,13 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             catalogActivation: VersionBoundTestActivationConfigurationV1,
             ordinarySeal: VersionBoundTestOrdinarySealV1? = null,
             ordinaryDenial: TestOrdinaryDenialAuthorityPolicyV1? = null,
+            activeFirstCut: VersionBoundTestActiveFirstCutV1? = null,
+            activeCutoffPublication: VersionBoundTestActiveCutoffPublicationV1? = null,
         ): VersionBoundTestNamespaceProcessV1 {
             requireConnectionFree()
             return VersionBoundTestNamespaceProcessV1(
                 consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
-                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial,
+                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication,
             )
         }
 

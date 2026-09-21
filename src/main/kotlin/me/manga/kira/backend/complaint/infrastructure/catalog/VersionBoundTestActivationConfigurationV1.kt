@@ -39,6 +39,8 @@ internal class VersionBoundTestActivationConfigurationV1 private constructor(
 ) {
     internal val coordinator = pools.catalogCoordinator
     private val descriptors = pools.descriptors()
+    private val rotation = pools.epochRotation
+    private val rotationDescriptor = rotation?.descriptor()
     private val registry = checkedRegistry.registry
     private val registryBytes = checkedRegistry.canonicalRegistryBytes
     private val publicKey = publicKeySpki.copyOf()
@@ -100,6 +102,7 @@ internal class VersionBoundTestActivationConfigurationV1 private constructor(
         require(selectedPools === pools && selectedReader === reader && selectedJournal === journal && pools.catalogCoordinator === coordinator) {
             INVALID_TEST_ACTIVATION_CONFIGURATION
         }
+        require(pools.epochRotation === rotation && rotation?.descriptor() === rotationDescriptor) { INVALID_TEST_ACTIVATION_CONFIGURATION }
         val current = pools.descriptors()
         require(current.size == descriptors.size && current.indices.all { current[it] === descriptors[it] }) { INVALID_TEST_ACTIVATION_CONFIGURATION }
     }
@@ -186,9 +189,15 @@ internal class VersionBoundTestActivationConfigurationV1 private constructor(
             signingKey: CatalogSigningKeyV1,
             initialWriterRegistryBytes: ByteArray,
             totalAttemptMillis: Long,
+            activeFirstCut: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveFirstCutInputV1? = null,
         ): VersionBoundTestActivationConfigurationV1 {
             requireConnectionFree()
-            require(pools.epochRotation == null) { INVALID_TEST_ACTIVATION_CONFIGURATION }
+            require((pools.epochRotation == null) == (activeFirstCut == null)) { INVALID_TEST_ACTIVATION_CONFIGURATION }
+            activeFirstCut?.let {
+                me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1.requireInput(it)
+                require(journal.registeredAdminBatchDelete) { INVALID_TEST_ACTIVATION_CONFIGURATION }
+                checkNotNull(pools.epochRotation).requireUnchangedConfiguration()
+            }
             val (checked, spki) = checkIndependentInputs(reader, journal, signingKey, initialWriterRegistryBytes, totalAttemptMillis)
             return VersionBoundTestActivationConfigurationV1(pools, reader, journal, signingKey, checked, spki, totalAttemptMillis).also {
                 it.requireRetained(pools, reader, journal)

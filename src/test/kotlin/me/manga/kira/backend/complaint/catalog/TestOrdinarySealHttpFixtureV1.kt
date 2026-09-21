@@ -57,6 +57,9 @@ internal class TestOrdinarySealHttpFixtureV1(
     val requests = mutableListOf<JournalPublisherHttpRequest>()
     val order = mutableListOf<String>()
     var offsetNanos = 0L
+    /** Optional clock-boundary observer only; never a native/provider/result replacement. Select before the tested original. */
+    @Volatile var onNanoSample: (() -> Unit)? = null
+    private val samplingNano = ThreadLocal<Boolean>()
     var boundary: () -> Unit = {}
     var nativeBoundary: () -> Unit = {}
     var changeSts: (Int, JournalKmsHttpReply) -> Unit = { _, _ -> }
@@ -87,7 +90,14 @@ internal class TestOrdinarySealHttpFixtureV1(
     private var expectedKey: String? = null
 
     fun now(): Instant = Instant.now().plusNanos(offsetNanos)
-    fun nanos(): Long = System.nanoTime() + offsetNanos
+    fun nanos(): Long {
+        val selected = onNanoSample
+        if (selected != null && samplingNano.get() != true) {
+            samplingNano.set(true)
+            try { checked(selected) } finally { samplingNano.remove() }
+        }
+        return System.nanoTime() + offsetNanos
+    }
 
     fun owner(routing: TestOwnerDeleteJournalRoutingV1, lanes: JournalPublicationLanesV1, environment: String,
         catalog: InitialCatalogWriterV1): VersionBoundTestOrdinarySealV1 {

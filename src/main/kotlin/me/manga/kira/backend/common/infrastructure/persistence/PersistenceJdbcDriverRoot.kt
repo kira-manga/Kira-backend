@@ -24,7 +24,7 @@ internal class PersistenceJdbcDriverRoot(
             !catalogTestRunActivation ||
                 (!catalogSignerRotationActivation && !catalogSignerRotationDelivery && !catalogSignerRotationAuthoring &&
                     !catalogSignerRotationRecovery && !desiredInstallationOperator && !catalogGenesisAuthoring &&
-                    !catalogGenesisFinalization && !sourceOnly && !epochRotationEnabled && versionBound != null),
+                    !catalogGenesisFinalization && !sourceOnly && versionBound != null),
         )
         check(
             !catalogSignerRotationActivation ||

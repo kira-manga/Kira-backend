@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.infrastructure.catalog
 
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestInitialAdmissionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRecoveryRegistrationAttemptV1
@@ -32,6 +33,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
     private val testActivation: CatalogTestRunActivationV1? = null,
     private val testRegistration: ComplaintTestNamespaceRegistrationAttemptV1? = null,
     private val initialAdmission: ComplaintTestInitialAdmissionV1? = null,
+    private val activeFirstCut: TestActiveFirstCutV1? = null,
     private val testRecoveryRegistration: ComplaintTestNamespaceRecoveryRegistrationAttemptV1? = null,
     private val testActiveRegistration: ComplaintTestNamespaceActiveRegistrationAttemptV1? = null,
 ) : SdkHttpClient {
@@ -43,6 +45,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
     internal constructor(owner: CatalogTestRunActivationV1, budget: PersistenceTimeBudget) : this(null, null, budget, testActivation = owner)
     internal constructor(owner: ComplaintTestNamespaceRegistrationAttemptV1, budget: PersistenceTimeBudget) : this(null, null, budget, testRegistration = owner)
     internal constructor(owner: ComplaintTestInitialAdmissionV1, budget: PersistenceTimeBudget) : this(null, null, budget, initialAdmission = owner)
+    internal constructor(owner: TestActiveFirstCutV1, budget: PersistenceTimeBudget) : this(null, null, budget, activeFirstCut = owner)
     internal constructor(owner: ComplaintTestNamespaceRecoveryRegistrationAttemptV1, budget: PersistenceTimeBudget) : this(null, null, budget, testRecoveryRegistration = owner)
     internal constructor(owner: ComplaintTestNamespaceActiveRegistrationAttemptV1, budget: PersistenceTimeBudget) : this(null, null, budget, testActiveRegistration = owner)
     private val closed = AtomicBoolean()
@@ -117,6 +120,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
             testActivation != null -> testActivation.requireProviderRunning()
             testRegistration != null -> testRegistration.requireProviderRunning()
             initialAdmission != null -> initialAdmission.requireProviderRunning()
+            activeFirstCut != null -> activeFirstCut.requireProviderRunning()
             testRecoveryRegistration != null -> testRecoveryRegistration.requireProviderRunning()
             testActiveRegistration != null -> testActiveRegistration.requireProviderRunning()
             else -> checkNotNull(initialAuthor).requireReadbackRunning()
@@ -135,6 +139,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
         testActivation?.observeFailure(failure)
         testRegistration?.observeFailure(failure)
         initialAdmission?.observeFailure(failure)
+        activeFirstCut?.observeFailure(failure)
         testRecoveryRegistration?.observeFailure(failure)
         testActiveRegistration?.observeFailure(failure)
         val signal = signerRotationSignal(failure)
@@ -315,6 +320,8 @@ internal class CatalogSignerRotationReadbackHttpPairV1 private constructor(
     internal constructor(owner: ComplaintTestNamespaceRecoveryRegistrationAttemptV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
     internal constructor(owner: ComplaintTestNamespaceActiveRegistrationAttemptV1, budget: PersistenceTimeBudget) :
+        this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
+    internal constructor(owner: TestActiveFirstCutV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
     private var primaryOpened = false
     private var replicaOpened = false

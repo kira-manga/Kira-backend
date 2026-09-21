@@ -2,6 +2,8 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationCaptureOperation
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutCaptureOperationV1
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -51,6 +53,7 @@ internal class EpochRotationPersistence private constructor(
 
     @Suppress("TooGenericExceptionCaught")
     internal fun capture(attempt: CatalogEpochRotationAttemptV1): CatalogEpochRotationCaptureOperation {
+        val binding = PersistenceEpochRotationAttemptV1.retain(attempt)
         var call: Capture? = null
         var result: CatalogEpochRotationCaptureOperation? = null
         var failure: PersistencePhaseException? = null
@@ -60,11 +63,11 @@ internal class EpochRotationPersistence private constructor(
             attempt.requireCore(this)
             reconcile()
             if (stopped.get() || root.epochRotationPreparationObservation() !== PersistenceLifecycleObservation.READY) refuse()
-            val retained = Capture(attempt)
+            val retained = Capture(binding)
             if (!active.compareAndSet(null, retained)) refuse()
             call = retained // Retain before any request/session construction can fail.
             current.set(retained)
-            val request = participant.prepareEpochRotationRequest(this, attempt)
+            val request = participant.prepareEpochRotationRequest(this, binding)
             retained.request = request
             val outcome = request.execute()
             val session = when (outcome) {
@@ -81,7 +84,7 @@ internal class EpochRotationPersistence private constructor(
             session.requireReleased(operation)
             result = operation
         } catch (problem: Throwable) {
-            failure = recordFailure(attempt, call, problem)
+            failure = recordFailure(binding, call, problem)
         } finally {
             val retained = call
             if (retained != null) {
@@ -92,7 +95,65 @@ internal class EpochRotationPersistence private constructor(
                     try {
                         retained.session?.restoreAfterFailure()
                     } catch (problem: Throwable) {
-                        failure = recordFailure(attempt, retained, problem, failure)
+                        failure = recordFailure(binding, retained, problem, failure)
+                    } finally {
+                        retained.bodyEnded.set(true)
+                        retained.reconcileCaller()
+                    }
+                }
+            }
+        }
+        // The primary bounded failure wins; failed restoration still aborts and cannot turn a return into success.
+        failure?.let { throw it }
+        return result ?: throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
+    }
+
+    /** Same capacity-one physical role; the retained TEST original cannot dispatch LIVE SQL. */
+    @Suppress("TooGenericExceptionCaught")
+    internal fun capture(attempt: TestActiveFirstCutV1): TestActiveFirstCutCaptureOperationV1 {
+        val binding = PersistenceEpochRotationAttemptV1.retain(attempt)
+        var call: Capture? = null
+        var result: TestActiveFirstCutCaptureOperationV1? = null
+        var failure: PersistencePhaseException? = null
+        try {
+            requireConnectionFree()
+            requireUnchangedConfiguration()
+            attempt.requireCore(this)
+            reconcile()
+            if (stopped.get() || root.epochRotationPreparationObservation() !== PersistenceLifecycleObservation.READY) refuse()
+            val retained = Capture(binding)
+            if (!active.compareAndSet(null, retained)) refuse()
+            call = retained // Retain before any request/session construction can fail.
+            current.set(retained)
+            val request = participant.prepareEpochRotationRequest(this, binding)
+            retained.request = request
+            val outcome = request.execute()
+            val session = when (outcome) {
+                is PersistenceFactoryResult.Success -> outcome.value
+                else -> throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED, cleanupProven = request.custodyEnded())
+            }
+            retained.session = session
+            session.begin()
+            val operation = TestActiveFirstCutCaptureOperationV1.execute(attempt, session)
+            session.commit(operation)
+            session.finish()
+            session.awaitRelease()
+            attempt.requireCore(this) // The same original local lease/configuration and total deadline still apply.
+            session.requireReleased(operation)
+            result = operation
+        } catch (problem: Throwable) {
+            failure = recordFailure(binding, call, problem)
+        } finally {
+            val retained = call
+            if (retained != null) {
+                try {
+                    retained.session?.finish()
+                    retained.request?.requestRetirement()
+                } finally {
+                    try {
+                        retained.session?.restoreAfterFailure()
+                    } catch (problem: Throwable) {
+                        failure = recordFailure(binding, retained, problem, failure)
                     } finally {
                         retained.bodyEnded.set(true)
                         retained.reconcileCaller()
@@ -107,11 +168,12 @@ internal class EpochRotationPersistence private constructor(
 
     /** Keep only bounded classification and the genuine DB/reclamation facts; never retain a raw cause or suppressed graph. */
     private fun recordFailure(
-        attempt: CatalogEpochRotationAttemptV1,
+        attempt: PersistenceEpochRotationAttemptV1,
         retained: Capture?,
         problem: Throwable,
         prior: PersistencePhaseException? = null,
     ): PersistencePhaseException {
+        attempt.observeFailure(problem)
         attempt.abort()
         retained?.session?.failed()
         if (prior != null) return prior
@@ -152,7 +214,7 @@ internal class EpochRotationPersistence private constructor(
         return stopped.get() && active.get() == null
     }
 
-    private inner class Capture(val attempt: CatalogEpochRotationAttemptV1) {
+    private inner class Capture(val attempt: PersistenceEpochRotationAttemptV1) {
         val bodyEnded = AtomicBoolean()
 
         @Volatile var request: PersistenceEpochRotationFactoryRequest? = null

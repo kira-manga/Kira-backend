@@ -52,6 +52,13 @@ import me.manga.kira.backend.complaint.catalog.TestRegistrationDriftCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationProjectCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationProviderCut
 import me.manga.kira.backend.complaint.catalog.TestRunSealingCases
+import me.manga.kira.backend.complaint.catalog.TestActiveFirstCutCasesV1
+import me.manga.kira.backend.complaint.catalog.TestFirstCutCaptureDriftV1
+import me.manga.kira.backend.complaint.catalog.TestFirstCutClosedV1
+import me.manga.kira.backend.complaint.catalog.TestFirstCutDriftV1
+import me.manga.kira.backend.complaint.catalog.TestFirstCutNativeCutV1
+import me.manga.kira.backend.complaint.catalog.TestFirstCutProviderCutV1
+import me.manga.kira.backend.complaint.catalog.TestFirstCutRequestCutV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealFailureCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealHistoryCutV1
@@ -108,6 +115,7 @@ import me.manga.kira.backend.complaint.catalog.TestActivationSignedSqlCut
 import me.manga.kira.backend.complaint.catalog.TestActivationSignedUnreturnedCut
 import me.manga.kira.backend.complaint.catalog.assertTestActivationProjectLostCommitResponse
 import me.manga.kira.backend.complaint.catalog.assertInitialAdmissionLostCommitResponse
+import me.manga.kira.backend.complaint.catalog.assertActiveFirstCutLostCommitResponse
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisPublish
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisTargetFinalize
@@ -1385,6 +1393,93 @@ class VersionBoundPersistenceConnectedIT {
     }
 
     @Test
+    fun testActiveFirstCutUnusedRunPaysOneOrdinarySlotAndReleasesNativeLease() = withFixture(testActivation = true, activeFirstCut = true) {
+        TestActiveFirstCutCasesV1.paidRequestThenReleasedNativeFirstRange(it, enrolled = false)
+    }
+
+    @Test
+    fun testActiveFirstCutIdentityEnrolledRunPreservesEnrollmentReserve() = withFixture(testActivation = true, activeFirstCut = true) {
+        TestActiveFirstCutCasesV1.paidRequestThenReleasedNativeFirstRange(it, enrolled = true)
+    }
+
+    @Test
+    fun testActiveFirstCutIndependentOrdinaryHeadroomExactAndOneUnitShort() {
+        for (exact in listOf(false, true)) withFixture(testActivation = true, activeFirstCut = true) {
+            TestActiveFirstCutCasesV1.independentOrdinaryHeadroom(it, exact)
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutRawCurrentHistoryPhysicalAndForeignLeaseDriftRefuse() {
+        TestFirstCutDriftV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutCasesV1.rawCurrentAndForeignLeaseRefuse(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutNativeRechecksReleasedRequestAfterRealExclusiveEpochWait() {
+        TestFirstCutCaptureDriftV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutCasesV1.nativeRechecksAfterReleasedRequestAndExclusiveWait(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutRequestCommitAndCleanupCutsNeverIssueNativeCapture() {
+        TestFirstCutRequestCutV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutCasesV1.requestCompletionCutsAreAtomic(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutNativeCommitFailureAndLateOriginalReturnCannotBeRepaired() {
+        TestFirstCutNativeCutV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutCasesV1.nativeCommitOutcomeCannotBeRepaired(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutDurableNativeCaptureLostCommitReplyRemainsUnknown() {
+        PgLifecycleTlsCommitForwarder(database.value).use { forwarder ->
+            forwarder.start()
+            VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, activeFirstCut = true, endpointPort = forwarder.port).use { tls ->
+                tls.bind()
+                assertActiveFirstCutLostCommitResponse(tls, forwarder)
+            }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutRawDeadlineSignalsAndNativeCloseReceiptStaySticky() {
+        TestFirstCutProviderCutV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutCasesV1.rawDeadlineSignalAndCloseAreSticky(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutClosedRegistrationRootAndTerminalRunCannotCapture() {
+        TestFirstCutClosedV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutCasesV1.closedAndTerminalNeverCapture(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutImmutablePaidSlotAndUnpaidTransitionsRefuse() = withFixture(testActivation = true, activeFirstCut = true) {
+        TestActiveFirstCutCasesV1.immutableSlotAndUnpaidTransitionsRefuse(it)
+    }
+
+    @Test
+    fun testActiveFirstCutRealMaintenanceAndEpochContentionRefuseBeforeCharge() {
+        for (maintenance in listOf(false, true)) withFixture(testActivation = true, activeFirstCut = true) {
+            TestActiveFirstCutCasesV1.realFenceContentionRefusesBeforeCharge(it, maintenance)
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutRealNativeEpochTimeoutKeepsPaidRequestAndLease() = withFixture(testActivation = true, activeFirstCut = true) {
+        TestActiveFirstCutCasesV1.realNativeEpochWaitTimeoutKeepsPaidRequestAndLease(it)
+    }
+
+    @Test
     fun testRunSealingBarrierAndPaidAuditReplay() = withFixture(testActivation = true) {
         TestRunSealingCases.barrierPaidAuditAndReplay(it)
     }
@@ -1681,8 +1776,9 @@ class VersionBoundPersistenceConnectedIT {
         epochRotation: Boolean = false,
         nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
         testActivation: Boolean = false,
+        activeFirstCut: Boolean = false,
         test: (VersionBoundPersistenceConnectedFixture) -> Unit,
-    ) = VersionBoundPersistenceConnectedFixture(database.value, client, epochRotation, testActivation = testActivation).use { fixture ->
+    ) = VersionBoundPersistenceConnectedFixture(database.value, client, epochRotation, testActivation = testActivation, activeFirstCut = activeFirstCut).use { fixture ->
         fixture.bind(profile, nanoClock)
         test(fixture)
     }

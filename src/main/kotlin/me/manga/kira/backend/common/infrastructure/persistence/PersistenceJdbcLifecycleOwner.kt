@@ -289,6 +289,9 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
             epochRotation: Boolean,
         ): PersistenceJdbcLifecycleOwner = PersistenceJdbcLifecycleOwner(configuration.createCatalogSignerRotationDeliveryRoot(epochRotation))
 
+        internal fun catalogTestRunActivationWithEpochRotation(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
+            PersistenceJdbcLifecycleOwner(configuration.createCatalogTestRunActivationRootWithEpochRotation())
+
         internal fun catalogTestRunActivation(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
             PersistenceJdbcLifecycleOwner(configuration.createCatalogTestRunActivationRoot())
 
