@@ -1,5 +1,6 @@
 package me.manga.kira.backend.security
 
+import me.manga.kira.backend.complaint.infrastructure.journal.TestActiveInitialCheckpointReaderV1
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealCustodyV1
@@ -23,6 +24,7 @@ internal class TestTerminalAttemptV1 internal constructor(
     private var lastElapsed = 0L
     private var expired = false
     private var ordinarySealCustody: TestOrdinarySealCustodyV1? = null
+    private var initialCheckpointReader: TestActiveInitialCheckpointReaderV1? = null
     private var installationManifestCustody: TestInstallationManifestCustodyV1? = null
     private var testRunPurgeCustody: TestRunPurgeCustodyV1? = null
 
@@ -38,27 +40,35 @@ internal class TestTerminalAttemptV1 internal constructor(
 
     /** Optional closed producer binding; existing dormant codec/adapter fixtures retain their original behavior. */
     internal fun bindOrdinarySealCustody(custody: TestOrdinarySealCustodyV1) {
-        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.EPOCH_SEAL && ordinarySealCustody == null && installationManifestCustody == null && testRunPurgeCustody == null)
+        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.EPOCH_SEAL && ordinarySealCustody == null && installationManifestCustody == null && testRunPurgeCustody == null && initialCheckpointReader == null)
         custody.requireAttempt(this)
         ordinarySealCustody = custody
     }
 
     internal fun bindInstallationManifestCustody(custody: TestInstallationManifestCustodyV1) {
-        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.INSTALLATION_MANIFEST && installationManifestCustody == null && ordinarySealCustody == null && testRunPurgeCustody == null)
+        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.INSTALLATION_MANIFEST && installationManifestCustody == null && ordinarySealCustody == null && testRunPurgeCustody == null && initialCheckpointReader == null)
         custody.requireAttempt(this)
         installationManifestCustody = custody
     }
 
     internal fun bindTestRunPurgeCustody(custody: TestRunPurgeCustodyV1) {
-        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.TEST_RUN_PURGE && testRunPurgeCustody == null && ordinarySealCustody == null && installationManifestCustody == null)
+        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.TEST_RUN_PURGE && testRunPurgeCustody == null && ordinarySealCustody == null && installationManifestCustody == null && initialCheckpointReader == null)
         custody.requireAttempt(this)
         testRunPurgeCustody = custody
+    }
+
+    internal fun bindInitialCheckpointReader(reader: TestActiveInitialCheckpointReaderV1) {
+        requireTestTerminalCodec(kind === TestTerminalCodecKindV1.EPOCH_SEAL && initialCheckpointReader == null && ordinarySealCustody == null &&
+            installationManifestCustody == null && testRunPurgeCustody == null)
+        reader.requireAttempt(this)
+        initialCheckpointReader = reader
     }
 
     /** The fixed SDK adapter uses this same checked clock; even a rejected call cannot hide a backward/expired sample. */
     @Synchronized
     internal fun providerNanoTime(): Long = testTerminalCodecBoundary {
         ordinarySealCustody?.requireAttempt(this)
+        initialCheckpointReader?.requireAttempt(this)
         installationManifestCustody?.requireAttempt(this)
         testRunPurgeCustody?.requireAttempt(this)
         checkRequest(1)
@@ -70,10 +80,11 @@ internal class TestTerminalAttemptV1 internal constructor(
     /** JournalKmsCall intersects this ORIGINAL enclosing budget at every provider/HTTP sample. */
     internal fun remainingProviderMillis(ceilingMillis: Int): Int {
         ordinarySealCustody?.requireAttempt(this)
+        initialCheckpointReader?.requireAttempt(this)
         installationManifestCustody?.requireAttempt(this)
         testRunPurgeCustody?.requireAttempt(this)
         val local = remainingMillis(ceilingMillis)
-        return minOf(local, ordinarySealCustody?.remainingProviderMillis(local) ?: local)
+        return minOf(local, ordinarySealCustody?.remainingProviderMillis(local) ?: local, initialCheckpointReader?.remainingNativeMillis(local) ?: local)
     }
 
     @Synchronized

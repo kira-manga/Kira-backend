@@ -8,6 +8,8 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseO
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestInitialAdmissionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRecoveryRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceActiveRegistrationAttemptV1
@@ -132,6 +134,32 @@ internal class CatalogReadbackRefreshCustodyV1 {
         requireCatalogReadback(active.get() === original, CatalogReadbackFailure.INVALID_POLICY)
     }
     internal fun releaseTestActiveOrdinarySealAfterCleanup(original: TestActiveOrdinarySealV1) {
+        requireConnectionFree(); original.requireActualReadbackCleanup()
+        requireCatalogReadback(active.compareAndSet(original, null), CatalogReadbackFailure.CLOSE_FAILURE)
+    }
+
+    internal fun reserveTestActiveInitialCheckpoint(original: TestActiveInitialCheckpointV1) {
+        requireConnectionFree(); original.requireCustody(this)
+        requireCatalogReadback(active.compareAndSet(null, original), CatalogReadbackFailure.LIMIT_EXCEEDED)
+    }
+    internal fun requireTestActiveInitialCheckpoint(original: TestActiveInitialCheckpointV1) {
+        original.requireCustody(this)
+        requireCatalogReadback(active.get() === original, CatalogReadbackFailure.INVALID_POLICY)
+    }
+    internal fun releaseTestActiveInitialCheckpointAfterCleanup(original: TestActiveInitialCheckpointV1) {
+        requireConnectionFree(); original.requireActualReadbackCleanup()
+        requireCatalogReadback(active.compareAndSet(original, null), CatalogReadbackFailure.CLOSE_FAILURE)
+    }
+
+    internal fun reserveTestActiveOrdinarySealRecovery(original: TestActiveOrdinarySealRecoveryV1) {
+        requireConnectionFree(); original.requireCustody(this)
+        requireCatalogReadback(active.compareAndSet(null, original), CatalogReadbackFailure.LIMIT_EXCEEDED)
+    }
+    internal fun requireTestActiveOrdinarySealRecovery(original: TestActiveOrdinarySealRecoveryV1) {
+        original.requireCustody(this)
+        requireCatalogReadback(active.get() === original, CatalogReadbackFailure.INVALID_POLICY)
+    }
+    internal fun releaseTestActiveOrdinarySealRecoveryAfterCleanup(original: TestActiveOrdinarySealRecoveryV1) {
         requireConnectionFree(); original.requireActualReadbackCleanup()
         requireCatalogReadback(active.compareAndSet(original, null), CatalogReadbackFailure.CLOSE_FAILURE)
     }

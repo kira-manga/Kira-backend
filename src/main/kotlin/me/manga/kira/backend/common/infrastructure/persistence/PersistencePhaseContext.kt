@@ -35,7 +35,11 @@ import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceAct
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealOperationV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointOperationV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestOperationV1
@@ -229,6 +233,10 @@ constructor(
     private val testActiveOrdinarySealWork: PersistenceTimeBudget? = null,
     private val testTerminalEpochSeal: TestRunTerminalEpochSealV1? = null,
     private val testTerminalEpochSealWork: PersistenceTimeBudget? = null,
+    private val testInitialCheckpoint: TestActiveInitialCheckpointV1? = null,
+    private val testActiveInitialCheckpointWork: PersistenceTimeBudget? = null,
+    private val testActiveSealRecovery: TestActiveOrdinarySealRecoveryV1? = null,
+    private val testActiveOrdinarySealRecoveryWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -315,6 +323,8 @@ constructor(
     internal val testRunSealing: PersistenceTestRunSealingV1 = TestRunSealingBoundary()
     internal val testOrdinarySeal: PersistenceTestOrdinarySealV1 = TestOrdinarySealBoundary()
     internal val testActiveOrdinarySeal: PersistenceTestActiveOrdinarySealV1 = TestActiveOrdinarySealBoundary()
+    internal val testActiveInitialCheckpoint: PersistenceTestActiveInitialCheckpointV1 = TestActiveInitialCheckpointBoundary()
+    internal val testActiveOrdinarySealRecovery: PersistenceTestActiveOrdinarySealRecoveryV1 = TestActiveOrdinarySealRecoveryBoundary()
     internal val testInstallationManifestBoundary: PersistenceTestInstallationManifestV1 = TestInstallationManifestBoundary()
     internal val testInstallationManifestPublicationBoundary: PersistenceTestInstallationManifestPublicationV1 = TestInstallationManifestPublicationBoundary()
     internal val testRunPurgeBoundary: PersistenceTestRunPurgeV1 = TestRunPurgeBoundary()
@@ -480,7 +490,7 @@ constructor(
         work =
             rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
                 ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-                ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testActiveFirstCutWork ?: testActiveFirstCutSuccessorWork ?: testRecoveryRegistrationWork ?: testActiveRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testActiveOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork ?: testRunPurgeWork ?: testTerminalEpochSealWork
+                ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testActiveFirstCutWork ?: testActiveFirstCutSuccessorWork ?: testRecoveryRegistrationWork ?: testActiveRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testActiveOrdinarySealWork ?: testActiveOrdinarySealRecoveryWork ?: testActiveInitialCheckpointWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork ?: testRunPurgeWork ?: testTerminalEpochSealWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
@@ -488,7 +498,7 @@ constructor(
         requireCaller()
         val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
             ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-            ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testActiveFirstCutWork ?: testActiveFirstCutSuccessorWork ?: testRecoveryRegistrationWork ?: testActiveRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testActiveOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork ?: testRunPurgeWork ?: testTerminalEpochSealWork
+            ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testActiveFirstCutWork ?: testActiveFirstCutSuccessorWork ?: testRecoveryRegistrationWork ?: testActiveRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testActiveOrdinarySealWork ?: testActiveOrdinarySealRecoveryWork ?: testActiveInitialCheckpointWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork ?: testRunPurgeWork ?: testTerminalEpochSealWork
         return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
@@ -722,6 +732,8 @@ constructor(
         PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL,
         PersistencePhasePath.COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE,
         -> testActiveOrdinarySeal.completed()
+        PersistencePhasePath.COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT -> testActiveInitialCheckpoint.completed()
+        PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL_RECOVERY -> testActiveOrdinarySealRecovery.completed()
         PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE -> testInstallationManifestBoundary.completed()
         PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
         PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_VERIFY,
@@ -956,6 +968,8 @@ constructor(
         testRunSealer?.observeFailure(problem)
         testOrdinarySealer?.observeFailure(problem)
         testActiveSealer?.observeFailure(problem)
+        testInitialCheckpoint?.observeFailure(problem)
+        testActiveSealRecovery?.observeFailure(problem)
         testInstallationManifest?.observeFailure(problem)
         testInstallationManifestPublication?.observeFailure(problem)
         testRunPurge?.observeFailure(problem)
@@ -1083,6 +1097,18 @@ constructor(
 
     internal fun testActiveOrdinarySealCleanupProven(original: TestActiveOrdinarySealV1): Boolean =
         caller.isCurrent() && testActiveSealer === original && path.testActiveOrdinarySeal &&
+            stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
+            acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
+            (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
+
+    internal fun testActiveInitialCheckpointCleanupProven(original: TestActiveInitialCheckpointV1): Boolean =
+        caller.isCurrent() && testInitialCheckpoint === original && path.testActiveInitialCheckpoint &&
+            stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
+            acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
+            (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
+
+    internal fun testActiveOrdinarySealRecoveryCleanupProven(original: TestActiveOrdinarySealRecoveryV1): Boolean =
+        caller.isCurrent() && testActiveSealRecovery === original && path.testActiveOrdinarySealRecovery &&
             stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
             acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
             (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
@@ -1346,6 +1372,8 @@ constructor(
             testRunSealer != null -> testRunSealer.requireMaintenanceGate(ownership, path, gate)
             testOrdinarySealer != null -> testOrdinarySealer.requireMaintenanceGate(ownership, path, gate)
             testActiveSealer != null -> testActiveSealer.requireMaintenanceGate(ownership, path, gate)
+            testInitialCheckpoint != null -> testInitialCheckpoint.requireMaintenanceGate(ownership, path, gate)
+            testActiveSealRecovery != null -> testActiveSealRecovery.requireMaintenanceGate(ownership, path, gate)
             testInstallationManifest != null -> testInstallationManifest.requireMaintenanceGate(ownership, path, gate)
             testInstallationManifestPublication != null -> testInstallationManifestPublication.requireMaintenanceGate(ownership, path, gate)
             testRunPurge != null -> testRunPurge.requireMaintenanceGate(ownership, path, gate)
@@ -1512,6 +1540,8 @@ constructor(
                 testRunSealer?.observeFailure(problem)
                 testOrdinarySealer?.observeFailure(problem)
                 testActiveSealer?.observeFailure(problem)
+                testInitialCheckpoint?.observeFailure(problem)
+                testActiveSealRecovery?.observeFailure(problem)
                 testInstallationManifest?.observeFailure(problem)
                 testInstallationManifestPublication?.observeFailure(problem)
                 testRunPurge?.observeFailure(problem)
@@ -1596,7 +1626,7 @@ constructor(
     internal fun deadlineExpired(): Boolean {
         val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
             ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork
-            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testActiveFirstCutWork ?: testActiveFirstCutSuccessorWork ?: testRecoveryRegistrationWork ?: testActiveRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testActiveOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork ?: testRunPurgeWork ?: testTerminalEpochSealWork
+            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testInitialAdmissionWork ?: testActiveFirstCutWork ?: testActiveFirstCutSuccessorWork ?: testRecoveryRegistrationWork ?: testActiveRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testActiveOrdinarySealWork ?: testActiveOrdinarySealRecoveryWork ?: testActiveInitialCheckpointWork ?: testRunOwnerDeleteWork ?: testRunAdminDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork ?: testInstallationManifestPublicationWork ?: testRunPurgeWork ?: testTerminalEpochSealWork
             ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
@@ -1636,13 +1666,13 @@ constructor(
 
     private fun usesCatalogLifecycleCleanup(): Boolean = catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null ||
         catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationAuthor != null || signerRotationDelivery != null ||
-        signerRotationActivation != null || testRunActivation != null || testRegistration != null || initialAdmission != null || activeFirstCut != null || activeFirstCutSuccessor != null || testRecoveryRegistration != null || testActiveRegistration != null || testRunSealer != null || testOrdinarySealer != null || testActiveSealer != null || testInstallationManifest != null || testInstallationManifestPublication != null || testRunPurge != null || testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testRunAdminDelete != null || testOrdinaryDrain != null || testTerminalEpochSeal != null
+        signerRotationActivation != null || testRunActivation != null || testRegistration != null || initialAdmission != null || activeFirstCut != null || activeFirstCutSuccessor != null || testRecoveryRegistration != null || testActiveRegistration != null || testRunSealer != null || testOrdinarySealer != null || testActiveSealer != null || testInstallationManifest != null || testInstallationManifestPublication != null || testRunPurge != null || testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testRunAdminDelete != null || testOrdinaryDrain != null || testTerminalEpochSeal != null || testInitialCheckpoint != null || testActiveSealRecovery != null
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
         val catalogBudget =
-            testInstallationManifest?.budget ?: testInstallationManifestPublication?.budget ?: testRunPurge?.budget ?: testTerminalEpochSeal?.budget ?: testRunAdminDelete?.budget ?: testRunOwnerDeleteAll?.budget ?: testOrdinaryDrain?.budget ?: testRunOwnerDelete?.budget ?: testRunSealer?.budget ?: testOrdinarySealer?.budget ?: testActiveSealer?.budget ?: testRegistration?.budget ?: initialAdmission?.budget ?: activeFirstCut?.budget ?: activeFirstCutSuccessor?.budget ?: testRecoveryRegistration?.budget ?: testActiveRegistration?.budget ?: testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
+            testInstallationManifest?.budget ?: testInstallationManifestPublication?.budget ?: testRunPurge?.budget ?: testTerminalEpochSeal?.budget ?: testRunAdminDelete?.budget ?: testRunOwnerDeleteAll?.budget ?: testOrdinaryDrain?.budget ?: testRunOwnerDelete?.budget ?: testRunSealer?.budget ?: testOrdinarySealer?.budget ?: testActiveSealer?.budget ?: testActiveSealRecovery?.budget ?: testInitialCheckpoint?.budget ?: testRegistration?.budget ?: initialAdmission?.budget ?: activeFirstCut?.budget ?: activeFirstCutSuccessor?.budget ?: testRecoveryRegistration?.budget ?: testActiveRegistration?.budget ?: testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
                 ?: catalogSignerRotationAttempt?.budget
                 ?: catalogPublisherAttempt?.budget
                 ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
@@ -1732,6 +1762,8 @@ constructor(
                 testRunSealer?.observeFailure(problem)
                 testOrdinarySealer?.observeFailure(problem)
                 testActiveSealer?.observeFailure(problem)
+                testInitialCheckpoint?.observeFailure(problem)
+                testActiveSealRecovery?.observeFailure(problem)
                 testInstallationManifest?.observeFailure(problem)
                 testInstallationManifestPublication?.observeFailure(problem)
                 testRunPurge?.observeFailure(problem)
@@ -1925,6 +1957,14 @@ constructor(
         // C already committed and physically released E at CAPTURE. These closed ACTIVE paths
         // retain the real M/shared prefix and current gate, never reacquire terminal E authority.
         fun activeOrdinarySealReady(): Boolean = path.testActiveOrdinarySeal && testActiveSealer != null &&
+            maintenanceFence?.accepted() == true && maintenanceLimitsRestored &&
+            deletionFence == null && deletionControlSnapshot == null
+
+        fun activeInitialCheckpointReady(): Boolean = path.testActiveInitialCheckpoint && testInitialCheckpoint != null &&
+            maintenanceFence?.accepted() == true && maintenanceLimitsRestored &&
+            deletionFence == null && deletionControlSnapshot == null
+
+        fun activeOrdinarySealRecoveryReady(): Boolean = path.testActiveOrdinarySealRecovery && testActiveSealRecovery != null &&
             maintenanceFence?.accepted() == true && maintenanceLimitsRestored &&
             deletionFence == null && deletionControlSnapshot == null
 
@@ -2457,6 +2497,94 @@ constructor(
         }
 
         override fun completed(): Boolean = retained?.let { it.original === testActiveSealer && it.path === path && it.completedFor(this@PersistencePhaseContext) } == true
+    }
+
+    private inner class TestActiveInitialCheckpointBoundary : PersistenceTestActiveInitialCheckpointV1 {
+        private var selected = false
+        private var retained: TestActiveInitialCheckpointOperationV1? = null
+
+        override fun requireOperation(original: TestActiveInitialCheckpointV1, jdbc: JdbcTemplate) {
+            if (!path.testActiveInitialCheckpoint || original !== testInitialCheckpoint || original.path !== path) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            requireStepUpResource(jdbc, path)
+            if (selected || !selectedHolder.activeInitialCheckpointReady()) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            original.requirePersistence(ownership, jdbc)
+            selected = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: TestActiveInitialCheckpointOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!selected || retained != null || operation.original !== testInitialCheckpoint || operation.path !== path || !operation.belongsTo(this@PersistencePhaseContext)) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            operation.original.requirePersistence(ownership, jdbc)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: TestActiveInitialCheckpointOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation || operation.original !== testInitialCheckpoint || operation.path !== path ||
+                !selectedHolder.activeInitialCheckpointReady()) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            operation.original.requirePersistence(ownership, jdbc)
+        }
+
+        override fun requireCommitted(operation: TestActiveInitialCheckpointOperationV1) {
+            if (retained !== operation || !completed() || !testActiveInitialCheckpointCleanupProven(operation.original)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.let { it.original === testInitialCheckpoint && it.path === path && it.completedFor(this@PersistencePhaseContext) } == true
+    }
+
+    private inner class TestActiveOrdinarySealRecoveryBoundary : PersistenceTestActiveOrdinarySealRecoveryV1 {
+        private var selected = false
+        private var retained: TestActiveOrdinarySealRecoveryOperationV1? = null
+
+        override fun requireOperation(original: TestActiveOrdinarySealRecoveryV1, jdbc: JdbcTemplate) {
+            if (!path.testActiveOrdinarySealRecovery || original !== testActiveSealRecovery || original.path !== path) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            requireStepUpResource(jdbc, path)
+            if (selected || !selectedHolder.activeOrdinarySealRecoveryReady()) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            original.requirePersistence(ownership, jdbc)
+            selected = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: TestActiveOrdinarySealRecoveryOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!selected || retained != null || operation.original !== testActiveSealRecovery || operation.path !== path || !operation.belongsTo(this@PersistencePhaseContext)) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            operation.original.requirePersistence(ownership, jdbc)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: TestActiveOrdinarySealRecoveryOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation || operation.original !== testActiveSealRecovery || operation.path !== path ||
+                !selectedHolder.activeOrdinarySealRecoveryReady()) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            operation.original.requirePersistence(ownership, jdbc)
+        }
+
+        override fun requireCommitted(operation: TestActiveOrdinarySealRecoveryOperationV1) {
+            if (retained !== operation || !completed() || !testActiveOrdinarySealRecoveryCleanupProven(operation.original)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.let { it.original === testActiveSealRecovery && it.path === path && it.completedFor(this@PersistencePhaseContext) } == true
     }
 
     private inner class TestInstallationManifestBoundary : PersistenceTestInstallationManifestV1 {

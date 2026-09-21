@@ -13,6 +13,7 @@ import me.manga.kira.backend.security.terminalHash
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
@@ -82,6 +83,9 @@ internal object TestActiveOrdinarySealCasesV1 {
         assertEquals(0, created.nano)
         val json = Json.parseToJsonElement((paid["canonical_bytes"] as ByteArray).toString(Charsets.UTF_8)).jsonObject
         assertEquals("EPOCH_SEAL", json.getValue("objectKind").jsonPrimitive.content)
+        assertEquals(paid["object_id"], json.getValue("sealId").jsonPrimitive.content)
+        assertNotEquals(paid["object_id"], (paid.getValue("object_key") as String).substringAfterLast('/').removeSuffix(".kjev"),
+            "The genuine domain-separated routing suffix is not the canonical seal ID; V28 and the active reader must accept it.")
         assertEquals("1", json.getValue("epochStartInclusive").jsonPrimitive.content)
         assertEquals("1", json.getValue("epochEndInclusive").jsonPrimitive.content)
         assertEquals(count.toString(), json.getValue("eventCount").jsonPrimitive.content)

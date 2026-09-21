@@ -10,25 +10,27 @@ internal class JournalS3WireBindingV1 private constructor(
     private val inventory: TestOrdinaryInventoryS3CallV1?,
     private val manifest: TestInstallationManifestS3CallV1?,
     private val purge: TestRunPurgeS3CallV1?,
+    private val initialCheckpoint: TestActiveInitialCheckpointS3CallV1? = null,
 ) {
     val location = live?.declaration?.journalLocation ?: test?.declaration?.journalLocation ?: seal?.declaration?.journalLocation
-        ?: manifest?.declaration?.journalLocation ?: purge?.declaration?.journalLocation ?: checkNotNull(inventory).declaration.journalLocation
+        ?: manifest?.declaration?.journalLocation ?: purge?.declaration?.journalLocation ?: initialCheckpoint?.declaration?.journalLocation ?: checkNotNull(inventory).declaration.journalLocation
     val maximumEnvelopeBytes = live?.declaration?.limits?.decoder?.maximumEnvelopeBytes ?: test?.declaration?.limits?.decoder?.maximumEnvelopeBytes
-        ?: seal?.declaration?.limits?.decoder?.maximumEnvelopeBytes ?: manifest?.declaration?.limits?.decoder?.maximumEnvelopeBytes ?: purge?.declaration?.limits?.decoder?.maximumEnvelopeBytes ?: checkNotNull(inventory).declaration.limits.decoder.maximumEnvelopeBytes
-    val objectKey get() = live?.objectKey ?: test?.objectKey ?: seal?.objectKey ?: manifest?.objectKey ?: purge?.objectKey ?: checkNotNull(inventory).objectKey
-    val operation get() = live?.operation ?: test?.operation ?: seal?.operation ?: manifest?.operation ?: purge?.operation ?: checkNotNull(inventory).operation
-    val versionId get() = live?.versionId ?: test?.versionId ?: seal?.versionId ?: manifest?.versionId ?: purge?.versionId ?: inventory?.versionId
+        ?: seal?.declaration?.limits?.decoder?.maximumEnvelopeBytes ?: manifest?.declaration?.limits?.decoder?.maximumEnvelopeBytes ?: purge?.declaration?.limits?.decoder?.maximumEnvelopeBytes ?: initialCheckpoint?.declaration?.limits?.decoder?.maximumEnvelopeBytes ?: checkNotNull(inventory).declaration.limits.decoder.maximumEnvelopeBytes
+    val objectKey get() = live?.objectKey ?: test?.objectKey ?: seal?.objectKey ?: manifest?.objectKey ?: purge?.objectKey ?: initialCheckpoint?.objectKey ?: checkNotNull(inventory).objectKey
+    val operation get() = live?.operation ?: test?.operation ?: seal?.operation ?: manifest?.operation ?: purge?.operation ?: initialCheckpoint?.operation ?: checkNotNull(inventory).operation
+    val versionId get() = live?.versionId ?: test?.versionId ?: seal?.versionId ?: manifest?.versionId ?: purge?.versionId ?: inventory?.versionId ?: initialCheckpoint?.versionId
     // Only this closed read-only family can add the two LIST continuation parameters.
     val inventoryList get() = inventory?.operation == JournalS3OperationV1.LIST
     val keyMarker get() = inventory?.keyMarker
     val versionIdMarker get() = inventory?.versionIdMarker
     val candidate: Candidate? = live?.candidate?.let { Candidate.live(it) } ?: test?.candidate?.let { Candidate.test(it) } ?: seal?.candidate?.let { Candidate.seal(it) } ?: manifest?.candidate?.let { Candidate.manifest(it) } ?: purge?.candidate?.let { Candidate.purge(it) }
-    fun check() { if (live != null) live.check() else if (test != null) test.check() else if (seal != null) seal.check() else if (manifest != null) manifest.check() else if (purge != null) purge.check() else checkNotNull(inventory).check() }
-    fun remainingMillis(): Int = live?.remainingMillis() ?: test?.remainingMillis() ?: seal?.remainingMillis() ?: manifest?.remainingMillis() ?: purge?.remainingMillis() ?: checkNotNull(inventory).remainingMillis()
+    fun check() { if (live != null) live.check() else if (test != null) test.check() else if (seal != null) seal.check() else if (manifest != null) manifest.check() else if (purge != null) purge.check() else if (initialCheckpoint != null) initialCheckpoint.check() else checkNotNull(inventory).check() }
+    fun remainingMillis(): Int = live?.remainingMillis() ?: test?.remainingMillis() ?: seal?.remainingMillis() ?: manifest?.remainingMillis() ?: purge?.remainingMillis() ?: initialCheckpoint?.remainingMillis() ?: checkNotNull(inventory).remainingMillis()
     fun matches(call: JournalS3RequestV1): Boolean = live === call
     fun matches(call: TestOwnerDeleteS3CallV1): Boolean = test === call
     fun matches(call: TestOrdinarySealS3CallV1): Boolean = seal === call
     fun matches(call: TestOrdinaryInventoryS3CallV1): Boolean = inventory === call
+    fun matches(call: TestActiveInitialCheckpointS3CallV1): Boolean = initialCheckpoint === call
     fun matches(call: TestInstallationManifestS3CallV1): Boolean = manifest === call
     fun matches(call: TestRunPurgeS3CallV1): Boolean = purge === call
     class Candidate private constructor(private val live: JournalS3PutV1?, private val test: TestOwnerDeleteS3CandidateV1?,
@@ -58,6 +60,11 @@ internal class JournalS3WireBindingV1 private constructor(
         fun of(call: TestOrdinarySealS3CallV1): JournalS3WireBindingV1 { call.check(); return JournalS3WireBindingV1(null, null, call, null, null, null) }
         fun of(call: TestInstallationManifestS3CallV1): JournalS3WireBindingV1 { call.check(); return JournalS3WireBindingV1(null, null, null, null, call, null) }
         fun of(call: TestRunPurgeS3CallV1): JournalS3WireBindingV1 { call.check(); return JournalS3WireBindingV1(null, null, null, null, null, call) }
+        fun of(call: TestActiveInitialCheckpointS3CallV1): JournalS3WireBindingV1 {
+            call.check()
+            requireJournalPublication(call.operation == JournalS3OperationV1.LIST || call.operation == JournalS3OperationV1.GET)
+            return JournalS3WireBindingV1(null, null, null, null, null, null, call)
+        }
         fun of(call: TestOrdinaryInventoryS3CallV1): JournalS3WireBindingV1 {
             call.check()
             requireJournalPublication(call.operation == JournalS3OperationV1.LIST || call.operation == JournalS3OperationV1.GET)

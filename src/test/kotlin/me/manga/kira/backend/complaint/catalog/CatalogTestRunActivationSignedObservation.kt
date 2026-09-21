@@ -63,10 +63,11 @@ internal fun withSignedActivationRows(
     registeredAdminDelete: Boolean = false,
     registeredAdminBatchDelete: Boolean = false,
     activeFirstCut: Boolean = false,
+    activeSealRecovery: Boolean = false,
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     activeFirstCutSuccessor: Boolean = false,
     action: (SignedActivationObservation) -> Unit,
-) = withPreparedActivationRows(tls, prefix, selectedSigner, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { rows ->
+) = withPreparedActivationRows(tls, prefix, selectedSigner, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { rows ->
     SignedActivationObservation(tls, rows).use { observed ->
         observed.probe(tls) // The real template is installed before any owner/input exists.
         tls.startCatalogTestRunActivation()

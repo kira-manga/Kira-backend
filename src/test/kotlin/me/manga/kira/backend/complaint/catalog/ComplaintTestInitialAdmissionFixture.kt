@@ -44,12 +44,15 @@ internal val INITIAL_RELEASE = PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMIS
 internal fun withInitialAdmission(tls: VersionBoundPersistenceConnectedFixture, activeFirstCut: Boolean = false,
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     activeFirstCutSuccessor: Boolean = false,
+    activeSealRecovery: Boolean = false, sealRecoveryHorizon: java.time.Instant? = null,
     action: (InitialAdmissionFixture) -> Unit) =
     // The longest current-row drift history pays four enrollment attempts, including refusals, before any window expires.
-    TestOrdinarySealHttpFixtureV1(protectedIntake = true, protectedEnrollmentGlobalPerHour = 4).use { native ->
+    TestOrdinarySealHttpFixtureV1(horizon = sealRecoveryHorizon ?: java.time.Instant.parse("2038-01-01T00:00:00Z"),
+        protectedIntake = true, protectedEnrollmentGlobalPerHour = 4).use { native ->
+        require(sealRecoveryHorizon == null || activeSealRecovery)
         ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, ordinarySealHttp = native,
             // Only closed setup predecessor leases: not the tested release or natural-expiry qualification.
-            expireClosedSetupPredecessors = true, activeFirstCut = activeFirstCut,
+            expireClosedSetupPredecessors = true, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery,
             ordinaryDrain = if (activeFirstCut) TestOrdinaryDrainFixtureInputsV1() else null,
             ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { p, runtime, registration, probe ->
             val fixture = InitialAdmissionFixture(p, runtime, registration, probe, native)

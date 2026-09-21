@@ -34,7 +34,10 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             put("kind", "kira-complaint-effective-test-configuration")
             put("schemaVersion", 1)
             put("canonicalizerId", "kcj-1")
-            put("profile", if (owner.activeFirstCutSuccessor != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ACTIVE_FIRST_CUT_RESERVED_RECOVERY_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+            put("profile", if (owner.initialCheckpoint != null && owner.activeOrdinarySealRecovery != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_INITIAL_EMPTY_RECOVERY_CHECKPOINT_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+                else if (owner.activeOrdinarySealRecovery != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_INITIAL_EMPTY_SEAL_RECOVERY_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+                else if (owner.initialCheckpoint != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_INITIAL_EMPTY_CHECKPOINT_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+                else if (owner.activeFirstCutSuccessor != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ACTIVE_FIRST_CUT_RESERVED_RECOVERY_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (owner.activeFirstCut != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ACTIVE_FIRST_CUT_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (journal.registeredAdminBatchDelete) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (journal.registeredAdminDelete) "PRE_CUTOVER_TEST_ADMIN_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
@@ -69,6 +72,12 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             owner.activeFirstCutSuccessor?.let {
                 it.requireRetained(owner.pools, journal, owner.activeFirstCut, owner.ordinarySeal)
                 put("activeFirstCutSuccessor", it.inventory())
+            }
+            // Additive independent read owner; no absence rule excludes a separately retained recovery recipe.
+            owner.initialCheckpoint?.let { put("initialCheckpoint", it.inventory()) }
+            owner.activeOrdinarySealRecovery?.let {
+                it.requireRetained(owner.pools, owner.consumers.journalRouting, owner.activeFirstCut, owner.ordinarySeal)
+                put("activeOrdinarySealRecovery", it.inventory())
             }
         }
         return CanonicalJson.canonicalize(result).toByteArray(Charsets.UTF_8)

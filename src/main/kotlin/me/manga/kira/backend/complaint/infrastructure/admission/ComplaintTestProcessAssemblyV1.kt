@@ -17,6 +17,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.withCatalogFreezeC
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveCutoffPublicationV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveInitialCheckpointV1
 import me.manga.kira.backend.security.AcquiredVersionedSecret
 import me.manga.kira.backend.security.JwtKeyProvider
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
@@ -59,6 +60,9 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
     private val ordinaryStsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
     private val ordinaryKmsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
     private val ordinaryS3HttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
+    private val scannerStsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
+    private val scannerKmsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
+    private val scannerS3HttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)?,
 ) : AutoCloseable {
     private val caller = Thread.currentThread()
     private val setupBudget = PersistenceTimeBudget.start(60_000, nanoClock)
@@ -77,6 +81,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
     private var lanes: JournalPublicationLanesV1? = null
     private var seal: VersionBoundTestOrdinarySealV1? = null
     private var activePublication: VersionBoundTestActiveCutoffPublicationV1? = null
+    private var initialCheckpoint: VersionBoundTestActiveInitialCheckpointV1? = null
     private var assembled: VersionBoundTestNamespaceProcessV1? = null
     private var closeFailure: Throwable? = null
 
@@ -95,7 +100,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
 
     @Suppress("TooGenericExceptionCaught")
     fun assemble(manifest: Path, secretCredentials: AwsSessionCredentials, sealBootstrapCredentials: AwsSessionCredentials,
-        ordinaryPublicationCredentials: AwsSessionCredentials? = null) {
+        ordinaryPublicationCredentials: AwsSessionCredentials? = null, initialCheckpointReadCredentials: AwsSessionCredentials? = null) {
         var failureCode = ComplaintTestDeploymentFailureV1.INPUT_REFUSED
         try {
             checkpoint()
@@ -103,14 +108,19 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             entered = true
             val inputs = readManifest(manifest)
             requireTestDeployment((inputs.activeFirstCut != null) == (ordinaryPublicationCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
+            requireTestDeployment((inputs.initialCheckpoint != null) == (initialCheckpointReadCredentials != null), ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
             if (ordinaryPublicationCredentials != null) requireTestDeployment(
                 ordinaryPublicationCredentials.accessKeyId() != sealBootstrapCredentials.accessKeyId(), ComplaintTestDeploymentFailureV1.INPUT_REFUSED,
+            )
+            if (initialCheckpointReadCredentials != null) requireTestDeployment(
+                initialCheckpointReadCredentials.accessKeyId() != sealBootstrapCredentials.accessKeyId() &&
+                    initialCheckpointReadCredentials.accessKeyId() != ordinaryPublicationCredentials?.accessKeyId(), ComplaintTestDeploymentFailureV1.INPUT_REFUSED,
             )
             checkpoint() // All grammar/identity/policy validation precedes the first immutable lookup.
             failureCode = ComplaintTestDeploymentFailureV1.PROVIDER_REFUSED
             val acquired = inputs.allBindings().map { acquire(it, secretCredentials) }
             failureCode = ComplaintTestDeploymentFailureV1.PROCESS_REFUSED
-            assembleAcquired(inputs, acquired, sealBootstrapCredentials, ordinaryPublicationCredentials)
+            assembleAcquired(inputs, acquired, sealBootstrapCredentials, ordinaryPublicationCredentials, initialCheckpointReadCredentials)
             checkpoint()
             checkNotNull(assembled).requireUnchangedConfiguration()
             ready = true
@@ -193,6 +203,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         acquired: List<AcquiredVersionedSecret>,
         credentials: AwsSessionCredentials,
         ordinaryCredentials: AwsSessionCredentials?,
+        scannerCredentials: AwsSessionCredentials?,
     ) {
         checkpoint()
         val expected = inputs.allBindings()
@@ -241,9 +252,19 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
                 it, pools, inputs.journal, checkNotNull(activeFirstCut), ordinarySeal,
             )
         }
+        val scanner = inputs.initialCheckpoint?.let {
+            VersionBoundTestActiveInitialCheckpointV1.fromIndependentInputs(it, routing, pools, ordinarySeal, inputs.sealerMapping,
+                checkNotNull(scannerCredentials), inputs.sealerLimits, AssemblyClock(wallClock), nanoClock::nanoTime,
+                scannerStsHttpFixture, scannerKmsHttpFixture, scannerS3HttpFixture).also { retained -> initialCheckpoint = retained }
+        }
+        val activeOrdinarySealRecovery = inputs.activeOrdinarySealRecovery?.let {
+            me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1.fromRetained(
+                it, pools, consumers.journalRouting, checkNotNull(activeFirstCut), ordinarySeal,
+            )
+        }
         assembled = VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, inputs.implementationSchema, inputs.desiredGeneration, inputs.databaseIdentity, inputs.restoreIdentity,
-            publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial, activeFirstCut, ordinaryPublication, activeFirstCutSuccessor,
+            publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial, activeFirstCut, ordinaryPublication, activeFirstCutSuccessor = activeFirstCutSuccessor, initialCheckpoint = scanner, activeOrdinarySealRecovery = activeOrdinarySealRecovery,
         )
         // No public-trust preparation, JDBC connection, STS/KMS/S3 construction, activation or registration was performed.
     }
@@ -307,6 +328,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         attempt { owner?.requestShutdown() }
         attempt { closeChannel() }
         attempt { closeResolver() }
+        attempt { initialCheckpoint?.close() }
         attempt { activePublication?.close() }
         attempt { seal?.close() }
         attempt { lanes?.close() }
@@ -348,7 +370,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
     companion object {
         /** Begin BEFORE manifest I/O; default launch remains UNKNOWN and cannot be upgraded on this owner. */
         fun begin(): ComplaintTestProcessAssemblyV1 = ComplaintTestProcessAssemblyV1(
-            SystemPersistenceNanoClock, Instant::now, PersistencePoolLaunchProfile.UNKNOWN, null, null, null, null, null, null, null,
+            SystemPersistenceNanoClock, Instant::now, PersistencePoolLaunchProfile.UNKNOWN, null, null, null, null, null, null, null, null, null, null,
         )
 
         /** Only raw provider HTTP/clocks and the existing explicit cold controlled launch selection may vary in tests. */
@@ -363,11 +385,14 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             ordinarySts: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
             ordinaryKms: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
             ordinaryS3: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+            scannerSts: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+            scannerKms: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+            scannerS3: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
         ): ComplaintTestProcessAssemblyV1 = ComplaintTestProcessAssemblyV1(
             nanoClock, wallClock, runtimeLaunchProfile, secretHttpFactory, sts, kms, s3,
             // Distinct raw responders are fixed before intake/full D, never by editing a retained recipe.
             // Absent opt-in preserves the historical shared fixture spelling; production remains all-null.
-            ordinarySts ?: sts, ordinaryKms ?: kms, ordinaryS3 ?: s3,
+            ordinarySts ?: sts, ordinaryKms ?: kms, ordinaryS3 ?: s3, scannerSts, scannerKms, scannerS3,
         )
     }
 }

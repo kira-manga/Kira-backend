@@ -1,5 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.capacity
 
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointOperationV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveInitialCheckpointStorageV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutOperationV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveFirstSealStorageV1
 
@@ -113,6 +115,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForTestInstallationManifestPublication(operation: TestInstallationManifestPublicationOperationV1): LockedTestInstallationManifestPublication = LockedTestInstallationManifestPublication.lock(this, operation)
     internal fun lockForTestRunPurge(operation: TestRunPurgeOperationV1): LockedTestRunPurge = LockedTestRunPurge.lock(this, operation)
     internal fun lockForTestActiveFirstCut(operation: TestActiveFirstCutOperationV1): LockedTestActiveFirstCut = LockedTestActiveFirstCut.lock(this, operation)
+    internal fun lockForTestActiveInitialCheckpoint(operation: TestActiveInitialCheckpointOperationV1): LockedTestActiveInitialCheckpoint = LockedTestActiveInitialCheckpoint.lock(this, operation)
 
     internal fun lockForTestTerminalEpochSeal(operation: TestTerminalEpochSealOperationV1): LockedTestTerminalEpochSeal = LockedTestTerminalEpochSeal.lock(this, operation)
     internal fun lockForTestOrdinarySeal(operation: TestOrdinarySealOperationV1): LockedTestOrdinarySeal = LockedTestOrdinarySeal.lock(this, operation)
@@ -1792,6 +1795,60 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         }
     }
 
+    /** Ordinary actual only. The typed operation proves ALL row ownership/removals before an exact refund. */
+    internal class LockedTestActiveInitialCheckpoint private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: TestActiveInitialCheckpointOperationV1,
+        private val counters: LockedCounters,
+    ) {
+        private var issued = false
+        private var completed = false
+        internal fun completedFor(candidate: TestActiveInitialCheckpointOperationV1): Boolean = operation === candidate && completed
+        internal fun charge(candidate: TestActiveInitialCheckpointOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                operation.requireCharge(this, store.jdbc); issued = true
+                val expected = checkNotNull(store.expectedPolicyDigest)
+                persist(counters.ledger.chargeCreation(expected, TestActiveInitialCheckpointStorageV1.ROW).balance)
+                operation.requireCharge(this, store.jdbc); completed = true
+            } catch (problem: Throwable) { operation.failed(problem) }
+        }
+        internal fun refund(candidate: TestActiveInitialCheckpointOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                val count = operation.refundCount(this, store.jdbc); issued = true
+                val expected = checkNotNull(store.expectedPolicyDigest)
+                persist(counters.ledger.refundActual(expected, TestActiveInitialCheckpointStorageV1.rows(count)).balance)
+                check(operation.refundCount(this, store.jdbc) == count); completed = true
+            } catch (problem: Throwable) { operation.failed(problem) }
+        }
+        private fun persist(after: ComplaintCapacityBalance) {
+            val expected = checkNotNull(store.expectedPolicyDigest)
+            val before = counters.ledger.balance
+            check(after.testReserved == before.testReserved && after.recoveryReserved == before.recoveryReserved &&
+                after.hardLimit == before.hardLimit && after.creationLimit == before.creationLimit)
+            for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                if (before.free[counter] == after.free[counter] && before.actual[counter] == after.actual[counter]) continue
+                check(counter === ComplaintCapacityCounter.SCAN_RUNS || counter === ComplaintCapacityCounter.STORAGE_BYTES)
+                // Same reserved values are CAS predicates, not mutable settlement columns.
+                check(store.jdbc.update(INITIAL_CHECKPOINT_COUNTER, after.free[counter], after.actual[counter], counter.storedName, counter.storedOrdinal, expected,
+                    before.hardLimit[counter], before.creationLimit[counter], before.free[counter], before.actual[counter],
+                    before.recoveryReserved[counter], before.testReserved[counter]) == 1)
+            }
+        }
+        override fun toString(): String = "LockedInitialCheckpoint(ordinary-actual4416-per-row,no-reserve-spend)"
+        companion object {
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: TestActiveInitialCheckpointOperationV1): LockedTestActiveInitialCheckpoint {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    val locked = LockedTestActiveInitialCheckpoint(store, operation, store.readLockedCounters())
+                    operation.requireCounterRead(store.jdbc)
+                    return locked
+                } catch (problem: Throwable) { operation.failed(problem) }
+            }
+        }
+    }
+
     /** Independently paid ordinary STORAGE charge. No test/terminal reserve is spent or refunded. */
     internal class LockedTestActiveFirstCut private constructor(
         private val store: JdbcComplaintCapacityStore,
@@ -2545,6 +2602,9 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 AND hard_limit = ? AND creation_limit = ? AND free_units = ? AND actual_units = ?
                 AND recovery_reserved_units = ? AND test_reserved_units = ?
         """.trimIndent()
+        val INITIAL_CHECKPOINT_COUNTER = """
+            UPDATE complaint_capacity_counters SET free_units = ?, actual_units = ?, updated_at = clock_timestamp()
+        """.trimIndent() + "\n" + ENROLLMENT_COUNTER_MATCH
         val CHARGE_ENROLLMENT_COUNTER = """
             UPDATE complaint_capacity_counters
             SET free_units = ?, actual_units = ?, test_reserved_units = ?, updated_at = clock_timestamp()

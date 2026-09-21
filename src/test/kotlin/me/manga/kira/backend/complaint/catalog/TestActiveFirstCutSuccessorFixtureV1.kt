@@ -80,6 +80,9 @@ internal class TestActiveFirstCutSuccessorFixtureV1(val first: TestActiveFirstCu
                 assertNull(SignedActivationObservation.active(first.runtime.pools.catalogCoordinator))
                 awaitNativeReclaimed()
             }
+        } catch (problem: Throwable) {
+            TestActiveFirstCutSuccessorDiagnosticsV1.report("RECOVER", this, problem, original)
+            throw problem
         } finally { first.native.onNanoSample = null; first.native.assertNoLostAssertions() }
     }
 
@@ -142,6 +145,12 @@ internal class TestActiveFirstCutSuccessorFixtureV1(val first: TestActiveFirstCu
                                 "AND ? = ANY(pg_blocking_pids(a.pid)) AND EXISTS " +
                                 "(SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'advisory' AND NOT l.granted)",
                             Int::class.java, PgLifecycleDatabaseSettings.CANDIDATE, holderPid).singleOrNull()
+                        if (pid == null && !worker.thread.isAlive) {
+                            // Inspect only an actually exited worker; value() cannot add a live-worker wait here.
+                            val problem = runCatching { worker.value().getOrThrow() }.exceptionOrNull()
+                            throw AssertionError("Successor worker exited before an exclusive-E waiter was observed. " +
+                                TestActiveFirstCutSuccessorDiagnosticsV1.snapshot(this, problem))
+                        }
                         pid != null
                     }
                     val selected = checkNotNull(pid)

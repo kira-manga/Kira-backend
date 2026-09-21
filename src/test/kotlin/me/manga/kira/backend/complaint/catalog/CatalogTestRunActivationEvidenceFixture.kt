@@ -105,6 +105,7 @@ internal fun withActivationEvidence(
     registeredAdminDelete: Boolean = false,
     registeredAdminBatchDelete: Boolean = false,
     activeFirstCut: Boolean = false,
+    activeSealRecovery: Boolean = false,
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     activeFirstCutSuccessor: Boolean = false,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
@@ -129,7 +130,7 @@ internal fun withActivationEvidence(
     } else TestOwnerDeleteJournalConfigurationV1.of(declaration, ownerDeleteAll = ownerDeleteAll)
     JournalPublicationLanesV1(journal).use { lanes ->
         CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal, ordinarySealHttp,
-            if (ordinarySealHttp?.protectedIntake == true) tls else null, ordinaryDrain, activeFirstCut, ordinaryRawHttp, activeFirstCutSuccessor).use(action)
+            if (ordinarySealHttp?.protectedIntake == true) tls else null, ordinaryDrain, activeFirstCut, activeSealRecovery, ordinaryRawHttp, activeFirstCutSuccessor).use(action)
     }
 }
 
@@ -150,6 +151,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
     intakeTls: VersionBoundPersistenceConnectedFixture? = null,
     private val ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
     activeFirstCut: Boolean = false,
+    activeSealRecovery: Boolean = false,
     private val ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
     activeFirstCutSuccessor: Boolean = false,
 ) : AutoCloseable {
@@ -158,11 +160,14 @@ internal class CatalogTestRunActivationEvidenceFixture(
         require(ordinaryDrain == null || ordinarySealHttp != null)
         require(ordinaryRawHttp == null || activeFirstCut)
         require(!activeFirstCutSuccessor || activeFirstCut)
+        require(ordinaryRawHttp?.initialCheckpoint == null || (activeFirstCut && ordinarySealHttp?.protectedIntake == true))
+        require(!activeSealRecovery || activeFirstCut)
         require(!activeFirstCut || (ordinarySealHttp?.protectedIntake == true && intakeTls != null &&
             ordinaryDrain != null && journal.registeredAdminBatchDelete && pools.epochRotation != null))
     }
     val activeFirstCutInput = if (activeFirstCut) TestActiveFirstCutInputFixtureV1.input() else null
     val activeFirstCutSuccessorInput = if (activeFirstCutSuccessor) TestActiveFirstCutSuccessorInputFixtureV1.input() else null
+    val activeSealRecoveryInput = if (activeSealRecovery) TestActiveSealRecoveryInputFixtureV1.input() else null
     val initial = OfflineTrustBundleFixture.bytes(rotations.initial)
     val current = OfflineTrustBundleFixture.bytes(rotations.current)
     val policy = OfflineCatalogRotationFixture.policy()
@@ -260,9 +265,14 @@ internal class CatalogTestRunActivationEvidenceFixture(
                 VersionBoundTestActiveFirstCutSuccessorV1.fromRetained(it, pools, native.consumers.journalConfiguration,
                     checkNotNull(firstCut), checkNotNull(native.ordinarySeal))
             }
+            val sealRecovery = activeSealRecoveryInput?.let {
+                me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1.fromRetained(
+                    it, pools, native.consumers.journalRouting, checkNotNull(firstCut), checkNotNull(native.ordinarySeal),
+                )
+            }
             return VersionBoundTestNamespaceProcessV1.fromRetained(native.consumers, pools, 1, desiredGeneration,
                 native.databaseIdentity, native.restoreIdentity, native.publicationLanes, native.catalogReadback, selected,
-                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, successor)
+                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, activeFirstCutSuccessor = successor, initialCheckpoint = native.initialCheckpoint, activeOrdinarySealRecovery = sealRecovery)
         }
         val writer = journal.declaration().writer
         val activation = FullTestCatalogInputs.activation(
@@ -290,7 +300,10 @@ internal class CatalogTestRunActivationEvidenceFixture(
         val document = template.copy(
             // Select the explicit denial recipe before parsing/acquisition/D; absence preserves the legacy bytes.
             profile = when {
+                ordinaryRawHttp?.initialCheckpoint != null && activeSealRecoveryInput != null -> ComplaintTestDeploymentInputsV1.INITIAL_RECOVERY_CHECKPOINT_PROFILE
+                ordinaryRawHttp?.initialCheckpoint != null -> ComplaintTestDeploymentInputsV1.INITIAL_CHECKPOINT_PROFILE
                 activeFirstCutSuccessorInput != null -> ComplaintTestDeploymentInputsV1.ACTIVE_FIRST_CUT_SUCCESSOR_PROFILE
+                activeSealRecoveryInput != null -> ComplaintTestDeploymentInputsV1.ACTIVE_SEAL_RECOVERY_PROFILE
                 activeFirstCutInput != null -> ComplaintTestDeploymentInputsV1.ACTIVE_FIRST_CUT_PROFILE
                 ordinaryDrain == null -> template.profile
                 journal.registeredAdminBatchDelete -> ComplaintTestDeploymentInputsV1.ADMIN_BATCH_ERASURE_DRAIN_PROFILE
@@ -330,6 +343,8 @@ internal class CatalogTestRunActivationEvidenceFixture(
             activeFirstCut = activeFirstCutInput,
             activeFirstCutSuccessor = activeFirstCutSuccessorInput,
             ordinaryPublication = activeFirstCutInput?.let { TestActiveFirstCutInputFixtureV1.ordinaryInput() },
+            initialCheckpoint = ordinaryRawHttp?.initialCheckpoint?.input,
+            activeOrdinarySealRecovery = activeSealRecoveryInput,
         )
         intakeDocument = document
         val inputBytes = TestDeploymentInputFixture.bytes(document)
@@ -339,10 +354,12 @@ internal class CatalogTestRunActivationEvidenceFixture(
         http.prepareIndependent(journal) // Raw factories and clocks fixed BEFORE the actual intake/owner construction.
         val assembly = ComplaintTestProcessAssemblyV1.withHttpFixture(secrets::httpClient, PersistenceNanoClock(http::nanos), http::now,
             PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY, http::nativeSts, http::nativeKms, http::nativeS3,
-            ordinarySts = ordinaryRawHttp?.sts, ordinaryKms = ordinaryRawHttp?.kms, ordinaryS3 = ordinaryRawHttp?.s3).also { intakeAssembly = it }
+            ordinarySts = ordinaryRawHttp?.sts, ordinaryKms = ordinaryRawHttp?.kms, ordinaryS3 = ordinaryRawHttp?.s3,
+            scannerSts = ordinaryRawHttp?.initialCheckpoint?.sts, scannerKms = ordinaryRawHttp?.initialCheckpoint?.kms,
+            scannerS3 = ordinaryRawHttp?.initialCheckpoint?.s3).also { intakeAssembly = it }
         TestDeploymentInputFixture.withManifest(inputBytes) { path ->
             assembly.assemble(path, AwsSecretVersionFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS,
-                activeFirstCutInput?.let { TestActiveFirstCutInputFixtureV1.ordinaryCredentials })
+                activeFirstCutInput?.let { TestActiveFirstCutInputFixtureV1.ordinaryCredentials }, ordinaryRawHttp?.initialCheckpoint?.credentials)
         }
         check(secrets.createdClients == secrets.closedClients && secrets.requests.size > 1)
         check(secrets.requests.size == secrets.replies.size)
@@ -375,11 +392,13 @@ internal class CatalogTestRunActivationEvidenceFixture(
         // New native clients are acquired by this new owner; no second configure/reset of its objects.
         val assembly = ComplaintTestProcessAssemblyV1.withHttpFixture(secrets::httpClient, PersistenceNanoClock(http::nanos), http::now,
             PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY, http::nativeSts, http::nativeKms, http::nativeS3,
-            ordinarySts = ordinaryRawHttp?.sts, ordinaryKms = ordinaryRawHttp?.kms, ordinaryS3 = ordinaryRawHttp?.s3)
+            ordinarySts = ordinaryRawHttp?.sts, ordinaryKms = ordinaryRawHttp?.kms, ordinaryS3 = ordinaryRawHttp?.s3,
+            scannerSts = ordinaryRawHttp?.initialCheckpoint?.sts, scannerKms = ordinaryRawHttp?.initialCheckpoint?.kms,
+            scannerS3 = ordinaryRawHttp?.initialCheckpoint?.s3)
         try {
             TestDeploymentInputFixture.withManifest(TestDeploymentInputFixture.bytes(document)) { path ->
                 assembly.assemble(path, AwsSecretVersionFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS,
-                    document.activeFirstCut?.let { TestActiveFirstCutInputFixtureV1.ordinaryCredentials })
+                    document.activeFirstCut?.let { TestActiveFirstCutInputFixtureV1.ordinaryCredentials }, ordinaryRawHttp?.initialCheckpoint?.credentials)
             }
             check(secrets.createdClients == secrets.closedClients && secrets.requests.size > 1)
             return assembly

@@ -13,6 +13,8 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNam
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceActiveRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestPublicationV1
@@ -143,9 +145,13 @@ internal class PersistencePhaseOwnership private constructor(
         enter(PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY, testRunPurge = original)
     internal fun enterTestActiveOrdinarySeal(original: TestActiveOrdinarySealV1): PersistencePhaseContext =
         enter(original.path, testActiveSealer = original)
+    internal fun enterTestActiveInitialCheckpoint(original: TestActiveInitialCheckpointV1): PersistencePhaseContext =
+        enter(original.path, testInitialCheckpoint = original)
 
     internal fun enterTestTerminalEpochSeal(original: TestRunTerminalEpochSealV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL, testTerminalEpochSeal = original)
+    internal fun enterTestActiveOrdinarySealRecovery(original: TestActiveOrdinarySealRecoveryV1): PersistencePhaseContext =
+        enter(original.path, testActiveSealRecovery = original)
 
     internal fun enterTestOrdinarySeal(original: TestRunOrdinarySealV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL, testOrdinarySealer = original)
@@ -548,6 +554,8 @@ internal class PersistencePhaseOwnership private constructor(
         testRunPurge: TestRunPurgePublicationV1? = null,
         testActiveSealer: TestActiveOrdinarySealV1? = null,
         testTerminalEpochSeal: TestRunTerminalEpochSealV1? = null,
+        testInitialCheckpoint: TestActiveInitialCheckpointV1? = null,
+        testActiveSealRecovery: TestActiveOrdinarySealRecoveryV1? = null,
     ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
@@ -597,6 +605,12 @@ internal class PersistencePhaseOwnership private constructor(
         if ((path === PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL) != (testTerminalEpochSeal != null)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
+        if (path.testActiveInitialCheckpoint != (testInitialCheckpoint != null)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if (path.testActiveOrdinarySealRecovery != (testActiveSealRecovery != null)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
         if ((path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL) != (testOrdinarySealer != null)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
@@ -643,6 +657,8 @@ internal class PersistencePhaseOwnership private constructor(
         testRunSealer?.requirePhaseEntry(this, path)
         testOrdinarySealer?.requirePhaseEntry(this, path)
         testActiveSealer?.requirePhaseEntry(this, path)
+        testInitialCheckpoint?.requirePhaseEntry(this, path)
+        testActiveSealRecovery?.requirePhaseEntry(this, path)
         testInstallationManifest?.requirePhaseEntry(this, path)
         testInstallationManifestPublication?.requirePhaseEntry(this, path)
         testRunPurge?.requirePhaseEntry(this, path)
@@ -675,6 +691,8 @@ internal class PersistencePhaseOwnership private constructor(
         val testRunSealingWork = testRunSealer?.budget?.capped(2_000)
         val testOrdinarySealWork = testOrdinarySealer?.budget?.capped(2_000)
         val testActiveOrdinarySealWork = testActiveSealer?.phaseBudget()
+        val testActiveInitialCheckpointWork = testInitialCheckpoint?.phaseBudget()
+        val testActiveOrdinarySealRecoveryWork = testActiveSealRecovery?.phaseBudget()
         val testInstallationManifestWork = testInstallationManifest?.budget?.capped(2_000)
         val testInstallationManifestPublicationWork = testInstallationManifestPublication?.phaseBudget()?.capped(2_000)
         val testRunPurgeWork = testRunPurge?.phaseBudget()?.capped(2_000)
@@ -767,6 +785,10 @@ internal class PersistencePhaseOwnership private constructor(
                 testActiveOrdinarySealWork,
                 testTerminalEpochSeal = testTerminalEpochSeal,
                 testTerminalEpochSealWork = testTerminalEpochSealWork,
+                testInitialCheckpoint = testInitialCheckpoint,
+                testActiveInitialCheckpointWork = testActiveInitialCheckpointWork,
+                testActiveSealRecovery = testActiveSealRecovery,
+                testActiveOrdinarySealRecoveryWork = testActiveOrdinarySealRecoveryWork,
             )
             phase = prepared
             // Retain before any publication/permit effect, including entry failures that never return a phase to the executor.
@@ -785,6 +807,8 @@ internal class PersistencePhaseOwnership private constructor(
             testRunSealer?.retainPhase(prepared)
             testOrdinarySealer?.retainPhase(prepared)
             testActiveSealer?.retainPhase(prepared)
+            testInitialCheckpoint?.retainPhase(prepared)
+            testActiveSealRecovery?.retainPhase(prepared)
             testInstallationManifest?.retainPhase(prepared)
             testInstallationManifestPublication?.retainPhase(prepared)
             testRunPurge?.retainPhase(prepared)
@@ -815,6 +839,8 @@ internal class PersistencePhaseOwnership private constructor(
             testRunSealer?.observeFailure(failure)
             testOrdinarySealer?.observeFailure(failure)
             testActiveSealer?.observeFailure(failure)
+            testInitialCheckpoint?.observeFailure(failure)
+            testActiveSealRecovery?.observeFailure(failure)
             testInstallationManifest?.observeFailure(failure)
             testInstallationManifestPublication?.observeFailure(failure)
             testRunPurge?.observeFailure(failure)
@@ -841,6 +867,8 @@ internal class PersistencePhaseOwnership private constructor(
                 testRunSealer?.observeFailure(cleanup)
                 testOrdinarySealer?.observeFailure(cleanup)
                 testActiveSealer?.observeFailure(cleanup)
+                testInitialCheckpoint?.observeFailure(cleanup)
+                testActiveSealRecovery?.observeFailure(cleanup)
                 testInstallationManifest?.observeFailure(cleanup)
                 testInstallationManifestPublication?.observeFailure(cleanup)
                 testRunPurge?.observeFailure(cleanup)
@@ -866,6 +894,8 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { testRunSealer?.observePhaseCleanup(it) }
                 phase?.let { testOrdinarySealer?.observePhaseCleanup(it) }
                 phase?.let { testActiveSealer?.observePhaseCleanup(it) }
+                phase?.let { testInitialCheckpoint?.observePhaseCleanup(it) }
+                phase?.let { testActiveSealRecovery?.observePhaseCleanup(it) }
                 phase?.let { testInstallationManifest?.observePhaseCleanup(it) }
                 phase?.let { testInstallationManifestPublication?.observePhaseCleanup(it) }
                 phase?.let { testRunPurge?.observePhaseCleanup(it) }
@@ -1096,6 +1126,8 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
                 PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
                 PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL,
+                PersistencePhasePath.COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT,
+                PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL_RECOVERY,
                 PersistencePhasePath.COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE,
                 PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
                 PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
@@ -1298,6 +1330,8 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL,
+            PersistencePhasePath.COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT,
+            PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL_RECOVERY,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE,
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
@@ -1481,6 +1515,8 @@ internal enum class PersistencePhasePath {
     COMPLAINT_TEST_RUN_SEALED_AUDIT,
     COMPLAINT_TEST_ORDINARY_SEAL,
     COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL,
+    COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT,
+    COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL_RECOVERY,
     COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE,
     COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
     COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
@@ -1532,6 +1568,11 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK,
     ;
 
+    internal val testActiveInitialCheckpoint: Boolean
+        get() = this === COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT
+    internal val testActiveOrdinarySealRecovery: Boolean
+        get() = this === COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL_RECOVERY
+
     internal val testActiveOrdinarySeal: Boolean
         get() = this === COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL || this === COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE
 
@@ -1578,6 +1619,8 @@ internal enum class PersistencePhasePath {
             COMPLAINT_TEST_RUN_SEALED_AUDIT,
             COMPLAINT_TEST_ORDINARY_SEAL,
             COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL,
+            COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT,
+            COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL_RECOVERY,
             COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE,
             COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
             COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,

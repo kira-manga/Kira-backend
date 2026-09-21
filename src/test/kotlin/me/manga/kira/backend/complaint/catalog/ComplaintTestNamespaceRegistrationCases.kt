@@ -396,10 +396,11 @@ internal object ComplaintTestNamespaceRegistrationCases {
         registeredAdminDelete: Boolean = false,
         registeredAdminBatchDelete: Boolean = false,
         activeFirstCut: Boolean = false,
+        activeSealRecovery: Boolean = false,
         ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
         activeFirstCutSuccessor: Boolean = false,
         action: (ProjectionActivationObservation, VersionBoundPersistenceConnectedFixture, ComplaintTestNamespaceRegistrationV1, CatalogSignerRotationProbeJdbc) -> Unit,
-    ) = withCompletionActivationRows(tls, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { f ->
+    ) = withCompletionActivationRows(tls, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { f ->
         fun expireClosedSetupPredecessor(previous: VersionBoundPersistenceConnectedFixture) {
             if (!expireClosedSetupPredecessors) return
             requireConnectionFree()

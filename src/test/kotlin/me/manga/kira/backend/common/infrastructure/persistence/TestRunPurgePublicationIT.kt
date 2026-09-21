@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainFreshControlCasesV1
 import me.manga.kira.backend.complaint.catalog.TestRegistrationCompletionCut
 import me.manga.kira.backend.complaint.catalog.TestRunPurgePublicationCasesV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPurgeStepV1
@@ -21,6 +22,21 @@ class TestRunPurgePublicationIT {
     @Test
     fun genuineUnusedRunCarriesEmptyRootAndZeroChunksThenPaysFreezesAuthenticatesAndReplaysExactPurge() = withFixture {
         TestRunPurgePublicationCasesV1.unusedAndReplay(it)
+    }
+
+    @Test
+    fun freshProjectedScanRequestIsNotClearedAndNoninitialUnrotatedEpochIsRefused() = withFixture {
+        TestOrdinaryDrainFreshControlCasesV1.initialFlagAndNoninitialRefusal(it)
+    }
+
+    @Test
+    fun requestedScanCannotRelabelHistoricalUnrotatedControlAsFresh() = withFixture {
+        TestOrdinaryDrainFreshControlCasesV1.historicalRequestStillRefused(it)
+    }
+
+    @Test
+    fun genuineFreshCaptureStillRequiresRequestedScanAndMalformedApprovalNeverReachesNative() = withFixture {
+        TestOrdinaryDrainFreshControlCasesV1.capturedStillRequiresRequest(it)
     }
 
     @Test

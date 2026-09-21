@@ -321,7 +321,51 @@ internal object TestActiveFirstCutCasesV1 {
             assertThrows<java.sql.SQLException> { f.initial.foreignUpdate(sql, f.scope) }
             assertEquals(before, f.paidImage())
         }
+        independentOpaqueSealKeyGrammar(f)
+        assertEquals(before, f.paidImage())
         assertEquals(counters, f.counters()); assertEquals(control, f.controlImage())
+    }
+
+    /** Synthetic schema shapes only: every UPDATE rolls back; no canonical/lease/native authority is issued. */
+    private fun independentOpaqueSealKeyGrammar(f: TestActiveFirstCutFixtureV1) {
+        val row = f.paid()
+        val objectId = f.scope.toString().replace("-", "") + "A".repeat(11)
+        val prefix = "complaints/journal/v1/${row["writer_generation"]}/test/${f.scope}/seal-terminal/${row["epoch_end"]}/test-route/epoch-seal/"
+        val suffix = "B".repeat(42) + "A.kjev"
+        fun attempt(key: String): Int = f.independentTransaction { connection, _, _ ->
+            connection.prepareStatement("""
+                UPDATE complaint_test_active_seal_intents SET state = 'CANONICAL', object_id = ?, object_key = ?,
+                    routing_key_id = 'test-route', preparing_fencing_token = capture_token + 1,
+                    seal_encoding_hash = decode(repeat('ab', 32), 'hex'), canonicalizer = 'kcj-1',
+                    canonical_bytes = decode('7b7d', 'hex'), canonical_hash = sha256(decode('7b7d', 'hex')),
+                    created_at = date_trunc('second', captured_at) + interval '1 second',
+                    retention_floor = ((date_trunc('second', captured_at) AT TIME ZONE 'UTC') + interval '11 years 1 second') AT TIME ZONE 'UTC'
+                WHERE data_scope_id = ? AND state = 'RESERVED'
+            """.trimIndent()).use { statement ->
+                statement.queryTimeout = 2
+                statement.setString(1, objectId); statement.setString(2, key); statement.setObject(3, f.scope)
+                statement.executeUpdate()
+            }
+        }
+        // V21/V28 are structural, so both opaque suffixes are legal; genuine HMAC parity is checked separately by A.
+        assertEquals(1, attempt(prefix + suffix))
+        assertEquals(1, attempt(prefix + objectId + ".kjev"))
+        listOf(
+            prefix + "B".repeat(43) + ".kjev", // Noncanonical base64url final sextet.
+            prefix + "B".repeat(41) + "A.kjev", // Short opaque ID.
+            prefix + "B".repeat(43) + "A.kjev", // Long opaque ID.
+            prefix + suffix.removeSuffix(".kjev") + ".json",
+            prefix.replace("/epoch-seal/", "/test-run-purge/") + suffix,
+            "x/" + prefix + suffix,
+        ).forEach { key ->
+            val failure = assertThrows<java.sql.SQLException> { attempt(key) }
+            // The owned driver is runtimeOnly; inspect its actual structured error without a compile-time driver dependency.
+            assertEquals("org.postgresql.util.PSQLException", failure.javaClass.name)
+            assertEquals("23514", failure.sqlState)
+            val server = requireNotNull(failure.javaClass.getMethod("getServerErrorMessage").invoke(failure))
+            assertEquals("org.postgresql.util.ServerErrorMessage", server.javaClass.name)
+            assertEquals("chk_complaint_test_active_seal_canonical", server.javaClass.getMethod("getConstraint").invoke(server))
+        }
     }
 
     fun realFenceContentionRefusesBeforeCharge(tls: VersionBoundPersistenceConnectedFixture, maintenance: Boolean) = withTestActiveFirstCut(tls) { f ->

@@ -44,6 +44,7 @@ internal class BoundedJournalSdkHttpClientV1(
     fun begin(call: TestInstallationManifestS3CallV1) = beginProjected(JournalS3WireBindingV1.of(call))
     fun begin(call: TestRunPurgeS3CallV1) = beginProjected(JournalS3WireBindingV1.of(call))
     fun begin(call: TestOrdinaryInventoryS3CallV1) = beginProjected(JournalS3WireBindingV1.of(call))
+    fun begin(call: TestActiveInitialCheckpointS3CallV1) = beginProjected(JournalS3WireBindingV1.of(call))
     private fun beginProjected(call: JournalS3WireBindingV1) {
         call.check()
         requireJournalPublication(!closed.get() && active.get() == null && expected.compareAndSet(null, call))
@@ -67,6 +68,7 @@ internal class BoundedJournalSdkHttpClientV1(
     fun observation(call: TestInstallationManifestS3CallV1): JournalS3HttpObservationV1? = observationProjected(retained(call))
     fun observation(call: TestRunPurgeS3CallV1): JournalS3HttpObservationV1? = observationProjected(retained(call))
     fun observation(call: TestOrdinaryInventoryS3CallV1): JournalS3HttpObservationV1? = observationProjected(retained(call))
+    fun observation(call: TestActiveInitialCheckpointS3CallV1): JournalS3HttpObservationV1? = observationProjected(retained(call))
     private fun observationProjected(call: JournalS3WireBindingV1): JournalS3HttpObservationV1? {
         checkCall(call)
         val exchange = active.get()
@@ -90,6 +92,7 @@ internal class BoundedJournalSdkHttpClientV1(
     private fun retained(call: TestInstallationManifestS3CallV1): JournalS3WireBindingV1 = checkNotNull(expected.get()).also { requireJournalPublication(it.matches(call)) }
     private fun retained(call: TestRunPurgeS3CallV1): JournalS3WireBindingV1 = checkNotNull(expected.get()).also { requireJournalPublication(it.matches(call)) }
     private fun retained(call: TestOrdinaryInventoryS3CallV1): JournalS3WireBindingV1 = checkNotNull(expected.get()).also { requireJournalPublication(it.matches(call)) }
+    private fun retained(call: TestActiveInitialCheckpointS3CallV1): JournalS3WireBindingV1 = checkNotNull(expected.get()).also { requireJournalPublication(it.matches(call)) }
 
     @Synchronized
     fun finishRequest() = journalPublicationClose {

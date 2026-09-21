@@ -101,13 +101,15 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE,
         )
+        val activeSealRecovery = setOf(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL_RECOVERY)
         val activeFirstCutSuccessor = setOf(
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_READ,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_LEASE,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_RELEASE,
         )
-        val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + initialAdmission + sealing + activeFirstCut + activeSeal + activeFirstCutSuccessor
-        assertEquals(123, PersistencePhasePath.entries.size)
+        val initialCheckpoint = setOf(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT)
+        val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + initialAdmission + sealing + activeFirstCut + activeSeal + activeFirstCutSuccessor + initialCheckpoint + activeSealRecovery
+        assertEquals(125, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
         assertEquals(3, adminWriters.size)
@@ -117,8 +119,9 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         assertEquals(2, initialAdmission.size)
         assertEquals(3, activeFirstCut.size)
         assertEquals(2, activeSeal.size)
+        assertEquals(1, activeSealRecovery.size)
         assertEquals(3, activeFirstCutSuccessor.size)
-        assertEquals(78, writers.size)
+        assertEquals(80, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,
@@ -190,6 +193,9 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         assertEquals(activeFirstCutSuccessor, PersistencePhasePath.entries.filter { it.testActiveFirstCutSuccessor }.toSet())
         assertFalse(activeFirstCutSuccessor.any { it.readOnly || it.catalogTestRunActivation || it.testRunSealing || it.testInitialAdmission || it.testActiveFirstCut })
         assertFalse(activeFirstCut.any { it.testActiveFirstCutSuccessor })
+        assertEquals(activeSeal, PersistencePhasePath.entries.filter { it.testActiveOrdinarySeal }.toSet())
+        assertEquals(activeSealRecovery, PersistencePhasePath.entries.filter { it.testActiveOrdinarySealRecovery }.toSet())
+        assertFalse(activeSealRecovery.any { it.readOnly || it.testActiveOrdinarySeal || it.testActiveFirstCut || it.catalogTestRunActivation || it.testRunSealing || it.testInitialAdmission })
         assertEquals(sealing, PersistencePhasePath.entries.filter { it.testRunSealing }.toSet())
         assertFalse(sealing.any { it.readOnly || it.catalogTestRunActivation })
         assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT.readOnly)

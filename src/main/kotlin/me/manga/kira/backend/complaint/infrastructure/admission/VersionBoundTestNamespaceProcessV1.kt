@@ -14,6 +14,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestO
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenialAuthorityPolicyV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveCutoffPublicationV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveInitialCheckpointV1
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -39,6 +40,8 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     val activeFirstCut: VersionBoundTestActiveFirstCutV1?,
     val activeCutoffPublication: VersionBoundTestActiveCutoffPublicationV1?,
     val activeFirstCutSuccessor: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1?,
+    val initialCheckpoint: VersionBoundTestActiveInitialCheckpointV1?,
+    val activeOrdinarySealRecovery: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val canonical: ByteArray
@@ -155,7 +158,10 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         require((activeFirstCut == null) == (activeCutoffPublication == null)) { INVALID_TEST_PROCESS_CONFIGURATION }
         activeFirstCut?.requireRetained(pools, journal, ordinarySeal)
         activeFirstCutSuccessor?.requireRetained(pools, journal, activeFirstCut, ordinarySeal)
+        activeOrdinarySealRecovery?.requireRetained(pools, consumers.journalRouting, activeFirstCut, ordinarySeal)
         activeCutoffPublication?.requireRetained(consumers.journalRouting, publicationLanes)
+        require(initialCheckpoint == null || activeFirstCut != null && activeCutoffPublication != null) { INVALID_TEST_PROCESS_CONFIGURATION }
+        initialCheckpoint?.requireRetained(consumers.journalRouting, pools, ordinarySeal)
         catalogActivation.requireRetained(pools, catalogReadback, journal)
         ordinarySeal?.requireRetained(consumers.journalRouting, publicationLanes)
         ordinarySeal?.requireCatalogReferences(catalogActivation.putAuthority, catalogActivation.signAuthority)
@@ -186,11 +192,13 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             activeFirstCut: VersionBoundTestActiveFirstCutV1? = null,
             activeCutoffPublication: VersionBoundTestActiveCutoffPublicationV1? = null,
             activeFirstCutSuccessor: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1? = null,
+            initialCheckpoint: VersionBoundTestActiveInitialCheckpointV1? = null,
+            activeOrdinarySealRecovery: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveOrdinarySealRecoveryV1? = null,
         ): VersionBoundTestNamespaceProcessV1 {
             requireConnectionFree()
             return VersionBoundTestNamespaceProcessV1(
                 consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
-                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication, activeFirstCutSuccessor,
+                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication, activeFirstCutSuccessor, initialCheckpoint, activeOrdinarySealRecovery,
             )
         }
 

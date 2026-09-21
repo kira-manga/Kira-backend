@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.journal.withJournalPublicationCleanup
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryV1
 import me.manga.kira.backend.security.TestTerminalAttemptV1
 import me.manga.kira.backend.security.TestTerminalEnvelopeV1
 import me.manga.kira.backend.security.aws.AwsTestOrdinarySealStsV1
@@ -64,7 +65,7 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
     internal fun remainingProviderMillis(ceilingMillis: Int): Int { requireReady(false); return original.remainingProviderMillis(ceilingMillis) }
     internal fun requireAcquisition(selected: VersionBoundTestOrdinarySealV1) { requireReady(false); requireOrdinarySeal(acquisition === selected) }
     internal fun requirePublication() { requireReady(true) }
-    internal fun requireOrdinaryPublication() { requirePublication(); requireOrdinarySeal(original is Original.Terminal || original is Original.Active) }
+    internal fun requireOrdinaryPublication() { requirePublication(); requireOrdinarySeal(original is Original.Terminal || original is Original.Active || original is Original.Recovery) }
     internal fun requireTerminalEpochPublication() { requirePublication(); requireOrdinarySeal(original is Original.TerminalEpoch) }
     internal fun canonical() = original.preparedRow()
     internal fun frozen() = original.frozenRow()
@@ -97,6 +98,9 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
     internal fun requireRetired(candidate: TestRunTerminalEpochSealV1) = synchronized(lifecycle) {
         requireOrdinarySeal(original is Original.TerminalEpoch && candidate === original.value && caller === Thread.currentThread() &&
             closed && !cleaning && !active && closeFailure == null && !reserved)
+    }
+    internal fun requireReleasedProof(candidate: TestActiveOrdinarySealRecoveryV1, proof: TestOrdinarySealProofV1) {
+        synchronized(lifecycle) { requireOrdinarySeal(original is Original.Recovery && candidate === original.value && proof === observed && closed && !cleaning && closeFailure == null && !reserved) }
     }
     // Called under the registry bookkeeping lock: fixed identity/atomic values only, no callbacks or clocks.
     internal fun requireLane(selected: JournalPublicationLanesV1) { requireOrdinarySeal(lanes === selected) }
@@ -152,36 +156,44 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
             custody.reserved = true
             return custody
         }
+        internal fun reserve(original: TestActiveOrdinarySealRecoveryV1): TestOrdinarySealCustodyV1 {
+            original.requireReservation()
+            val custody = TestOrdinarySealCustodyV1(Original.Recovery(original))
+            requireOrdinarySeal(original.registration.process.publicationLanes.tryTestOrdinarySeal(custody))
+            custody.reserved = true
+            return custody
+        }
     }
 
     /** Closed dispatch only. ACTIVE never inherits a terminal SQL, reserve, denial or result issuer. */
     private sealed class Original {
         class Terminal(val value: TestRunOrdinarySealV1) : Original()
-        class Active(val value: TestActiveOrdinarySealV1) : Original()
         class TerminalEpoch(val value: TestRunTerminalEpochSealV1) : Original()
-        val registration get() = when (this) { is Terminal -> value.registration; is Active -> value.registration; is TerminalEpoch -> value.registration }
-        val acquisition get() = when (this) { is Terminal -> value.acquisition; is Active -> value.acquisition; is TerminalEpoch -> value.acquisition }
-        val routing get() = when (this) { is Terminal -> value.routing; is Active -> value.routing; is TerminalEpoch -> value.routing }
-        val codecAttempt get() = when (this) { is Terminal -> value.codecAttempt; is Active -> value.codecAttempt; is TerminalEpoch -> value.codecAttempt }
-        val codec get() = when (this) { is Terminal -> value.codec; is Active -> value.codec; is TerminalEpoch -> value.codec }
+        class Active(val value: TestActiveOrdinarySealV1) : Original()
+        class Recovery(val value: TestActiveOrdinarySealRecoveryV1) : Original()
+        val registration get() = when (this) { is Terminal -> value.registration; is TerminalEpoch -> value.registration; is Active -> value.registration; is Recovery -> value.registration }
+        val acquisition get() = when (this) { is Terminal -> value.acquisition; is TerminalEpoch -> value.acquisition; is Active -> value.acquisition; is Recovery -> value.acquisition }
+        val routing get() = when (this) { is Terminal -> value.routing; is TerminalEpoch -> value.routing; is Active -> value.routing; is Recovery -> value.routing }
+        val codecAttempt get() = when (this) { is Terminal -> value.codecAttempt; is TerminalEpoch -> value.codecAttempt; is Active -> value.codecAttempt; is Recovery -> value.codecAttempt }
+        val codec get() = when (this) { is Terminal -> value.codec; is TerminalEpoch -> value.codec; is Active -> value.codec; is Recovery -> value.codec }
         fun requireProvider(custody: TestOrdinarySealCustodyV1, publication: Boolean) = when (this) {
-            is Terminal -> value.requireProvider(custody, publication)
+            is Terminal -> value.requireProvider(custody, publication); is TerminalEpoch -> value.requireProvider(custody, publication)
             is Active -> value.requireProvider(custody, publication)
-            is TerminalEpoch -> value.requireProvider(custody, publication)
+            is Recovery -> value.requireProvider(custody, publication)
         }
-        fun preparedRow() = when (this) { is Terminal -> value.preparedRow(); is Active -> value.preparedRow(); is TerminalEpoch -> value.preparedRow() }
-        fun frozenRow() = when (this) { is Terminal -> value.frozenRow(); is Active -> value.frozenRow(); is TerminalEpoch -> value.frozenRow() }
-        fun content() = when (this) { is Terminal -> value.content(); is Active -> value.content(); is TerminalEpoch -> value.content() }
-        fun requireUnverifiedSeal() = when (this) { is Terminal -> value.requireUnverifiedSeal(); is Active -> value.requireUnverifiedSeal(); is TerminalEpoch -> value.requireUnverifiedSeal() }
+        fun preparedRow() = when (this) { is Terminal -> value.preparedRow(); is TerminalEpoch -> value.preparedRow(); is Active -> value.preparedRow(); is Recovery -> value.preparedRow() }
+        fun frozenRow() = when (this) { is Terminal -> value.frozenRow(); is TerminalEpoch -> value.frozenRow(); is Active -> value.frozenRow(); is Recovery -> value.frozenRow() }
+        fun content() = when (this) { is Terminal -> value.content(); is TerminalEpoch -> value.content(); is Active -> value.content(); is Recovery -> value.content() }
+        fun requireUnverifiedSeal() = when (this) { is Terminal -> value.requireUnverifiedSeal(); is TerminalEpoch -> value.requireUnverifiedSeal(); is Active -> value.requireUnverifiedSeal(); is Recovery -> value.requireUnverifiedSeal() }
         fun requireListedSealVersion(version: String?) = when (this) {
-            is Terminal -> value.requireListedSealVersion(version)
+            is Terminal -> value.requireListedSealVersion(version); is TerminalEpoch -> value.requireListedSealVersion(version)
             is Active -> value.requireListedSealVersion(version)
-            is TerminalEpoch -> value.requireListedSealVersion(version)
+            is Recovery -> value.requireListedSealVersion(version)
         }
         fun remainingProviderMillis(ceilingMillis: Int) = when (this) {
-            is Terminal -> ceilingMillis
-            is TerminalEpoch -> ceilingMillis
+            is Terminal -> ceilingMillis; is TerminalEpoch -> ceilingMillis
             is Active -> value.remainingNativeContinuationMillis(ceilingMillis)
+            is Recovery -> value.remainingNativeContinuationMillis(ceilingMillis)
         }
     }
 }

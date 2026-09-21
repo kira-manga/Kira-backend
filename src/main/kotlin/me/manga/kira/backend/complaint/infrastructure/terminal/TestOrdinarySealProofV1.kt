@@ -19,6 +19,7 @@ internal class TestOrdinarySealProofV1 private constructor(
 ) {
     internal fun requireOriginal(original: TestRunOrdinarySealV1) { custody.requireReleasedProof(original, this) }
     internal fun requireOriginal(original: TestActiveOrdinarySealV1) { custody.requireReleasedProof(original, this) }
+    internal fun requireOriginal(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealRecoveryV1) { custody.requireReleasedProof(original, this) }
 
     /** Stored comparison bytes, not a capability. Exact replay preserves its first observed timestamp. */
     internal fun canonicalBytes(row: TestTerminalDurableRowV1, at: Instant = verifiedAt): ByteArray {

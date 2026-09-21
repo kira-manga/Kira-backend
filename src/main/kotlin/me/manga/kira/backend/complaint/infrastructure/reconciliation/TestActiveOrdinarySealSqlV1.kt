@@ -163,8 +163,10 @@ internal object TestActiveOrdinarySealSqlV1 {
                 AND i.routing_key_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' AND i.preparing_fencing_token > 0
                 AND complaint_digest_valid(i.seal_encoding_hash) AND i.capture_owner IS NOT NULL
                 AND complaint_bytes_match(i.canonical_bytes, i.canonical_hash, 65536)
+                AND right(i.object_key, 5) = '.kjev'
+                AND complaint_event_id_valid(left(right(i.object_key, 48), 43))
                 AND i.object_key = 'complaints/journal/v1/' || i.writer_generation::text || '/test/' || i.data_scope_id::text
-                    || '/seal-terminal/' || i.epoch_end::text || '/' || i.routing_key_id || '/epoch-seal/' || i.object_id || '.kjev'
+                    || '/seal-terminal/' || i.epoch_end::text || '/' || i.routing_key_id || '/epoch-seal/' || right(i.object_key, 48)
                 AND CASE WHEN complaint_test_terminal_instant_valid(i.created_at) AND complaint_test_terminal_instant_valid(i.retention_floor)
                     THEN i.retention_floor AT TIME ZONE 'UTC' >= (i.created_at AT TIME ZONE 'UTC') + interval '10 years'
                         AND i.created_at >= i.captured_at ELSE false END

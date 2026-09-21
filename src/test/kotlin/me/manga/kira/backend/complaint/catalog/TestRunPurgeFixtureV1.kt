@@ -48,6 +48,51 @@ import java.time.temporal.ChronoUnit
 internal fun withUnusedPurgeRun(tls: VersionBoundPersistenceConnectedFixture, shortHorizon: Boolean = false,
     checkUnstartedManifest: Boolean = false,
     action: (TestRunPurgeFixtureV1, TestRunInstallationManifestPublicationV1, TestRunPurgeSqlProbeV1) -> Unit) {
+    withUnusedSealedPurgeRun(tls, shortHorizon) { f ->
+        val http = f.sealHttp
+        f.enableUnexpectedDrainDiagnostic()
+        val drain = try {
+            f.beginDrain().also { original ->
+                assertEquals(TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED,
+                    original.drain(f.approval(original), f.rawEvidence, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS))
+            }
+        } catch (problem: Throwable) {
+            runCatching { f.reportUnexpectedDrainFailure() }
+            throw problem // Preserve the exact failure and existing enclosing cleanup.
+        }
+        f.assertReleased()
+        assertEquals(listOf("LIST", "LIST"), f.inventoryRequests.map { it.kind })
+        assertTrue(f.inventoryKeys.requests.isEmpty(), "No dummy empty event is constructed or decrypted.")
+        assertEquals(0L, drain.manifestCut().denial.firstInventory.versionCount)
+        val preparation = TestRunInstallationManifestV1.begin(drain)
+        assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, preparation.prepare())
+        val manifest = preparation.beginPublication()
+        if (checkUnstartedManifest) {
+            val before = f.p.image(); val providers = http.order.toList()
+            assertThrows<RuntimeException> { manifest.beginPurgePublication() }
+            assertEquals(before, f.p.image()); assertEquals(providers, http.order)
+            assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM complaint_test_terminal_intents WHERE data_scope_id = ? AND object_kind = 'TEST_RUN_PURGE'", Long::class.java, f.scope))
+        }
+        assertEquals(TestRunInstallationManifestPublicationResultV1.ALL_CHUNKS_AUTHENTICATED_AND_VERIFIED, manifest.publish())
+        assertEquals(0, manifest.capturedSource().count)
+        assertEquals(0, manifest.authenticatedSummary().chunkCount)
+        assertTrue(http.manifestObjects.isEmpty(), "Zero chunks means no fake empty chunk or manifest provider call.")
+        val beforeInventory = f.inventoryRequests.size
+        TestRunPurgeSqlProbeV1(f).use { probe ->
+            val boundary = http.boundary; val nativeBoundary = http.nativeBoundary
+            http.boundary = { boundary(); probe.assertReleased(requireCommitted = false) }
+            http.nativeBoundary = { nativeBoundary(); probe.assertReleased(requireCommitted = false) }
+            try { action(f, manifest, probe) }
+            finally { http.boundary = boundary; http.nativeBoundary = nativeBoundary }
+        }
+        assertEquals(beforeInventory, f.inventoryRequests.size, "Purge current SQL cannot reuse the retired ordinary native reader.")
+        f.assertFinishedPurge()
+    }
+}
+
+/** Same genuine setup stopped before drain, for exact control-predicate comparisons, not authority. */
+internal fun withUnusedSealedPurgeRun(tls: VersionBoundPersistenceConnectedFixture, shortHorizon: Boolean = false,
+    action: (TestRunPurgeFixtureV1) -> Unit) {
     val inputs = TestOrdinaryDrainFixtureInputsV1(scanMillis = if (shortHorizon) 30_000 else null)
     val horizon = if (shortHorizon) Instant.now().plusSeconds(86_400).truncatedTo(ChronoUnit.SECONDS) else Instant.parse("2038-01-01T00:00:00Z")
     TestOrdinarySealHttpFixtureV1(horizon = horizon, manifestPublication = true, purgePublication = true).use { http ->
@@ -58,43 +103,7 @@ internal fun withUnusedPurgeRun(tls: VersionBoundPersistenceConnectedFixture, sh
                 TestRunPurgeFixtureV1(p, runtime, registration, audit, http, inputs).use { f ->
                     f.assertUnused()
                     assertEquals(TestRunSealingResultV1.SEALED_AND_AUDITED, TestRunSealingV1.begin(registration).seal())
-                    f.enableUnexpectedDrainDiagnostic()
-                    val drain = try {
-                        f.beginDrain().also { original ->
-                            assertEquals(TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED,
-                                original.drain(f.approval(original), f.rawEvidence, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS))
-                        }
-                    } catch (problem: Throwable) {
-                        runCatching { f.reportUnexpectedDrainFailure() }
-                        throw problem // Preserve the exact failure and existing enclosing cleanup.
-                    }
-                    f.assertReleased()
-                    assertEquals(listOf("LIST", "LIST"), f.inventoryRequests.map { it.kind })
-                    assertTrue(f.inventoryKeys.requests.isEmpty(), "No dummy empty event is constructed or decrypted.")
-                    assertEquals(0L, drain.manifestCut().denial.firstInventory.versionCount)
-                    val preparation = TestRunInstallationManifestV1.begin(drain)
-                    assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, preparation.prepare())
-                    val manifest = preparation.beginPublication()
-                    if (checkUnstartedManifest) {
-                        val before = p.image(); val providers = http.order.toList()
-                        assertThrows<RuntimeException> { manifest.beginPurgePublication() }
-                        assertEquals(before, p.image()); assertEquals(providers, http.order)
-                        assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM complaint_test_terminal_intents WHERE data_scope_id = ? AND object_kind = 'TEST_RUN_PURGE'", Long::class.java, f.scope))
-                    }
-                    assertEquals(TestRunInstallationManifestPublicationResultV1.ALL_CHUNKS_AUTHENTICATED_AND_VERIFIED, manifest.publish())
-                    assertEquals(0, manifest.capturedSource().count)
-                    assertEquals(0, manifest.authenticatedSummary().chunkCount)
-                    assertTrue(http.manifestObjects.isEmpty(), "Zero chunks means no fake empty chunk or manifest provider call.")
-                    val beforeInventory = f.inventoryRequests.size
-                    TestRunPurgeSqlProbeV1(f).use { probe ->
-                        val boundary = http.boundary; val nativeBoundary = http.nativeBoundary
-                        http.boundary = { boundary(); probe.assertReleased(requireCommitted = false) }
-                        http.nativeBoundary = { nativeBoundary(); probe.assertReleased(requireCommitted = false) }
-                        try { action(f, manifest, probe) }
-                        finally { http.boundary = boundary; http.nativeBoundary = nativeBoundary }
-                    }
-                    assertEquals(beforeInventory, f.inventoryRequests.size, "Purge current SQL cannot reuse the retired ordinary native reader.")
-                    f.assertFinishedPurge()
+                    action(f)
                 }
             }
         }
@@ -139,6 +148,10 @@ internal class TestRunPurgeFixtureV1(
 
     fun assertUnused() {
         assertTrue(observer.queryForObject("SELECT state = 'ACTIVE' AND enrolled_count = 0 FROM complaint_test_runs WHERE data_scope_id = ?", Boolean::class.java, scope) == true)
+        assertTrue(observer.queryForObject("SELECT maintenance_closed AND creation_closed AND scan_requested AND publication_epoch = 1 " +
+            "AND rotation_sequence = 0 AND rotation_id IS NULL AND rotation_state IS NULL AND rotation_epoch_before IS NULL " +
+            "AND rotation_epoch_after IS NULL FROM complaint_journal_control WHERE data_scope_id = ?", Boolean::class.java, scope) == true,
+            "The real fresh PROJECT request is retained, never cleared to pass ordinary drain.")
         assertNoPreviousHistory()
         for (table in listOf("complaint_installation_ids", "app_installations", "complaint_journal_publications", "complaint_recovery_capacity_reservations",
             "complaint_deletion_journal_applied", "complaint_test_terminal_intents", "complaint_journal_scan_runs", "complaint_journal_scan_entries"))

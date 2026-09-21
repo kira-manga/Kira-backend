@@ -105,11 +105,16 @@ internal object TestActiveFirstCutSuccessorCasesV1 {
             assertThrows<RuntimeException> { recovered.claimSeal(c.registration, c.assembly) }
         }
 
-    fun absentSlotAndLiveForeignOrOverflowLeaseNeverMintAuthority(tls: VersionBoundPersistenceConnectedFixture, cut: TestFirstCutSuccessorLeaseRefusalV1?) =
-        withTestActiveFirstCutSuccessor(tls) { f ->
+    fun absentSlotAndLiveForeignOrOverflowLeaseNeverMintAuthority(tls: VersionBoundPersistenceConnectedFixture, cut: TestFirstCutSuccessorLeaseRefusalV1?) {
+        var fixture: TestActiveFirstCutSuccessorFixtureV1? = null
+        var point = "FIXTURE_SETUP"
+        try { withTestActiveFirstCutSuccessor(tls) { f ->
+            fixture = f
             val c = f.first
             if (cut != null) {
+                point = "ORIGINAL_CAPTURE"
                 c.capture()
+                point = "NEGATIVE_LEASE_UPDATE"
                 when (cut) {
                     TestFirstCutSuccessorLeaseRefusalV1.CURRENT_FOREIGN -> assertEquals(1, c.initial.foreignUpdate(
                         "UPDATE complaint_journal_control SET lease_owner = ?, lease_token = lease_token + 1, lease_expires_at = clock_timestamp() + interval '30 seconds' WHERE data_scope_id = ?",
@@ -118,16 +123,24 @@ internal object TestActiveFirstCutSuccessorCasesV1 {
                         "UPDATE complaint_journal_control SET lease_token = 9223372036854775807 WHERE data_scope_id = ?", c.scope))
                 }
             }
+            point = "BEFORE_REFUSAL_SNAPSHOT"
             val state = c.controlImage(); val paid = c.paidImage(); val counters = c.counters(); val global = c.globalImage()
             c.probe.resetObservations()
+            point = "SUCCESSOR_CONSTRUCTION"
             val original = f.resume()
+            point = "REFUSAL_ASSERTIONS"
             assertThrows<RuntimeException> { f.recover(original) }
             assertEquals(state, c.controlImage()); assertEquals(paid, c.paidImage()); assertEquals(counters, c.counters()); assertEquals(global, c.globalImage())
             assertTrue(f.nativeSessions.isEmpty())
             assertThrows<RuntimeException> { TestActiveFirstCutSuccessorV1.Recovered.issue(original) }
             assertThrows<RuntimeException> { original.recover(credentials, credentials) }
             assertNoWritesBeyondLease(c)
+            point = "FIXTURE_CLEANUP"
+        } } catch (problem: RuntimeException) {
+            TestActiveFirstCutSuccessorDiagnosticsV1.report("LEASE_REFUSAL_${cut?.name ?: "MISSING_SLOT"}_$point", fixture, problem)
+            throw problem
         }
+    }
 
     fun rawAndFullCurrentAccountingDriftRefuseBeforeLease(tls: VersionBoundPersistenceConnectedFixture, cut: TestFirstCutSuccessorDriftV1) =
         withTestActiveFirstCutSuccessor(tls) { f ->
@@ -206,7 +219,7 @@ internal object TestActiveFirstCutSuccessorCasesV1 {
                     assertEquals(2, jdbc.update("INSERT INTO kira_successor_release_refusal VALUES (1),(1)"))
                 } else TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
                     override fun beforeCommit(readOnly: Boolean) {
-                        if (cut === TestFirstCutRequestCutV1.BEFORE_COMMIT) throw IOException("Synthetic successor RELEASE beforeCommit failure.")
+                        if (cut === TestFirstCutRequestCutV1.BEFORE_COMMIT) throw IllegalStateException("Synthetic successor RELEASE beforeCommit failure.")
                     }
                     override fun afterCommit() {
                         if (cut === TestFirstCutRequestCutV1.UNRESOLVED_RELEASE) { TransactionSynchronizationManager.bindResource(key, sentinel); bound = true }
@@ -272,8 +285,11 @@ internal object TestActiveFirstCutSuccessorCasesV1 {
                     } else c.native.offsetNanos += (original.budget.remainingMillis(10_000) + 1_000) * 1_000_000 // Synthetic late clock return only.
                 }
             }
-            try { assertThrows<RuntimeException> { f.recover(original) } } finally { f.beforeNativeSample = {}; c.native.offsetNanos = 0 }
-            assertTrue(installed); f.awaitNativeReclaimed(); assertEquals(counters, c.counters())
+            val refusal = try { assertThrows<RuntimeException> { f.recover(original) } }
+            finally { f.beforeNativeSample = {}; c.native.offsetNanos = 0 }
+            assertTrue(installed, "Native injection ${cut.name} was not reached. " +
+                TestActiveFirstCutSuccessorDiagnosticsV1.snapshot(f, refusal, original))
+            f.awaitNativeReclaimed(); assertEquals(counters, c.counters())
             val committed = cut === TestFirstCutNativeCutV1.KNOWN_COMMIT_LATE_RETURN
             assertEquals(if (committed) PersistenceDatabaseOutcome.COMMITTED else PersistenceDatabaseOutcome.UNKNOWN, f.nativeSessions.single().failure().databaseOutcome)
             assertEquals(if (committed) "CAPTURED" else "REQUESTED", c.control()["rotation_state"])

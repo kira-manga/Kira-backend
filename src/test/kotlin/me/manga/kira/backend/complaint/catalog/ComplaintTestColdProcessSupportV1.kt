@@ -17,6 +17,7 @@ internal enum class ColdTestProcessEntryV1(val type: Class<*>) {
     SEALED(ComplaintTestColdRecoveryProcessV1::class.java),
     ACTIVE(ComplaintTestColdActiveRegistrationProcessV1::class.java),
     ACTIVE_FIRST_CUT_RESERVED(TestActiveFirstCutColdSuccessorProcessV1::class.java),
+    ACTIVE_EMPTY_SEAL_RECOVERY(TestActiveSealRecoveryColdProcessV1::class.java),
 }
 
 /** Exact existing two-JVM launch/classpath/retirement mechanics, shared without changing their bounds. */

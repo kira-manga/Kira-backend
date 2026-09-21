@@ -51,6 +51,8 @@ internal object TestOrdinaryDrainSqlV1 {
         c.checkpoint_restore_identity, c.checkpoint_schema, extract(epoch FROM c.checkpoint_started_at), extract(epoch FROM c.checkpoint_completed_at),
         c.checkpoint_object_count, c.checkpoint_byte_count, c.checkpoint_result, c.checkpoint_bytes, c.checkpoint_hash
     """.trimIndent()
+    // Fresh closed PROJECT retains its scan request at epoch 1 before any rotation. The unrotated
+    // exception requires wholly empty history; the captured rotation checks below stay unchanged.
     val control = """
         SELECT c.publication_epoch, c.lease_token, c.rotation_sequence, c.rotation_id, c.rotation_epoch_before,
             c.rotation_capture_token, c.rotation_captured_at, c.scan_requested, c.seal_epoch,
@@ -84,7 +86,9 @@ internal object TestOrdinaryDrainSqlV1 {
                         AND isfinite(c.checkpoint_started_at) AND isfinite(c.checkpoint_completed_at)
                         AND c.checkpoint_started_at <= c.checkpoint_completed_at AND c.checkpoint_completed_at <= clock_timestamp()))
                 AND ((c.rotation_sequence = 0 AND c.rotation_id IS NULL AND c.rotation_state IS NULL
-                        AND c.rotation_epoch_before IS NULL AND c.rotation_epoch_after IS NULL AND NOT c.scan_requested
+                        AND c.rotation_epoch_before IS NULL AND c.rotation_epoch_after IS NULL
+                        AND (NOT c.scan_requested OR (c.scan_requested AND c.publication_epoch = 1
+                            AND c.seal_state IS NULL AND c.checkpoint_generation IS NULL))
                         AND c.rotation_implementation_schema IS NULL AND c.rotation_desired_generation IS NULL
                         AND c.rotation_desired_configuration_hash IS NULL AND c.rotation_database_identity IS NULL AND c.rotation_restore_identity IS NULL
                         AND c.rotation_event_writer_generation IS NULL AND c.rotation_accepted_catalog_generation IS NULL AND c.rotation_accepted_catalog_hash IS NULL
