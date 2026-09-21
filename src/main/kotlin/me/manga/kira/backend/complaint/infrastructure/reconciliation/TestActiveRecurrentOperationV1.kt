@@ -509,10 +509,7 @@ internal class TestActiveRecurrentOperationV1 private constructor(
             }
             value = readCurrent()
             val now = checkNotNull(value)
-            requireRecurrent(now.sequence == sources.size.toLong())
-            now.requireIntent(sources.last())
-            requireRecurrent(sources.all { it.requestedAt <= now.sampledAt && it.capturedAt?.let { at -> at <= now.sampledAt } != false &&
-                it.payload?.binding?.createdAt?.let { at -> at <= now.sampledAt } != false && it.payload?.frozenAt?.let { at -> at <= now.sampledAt } != false })
+            now.requireIntents(sources)
             archived = checkNotNull(jdbc.query(TestActiveRecurrentSqlV1.history, ResultSetExtractor { rows ->
                 TestActiveRecurrentHistoryV1.read(rows, sources, now.sampledAt, original.acquisition)
             }, original.scope))

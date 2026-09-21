@@ -111,6 +111,14 @@ internal class TestActiveRecurrentCurrentV1 private constructor(row: ResultSet) 
     fun requireSameRequest(other: TestActiveRecurrentCurrentV1) = requireRecurrent(id == other.id && sequence == other.sequence && epochBefore == other.epochBefore &&
         requestOwner == other.requestOwner && requestToken == other.requestToken && requestedAt == other.requestedAt)
 
+    /** Passive exact source/time comparisons shared with the registered ordinary reader. */
+    fun requireIntents(sources: List<TestActiveRecurrentIntentV1>) {
+        requireRecurrent(sequence == sources.size.toLong())
+        requireIntent(sources.last())
+        requireRecurrent(sources.all { it.requestedAt <= sampledAt && it.capturedAt?.let { at -> at <= sampledAt } != false &&
+            it.payload?.binding?.createdAt?.let { at -> at <= sampledAt } != false && it.payload?.frozenAt?.let { at -> at <= sampledAt } != false })
+    }
+
     fun requireIntent(intent: TestActiveRecurrentIntentV1) {
         requireRecurrent(intent.token == id && intent.ordinal.toLong() == sequence && intent.epochEnd == epochBefore && intent.requestOwner == requestOwner &&
             intent.requestToken == requestToken && intent.requestedAt == requestedAt && intent.captureOwner == captureOwner && intent.captureToken == captureToken &&

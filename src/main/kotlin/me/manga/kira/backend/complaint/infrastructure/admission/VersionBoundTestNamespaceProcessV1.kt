@@ -198,7 +198,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         initialCheckpoint?.requireRetained(consumers.journalRouting, pools, ordinarySeal)
         require(activeRecurrent == null || initialCheckpoint != null && activeFirstCut != null && activeCutoffPublication != null) { INVALID_TEST_PROCESS_CONFIGURATION }
         activeRecurrent?.requireRetained(consumers.journalRouting, pools, ordinarySeal)
-        initialCheckpointCreate?.requireRetained(pools, consumers.journalRouting, initialCheckpoint)
+        initialCheckpointCreate?.requireRetained(pools, consumers.journalRouting, initialCheckpoint, activeRecurrent)
         initialCheckpointDeletion?.requireRetained(pools, consumers.journalRouting, initialCheckpoint, activeCutoffPublication)
         require(activeOwnerDeleteQueue == null || initialCheckpoint != null && activeFirstCut != null) { INVALID_TEST_PROCESS_CONFIGURATION }
         activeOwnerDeleteQueue?.requireRetained(consumers.journalRouting, pools)
