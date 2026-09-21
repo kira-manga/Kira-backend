@@ -1,0 +1,94 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 46,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun material native inventory, final commit, prepared-only state, exclusive capture or raw catalog boundary. Core family, commit and missing-bookkeeping prerequisites PASS; D7 Catalog fixture is independent, not invoked by this recurrent selection.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuinePreparedCutoffPublicationIsNativelyVerifiedButCannotStandInForApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "genuinePreparedCutoffPublicationIsNativelyVerifiedButCannotStandInForApply()"
+      ]
+    },
+    {
+      "annotation_line": 94,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun material native inventory, final commit, prepared-only state, exclusive capture or raw catalog boundary. Core family, commit and missing-bookkeeping prerequisites PASS; D7 Catalog fixture is independent, not invoked by this recurrent selection.",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentExclusiveEpochWaitOwnsNoPooledHolderAndCaptureUsesFreshDatabaseTime",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "recurrentExclusiveEpochWaitOwnsNoPooledHolderAndCaptureUsesFreshDatabaseTime()"
+      ]
+    },
+    {
+      "annotation_line": 97,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun material native inventory, final commit, prepared-only state, exclusive capture or raw catalog boundary. Core family, commit and missing-bookkeeping prerequisites PASS; D7 Catalog fixture is independent, not invoked by this recurrent selection.",
+      "expected_invocations_from_annotation": 1,
+      "method": "missingDriftingExtraDuplicateDeletedForeignAndRelabelledHigherVersionsCannotComplete",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "missingDriftingExtraDuplicateDeletedForeignAndRelabelledHigherVersionsCannotComplete()"
+      ]
+    },
+    {
+      "annotation_line": 106,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun material native inventory, final commit, prepared-only state, exclusive capture or raw catalog boundary. Core family, commit and missing-bookkeeping prerequisites PASS; D7 Catalog fixture is independent, not invoked by this recurrent selection.",
+      "expected_invocations_from_annotation": 1,
+      "method": "historicalSuccessCannotReplaceTheActualRawCatalogReadback",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "historicalSuccessCannotReplaceTheActualRawCatalogReadback()"
+      ]
+    },
+    {
+      "annotation_line": 128,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Previously unrun material native inventory, final commit, prepared-only state, exclusive capture or raw catalog boundary. Core family, commit and missing-bookkeeping prerequisites PASS; D7 Catalog fixture is independent, not invoked by this recurrent selection.",
+      "expected_invocations_from_annotation": 1,
+      "method": "beforeAfterAndUnknownFinalCommitNeverRehabilitateTheOriginal",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "beforeAfterAndUnknownFinalCommitNeverRehabilitateTheOriginal()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 5,
+  "expected_total": 5,
+  "selection_basis": {
+    "cohorts": {
+      "Previously unrun material native inventory, final commit, prepared-only state, exclusive capture or raw catalog boundary. Core family, commit and missing-bookkeeping prerequisites PASS; D7 Catalog fixture is independent, not invoked by this recurrent selection.": 5
+    },
+    "previous_run": "35626472788",
+    "scope": "Four-family APPLY commit and missing-bookkeeping methods PASS29/30. Previously unrun recurrent listing9/final-COMMIT3/PREPARED/exclusive-wait/raw-catalog cases;5methods15fixtures. Independent from failing genuineA D7 and active31; no passing method replay."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 5
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.missingDriftingExtraDuplicateDeletedForeignAndRelabelledHigherVersionsCannotComplete",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.beforeAfterAndUnknownFinalCommitNeverRehabilitateTheOriginal",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuinePreparedCutoffPublicationIsNativelyVerifiedButCannotStandInForApply",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentExclusiveEpochWaitOwnsNoPooledHolderAndCaptureUsesFreshDatabaseTime",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.historicalSuccessCannotReplaceTheActualRawCatalogReadback"
+  ]
+}
