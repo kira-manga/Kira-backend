@@ -47,6 +47,7 @@ import java.util.concurrent.locks.LockSupport
 internal object TestRegisteredInitialCheckpointDeletionRaceCasesV1 {
     fun receiptClaimLoser(f: TestRegisteredInitialCheckpointDeletionFixtureV1, revokeActor: Boolean = false) {
         val before = f.counters()
+        val providers = nativeBaseline(f); val currentSql = f.currentCheckpointSql()
         val entering = CountDownLatch(1); val pid = AtomicInteger()
         val oldBefore = f.deletion.before
         f.raw { locker -> f.raw { observer ->
@@ -69,7 +70,7 @@ internal object TestRegisteredInitialCheckpointDeletionRaceCasesV1 {
                 if (!revokeActor) assertEquals(2, f.foreignUpdate("UPDATE complaint_journal_control SET creation_closed = true, maintenance_closed = true " +
                     "WHERE data_scope_id IN (?, ?)", UUID(0, 0), f.scope))
                 val authorized = f.image(); val paid = f.counters(); val audits = f.audits()
-                val freshChecks = f.deletion.calls.count { it.sql == TestRegisteredInitialCheckpointDeletionSqlV1.current }
+                val freshChecks = f.deletion.calls.count { it.sql == currentSql }
                 locker.autoCommit = false
                 try {
                     lockOne(locker, "SELECT actor_id FROM complaint_idempotency_receipts WHERE actor_id = ? AND idempotency_key = ? FOR UPDATE", f.actor.id, f.key)
@@ -89,18 +90,19 @@ internal object TestRegisteredInitialCheckpointDeletionRaceCasesV1 {
                         try { assertArrayEquals(expected, actual) } finally { expected.fill(0); actual.fill(0) }
                     }
                 } finally { locker.rollback(); readBeforeWinner.release(); f.deletion.before = oldBefore }
-                assertEquals(freshChecks, f.deletion.calls.count { it.sql == TestRegisteredInitialCheckpointDeletionSqlV1.current },
+                assertEquals(freshChecks, f.deletion.calls.count { it.sql == currentSql },
                     "A real receipt loser does not become a new checkpoint-gated claim.")
                 assertEquals(authorized.filterKeys { !revokeActor || it != "app_installations" }, f.image().filterKeys { !revokeActor || it != "app_installations" })
                 assertEquals(paid, f.counters()); assertEquals(audits, f.audits()); f.assertSqlReleased()
                 if (!revokeActor) f.assertReload(verified = false)
-                assertEquals(listOf(0, 0, 0, 0), f.native.counts())
+                assertEquals(providers, f.native.counts())
             }
         } }
     }
 
     fun credentialWait(f: TestRegisteredInitialCheckpointDeletionFixtureV1) {
         val rows = f.image(); val counters = f.counters(); val audits = f.audits()
+        val providers = nativeBaseline(f)
         waitAt(f, "SELECT id FROM app_installations WHERE id = ? FOR UPDATE", arrayOf(f.actor.id),
             { it.sql == OwnerDeletePersistenceSql.LOCK_CREDENTIAL },
             { locker -> updateOne(locker, "UPDATE app_installations SET credential_version = credential_version + 1 WHERE id = ?", f.actor.id) },
@@ -109,7 +111,7 @@ internal object TestRegisteredInitialCheckpointDeletionRaceCasesV1 {
         }
         assertEquals(rows.filterKeys { it != "app_installations" }, f.image().filterKeys { it != "app_installations" })
         assertEquals(counters, f.counters()); assertEquals(audits, f.audits()); f.assertReleased()
-        assertEquals(listOf(0, 0, 0, 0), f.native.counts())
+        assertEquals(providers, f.native.counts())
     }
 
     fun counterAndRunWaits(f: TestRegisteredInitialCheckpointDeletionFixtureV1) {
@@ -179,6 +181,7 @@ internal object TestRegisteredInitialCheckpointDeletionRaceCasesV1 {
         assertEquals(30_000, limits.checkpointMaxAgeMillis)
         val expires = (f.checkpoint.control().getValue("checkpoint_completed_at") as Timestamp).toInstant().plusMillis(limits.checkpointMaxAgeMillis.toLong())
         val rows = f.image(); val counters = f.counters(); val audits = f.audits()
+        val providers = nativeBaseline(f); val calls = f.deletion.calls.size
         val reached = AtomicBoolean(); val oldAfter = f.deletion.after
         f.raw { observer ->
             requireConnectionFree()
@@ -190,9 +193,16 @@ internal object TestRegisteredInitialCheckpointDeletionRaceCasesV1 {
             } }
             try { phaseRefused { ownerAttempt(f) } } finally { f.deletion.after = oldAfter }
         }
-        assertTrue(reached.get()); assertFalse(f.deletion.calls.any { it.sql == OwnerDeletePersistenceSql.INSERT_PUBLICATION })
+        assertTrue(reached.get())
+        assertFalse((if (f.expectedEpoch == 2L) f.deletion.calls else f.deletion.calls.drop(calls))
+            .any { it.sql == OwnerDeletePersistenceSql.INSERT_PUBLICATION })
         assertEquals(rows, f.image()); assertEquals(counters, f.counters()); assertEquals(audits, f.audits()); f.assertReleased()
-        phaseRefused { ownerAttempt(f) }; assertEquals(counters, f.counters()); assertEquals(listOf(0, 0, 0, 0), f.native.counts())
+        phaseRefused { ownerAttempt(f) }; assertEquals(counters, f.counters()); assertEquals(providers, f.native.counts())
+    }
+
+    /** Retain the literal zero-provider oracle for old first-primary fixtures. */
+    private fun nativeBaseline(f: TestRegisteredInitialCheckpointDeletionFixtureV1): List<Int> = f.native.counts().also {
+        if (f.expectedEpoch == 2L) assertEquals(listOf(0, 0, 0, 0), it)
     }
 
     fun nativeCloseCustody(f: TestRegisteredInitialCheckpointDeletionFixtureV1) {

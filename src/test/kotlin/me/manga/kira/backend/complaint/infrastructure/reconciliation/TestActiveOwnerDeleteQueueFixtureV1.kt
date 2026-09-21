@@ -76,6 +76,7 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
     val beforeAuthorization: Map<ComplaintCapacityCounter, DeleteAllCounter>,
     val afterAuthorization: Map<ComplaintCapacityCounter, DeleteAllCounter>,
     val verifiedPublication: Boolean,
+    val expectedPublicationEpoch: Long = 2,
 ) : AutoCloseable {
     val initial = precursor.initial
     val family = precursor.family
@@ -160,6 +161,17 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
         assertEquals(expected.size, expected.toSet().size, "Expected E identities cannot repeat.")
         expectedAppliedObjects = expected.toSet()
     }
+    /** Actual producer records may belong to different epochs/families; no current-event relabeling. */
+    fun expectAppliedRecords(vararg originals: TestRegisteredInitialDeletionNativeRecordV1) {
+        assertReleased()
+        val expected = originals.map { original ->
+            assertTrue(original.event.belongsTo(process.consumers.journalRouting))
+            assertEquals(scope, original.event.tuple.scope.id)
+            appliedObject(original.stored, original)
+        }
+        assertEquals(expected.size, expected.toSet().size, "Expected actual producer identities cannot repeat.")
+        expectedAppliedObjects = expected.toSet()
+    }
     fun assertExpectedAppliedObjects() {
         val actual = observer.query("SELECT object_key, object_version, event_id, encode(ciphertext_hash, 'hex') AS ciphertext_hash, " +
             "writer_generation, journal_epoch, event_kind, target_count, data_scope_id, test_only " +
@@ -170,10 +182,11 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
         assertEquals(expectedAppliedObjects.size, actual.size, "No omitted or additional scoped E row.")
         assertEquals(expectedAppliedObjects, actual.toSet(), "Every exact object/version/hash and family tuple must match.")
     }
-    private fun appliedObject(value: JournalPublisherObject) = ExpectedAppliedObject(value.key, value.version,
+    private fun appliedObject(value: JournalPublisherObject) = appliedObject(value, record)
+    private fun appliedObject(value: JournalPublisherObject, original: TestRegisteredInitialDeletionNativeRecordV1) = ExpectedAppliedObject(value.key, value.version,
         value.metadata.getValue("kira-journal-event-id"), Sha256.hex(value.bytes),
-        UUID.fromString(process.consumers.journalConfiguration.declaration().writer.generationId), record.event.comparison.epoch,
-        family.name, record.event.complaintIds().size, scope, true)
+        UUID.fromString(process.consumers.journalConfiguration.declaration().writer.generationId), original.event.comparison.epoch,
+        original.event.comparison.eventKind.name, original.event.complaintIds().size, scope, true)
     fun image(): Map<String, List<String>> = TABLES.associateWith { table -> observer.queryForList(
         "SELECT jsonb_build_array(to_jsonb(r), r.xmin::text)::text FROM $table r WHERE data_scope_id = ? ORDER BY to_jsonb(r)::text COLLATE \"C\"",
         String::class.java, scope) } + ("audit" to observer.queryForList(
@@ -294,7 +307,7 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
     }
     fun assertNoAuthority() {
         assertEquals(authoritiesBeforeQueue, authorityImage(), "Queue outcomes do not mint or rewrite the genuine checkpoint/rotation/run history.")
-        assertEquals(2L, control()["publication_epoch"])
+        assertEquals(expectedPublicationEpoch, control()["publication_epoch"])
         assertEquals("CAPTURED", control()["rotation_state"])
         listOf("complaint_journal_scan_runs", "complaint_journal_scan_entries", "complaint_test_terminal_intents").forEach {
             assertEquals(countsBeforeQueue.getValue(it), count(it), it)

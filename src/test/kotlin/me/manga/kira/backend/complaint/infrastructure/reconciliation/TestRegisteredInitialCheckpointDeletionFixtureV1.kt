@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
+import kotlinx.serialization.json.jsonPrimitive
 import me.manga.kira.backend.common.infrastructure.persistence.DeleteAllCounter
 import me.manga.kira.backend.common.infrastructure.persistence.GuardedJdbcTransactionManager
 import me.manga.kira.backend.common.infrastructure.persistence.NeverOwnerDeleteAllDataKeys
@@ -145,6 +146,8 @@ internal class TestRegisteredInitialCheckpointDeletionFixtureV1(
     val reports: List<RegisteredInitialCreateAttemptV1>,
     val native: TestRegisteredInitialCheckpointDeletionRawFixtureV1,
     val family: ComplaintJournalDeletionKindV1,
+    private val retained: TestRegisteredInitialCheckpointDeletionFixtureV1? = null,
+    val expectedEpoch: Long = 2,
 ) : AutoCloseable {
     val first = checkpoint.sealer.first
     val initial = first.initial
@@ -158,35 +161,35 @@ internal class TestRegisteredInitialCheckpointDeletionFixtureV1(
     val actor = creators.first().actor
     val audit = exchange.service
     val ingress = process.consumers.ingressAdmission
-    val admission = DeletionPersistenceAdmission()
-    val deletionOwner = PersistencePhaseOwnership.deletion(admission, GuardedJdbcTransactionManager(runtime.pools.deletion))
-    val deletion = TestRegisteredInitialDeletionProbeJdbcV1(this)
-    val binding = TestOwnerDeleteProcessBindingV1.fromRegistered(registration, assembly, exchange.ordinary.ownership,
+    val admission = retained?.admission ?: DeletionPersistenceAdmission()
+    val deletionOwner = retained?.deletionOwner ?: PersistencePhaseOwnership.deletion(admission, GuardedJdbcTransactionManager(runtime.pools.deletion))
+    val deletion = retained?.deletion ?: TestRegisteredInitialDeletionProbeJdbcV1(this)
+    val binding = retained?.binding ?: TestOwnerDeleteProcessBindingV1.fromRegistered(registration, assembly, exchange.ordinary.ownership,
         exchange.jdbc, deletionOwner, deletion)
     val graph = binding.lower
-    val noKeys = NeverOwnerDeleteAllDataKeys()
-    val codec = TestOwnerDeleteJournalCodecV1(graph.routing, noKeys)
-    val capacity = JdbcComplaintCapacityStore(deletion, graph.policy.digestBytes())
-    val ownerStore = JdbcComplaintOwnerDeleteStore(deletion, capacity, audit, graph, codec)
-    val ownerReads = ComplaintOwnerDeleteReadPhaseExecutor(exchange.ordinary.ownership, JdbcComplaintOwnerDeleteReceiptStore(exchange.jdbc, graph))
-    val ownerVerification = JdbcComplaintOwnerDeleteVerificationStore(deletion, graph, ownerStore)
-    private val ownerApply = JdbcComplaintOwnerDeleteApplyStore(deletion, capacity, audit, graph, ownerStore, ownerVerification)
-    val ownerPhases = ComplaintOwnerDeletePhaseExecutor(deletionOwner, ownerStore, ownerReads, ownerVerification, ownerApply)
-    val allPreflights = ComplaintInstallationDeletionPreflightPhaseExecutor(exchange.ordinary.ownership,
+    val noKeys = retained?.noKeys ?: NeverOwnerDeleteAllDataKeys()
+    val codec = retained?.codec ?: TestOwnerDeleteJournalCodecV1(graph.routing, noKeys)
+    val capacity = retained?.capacity ?: JdbcComplaintCapacityStore(deletion, graph.policy.digestBytes())
+    val ownerStore = retained?.ownerStore ?: JdbcComplaintOwnerDeleteStore(deletion, capacity, audit, graph, codec)
+    val ownerReads = retained?.ownerReads ?: ComplaintOwnerDeleteReadPhaseExecutor(exchange.ordinary.ownership, JdbcComplaintOwnerDeleteReceiptStore(exchange.jdbc, graph))
+    val ownerVerification = retained?.ownerVerification ?: JdbcComplaintOwnerDeleteVerificationStore(deletion, graph, ownerStore)
+    private val ownerApply = retained?.ownerApply ?: JdbcComplaintOwnerDeleteApplyStore(deletion, capacity, audit, graph, ownerStore, ownerVerification)
+    val ownerPhases = retained?.ownerPhases ?: ComplaintOwnerDeletePhaseExecutor(deletionOwner, ownerStore, ownerReads, ownerVerification, ownerApply)
+    val allPreflights = retained?.allPreflights ?: ComplaintInstallationDeletionPreflightPhaseExecutor(exchange.ordinary.ownership,
         JdbcComplaintInstallationDeletionPreflightStore(exchange.jdbc, testGraph = graph))
-    val allStore = JdbcComplaintOwnerDeleteAllStore(deletion, capacity, audit, graph, codec)
-    val allPhases = ComplaintOwnerDeleteAllPhaseExecutor(deletionOwner, allStore, allPreflights)
-    val allVerification = JdbcComplaintOwnerDeleteAllVerificationStore(deletion, graph, allStore)
-    val allVerifyPhases = ComplaintOwnerDeleteAllVerificationPhaseExecutor(deletionOwner, allVerification)
-    val adminStore = JdbcComplaintAdminDeleteStore(deletion, capacity, audit, graph, codec)
-    val adminReads = ComplaintAdminDeleteReadPhaseExecutor(exchange.ordinary.ownership, JdbcComplaintAdminDeleteReceiptStore(exchange.jdbc, graph))
-    val adminVerification = JdbcComplaintAdminDeleteVerificationStore(deletion, graph, adminStore)
-    private val adminApply = JdbcComplaintAdminDeleteApplyStore(deletion, capacity, audit, graph, adminStore, adminVerification)
-    val adminPhases = ComplaintAdminDeletePhaseExecutor(deletionOwner, adminStore, adminReads, adminVerification, adminApply)
+    val allStore = retained?.allStore ?: JdbcComplaintOwnerDeleteAllStore(deletion, capacity, audit, graph, codec)
+    val allPhases = retained?.allPhases ?: ComplaintOwnerDeleteAllPhaseExecutor(deletionOwner, allStore, allPreflights)
+    val allVerification = retained?.allVerification ?: JdbcComplaintOwnerDeleteAllVerificationStore(deletion, graph, allStore)
+    val allVerifyPhases = retained?.allVerifyPhases ?: ComplaintOwnerDeleteAllVerificationPhaseExecutor(deletionOwner, allVerification)
+    val adminStore = retained?.adminStore ?: JdbcComplaintAdminDeleteStore(deletion, capacity, audit, graph, codec)
+    val adminReads = retained?.adminReads ?: ComplaintAdminDeleteReadPhaseExecutor(exchange.ordinary.ownership, JdbcComplaintAdminDeleteReceiptStore(exchange.jdbc, graph))
+    val adminVerification = retained?.adminVerification ?: JdbcComplaintAdminDeleteVerificationStore(deletion, graph, adminStore)
+    private val adminApply = retained?.adminApply ?: JdbcComplaintAdminDeleteApplyStore(deletion, capacity, audit, graph, adminStore, adminVerification)
+    val adminPhases = retained?.adminPhases ?: ComplaintAdminDeletePhaseExecutor(deletionOwner, adminStore, adminReads, adminVerification, adminApply)
     private val factories = mutableListOf<AutoCloseable>()
-    val ownerPublisher by lazy { binding.ownerPublisher(ownerStore).also(factories::add) }
-    val allPublisher by lazy { binding.allPublisher(allStore).also(factories::add) }
-    val adminPublisher by lazy { binding.adminPublisher(adminStore).also(factories::add) }
+    val ownerPublisher by lazy { retained?.ownerPublisher ?: binding.ownerPublisher(ownerStore).also(factories::add) }
+    val allPublisher by lazy { retained?.allPublisher ?: binding.allPublisher(allStore).also(factories::add) }
+    val adminPublisher by lazy { retained?.adminPublisher ?: binding.adminPublisher(adminStore).also(factories::add) }
     var ownerLane: JournalPublicationLanesV1.TestOwnerDeleteReservation? = null
         private set
     var allLane: JournalPublicationLanesV1.TestOwnerDeleteAllReservation? = null
@@ -220,6 +223,14 @@ internal class TestRegisteredInitialCheckpointDeletionFixtureV1(
         private set
 
     init {
+        check(expectedEpoch == 2L || retained != null && expectedEpoch in 3L..15L)
+        retained?.let { original ->
+            assertSame(original.checkpoint, checkpoint); assertSame(original.exchange, exchange); assertSame(original.native, native)
+            assertSame(original.graph, graph); assertSame(original.ownerStore, ownerStore); assertSame(original.adminStore, adminStore)
+            assertSame(original.allStore, allStore); assertSame(original.registration, registration)
+            assertEquals(expectedEpoch, (checkpoint.control().getValue("publication_epoch") as Number).toLong())
+            original.assertReleased()
+        }
         assertEquals(if (family == ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE) 2 else 1, creators.size)
         assertEquals(creators.size, creators.map { it.actor }.distinct().size)
         assertEquals(creators.size, reports.size)
@@ -293,7 +304,7 @@ internal class TestRegisteredInitialCheckpointDeletionFixtureV1(
             } }
             assertSqlReleased()
             event = released
-            native.expect(released)
+            native.expect(this, released)
             return released
         } catch (failure: Throwable) {
             closeLanes()
@@ -303,13 +314,13 @@ internal class TestRegisteredInitialCheckpointDeletionFixtureV1(
 
     fun publish(): TestRegisteredInitialDeletionNativeRecordV1 {
         check(event != null && readback == null)
-        val observed = when (family) {
+        val observed = native.publish(this) { when (family) {
             ComplaintJournalDeletionKindV1.OWNER_DELETE -> checkNotNull(ownerLane).publish(checkNotNull(ownerWork))
             ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> checkNotNull(allLane).publish(checkNotNull(allWork))
             ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE -> checkNotNull(adminLane).publish(checkNotNull(adminWork))
-        }
+        } }
         readback = observed
-        return native.observed(observed).also { record = it; assertReleased() }
+        return native.observed(this, observed).also { record = it; assertReleased() }
     }
 
     /** Short receipt -> publication VERIFY, on the same private AUTH store/work and cleaned native lane. */
@@ -387,7 +398,18 @@ internal class TestRegisteredInitialCheckpointDeletionFixtureV1(
     }
     fun audits(): Map<String, Long> = observer.query("SELECT action, count(*) FROM audit_log WHERE complaint_data_scope_id = ? GROUP BY action",
         { row, _ -> row.getString(1) to row.getLong(2) }, scope).toMap()
-    fun publication() = observer.queryForList("SELECT * FROM complaint_journal_publications WHERE data_scope_id = ?", scope).single()
+    /** Exact immutable request key, not the former one-publication-in-the-entire-scope assumption. */
+    fun publication() = observer.queryForList("SELECT p.* FROM complaint_journal_publications p WHERE p.data_scope_id = ? AND (" +
+        "EXISTS (SELECT 1 FROM complaint_idempotency_receipts n WHERE n.data_scope_id = p.data_scope_id AND n.idempotency_key = ? AND n.publication_ref = p.event_id) OR " +
+        "EXISTS (SELECT 1 FROM installation_deletion_receipts n WHERE n.data_scope_id = p.data_scope_id AND n.deletion_key = ? AND n.publication_ref = p.event_id))", scope, key, key).single()
+    /** Passive observation sampled before a request; defaults still count only the strict initial SQL. */
+    fun currentCheckpointSql(): String {
+        requireConnectionFree()
+        return if (checkNotNull(process.initialCheckpointDeletion).inventory().getValue("profile").jsonPrimitive.content ==
+            VersionBoundTestInitialCheckpointDeletionV1.RECURRENT_PROFILE &&
+            (checkpoint.control().getValue("rotation_sequence") as Number).toLong() > 1) TestRegisteredRecurrentCheckpointDeletionSqlV1.current
+        else TestRegisteredInitialCheckpointDeletionSqlV1.current
+    }
     fun image(): Map<String, List<String>> = raw { connection -> TABLES.associateWith { table ->
         connection.prepareStatement("SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text").use { s ->
             s.queryTimeout = 1; s.setObject(1, scope)
@@ -411,9 +433,12 @@ internal class TestRegisteredInitialCheckpointDeletionFixtureV1(
     fun assertReleased() { assertSqlReleased(); assertEquals(0L, process.publicationLanes.activeOwners().totalOwners) }
     private fun closeLanes() { ownerLane?.close(); allLane?.close(); adminLane?.close() }
     override fun close() {
-        deletion.before = {}; deletion.after = {}; exchange.jdbc.before = { _, _ -> }; exchange.jdbc.after = { _, _ -> }
+        if (retained == null) {
+            deletion.before = {}; deletion.after = {}; exchange.jdbc.before = { _, _ -> }; exchange.jdbc.after = { _, _ -> }
+        }
         closeLanes(); factories.asReversed().forEach { it.close() }
         assertReleased(); native.detach(this)
+        if (retained != null) return // This distinct request owns no original stores, provider factories or scope teardown.
         // Explicit disposable-scope teardown AFTER outcomes. No refund or product cleanup proof.
         listOf("complaint_idempotency_receipts", "installation_deletion_receipts", "complaint_recovery_capacity_reservations",
             "complaint_deletion_journal_retirements", "complaint_deletion_journal_applied", "complaint_journal_publications").forEach {
@@ -438,11 +463,11 @@ internal class TestRegisteredInitialDeletionProbeJdbcV1(private val f: TestRegis
     private val assertion = AtomicReference<AssertionError?>()
     private val observing = ThreadLocal.withInitial { false }
     init { exceptionTranslator = SQLExceptionSubclassTranslator() }
-    override fun <T : Any?> query(sql: String, mapper: RowMapper<T>): List<T> = observed(sql) { super.query(sql, mapper) }
-    override fun <T : Any?> query(sql: String, mapper: RowMapper<T>, vararg args: Any?): List<T> = observed(sql) { super.query(sql, mapper, *args) }
-    override fun <T : Any?> query(sql: String, extractor: ResultSetExtractor<T>, vararg args: Any?): T? = observed(sql) { super.query(sql, extractor, *args) }
-    override fun update(sql: String, vararg args: Any?): Int = observed(sql) { super.update(sql, *args) }
-    private fun <T> observed(sql: String, execute: () -> T): T {
+    override fun <T : Any?> query(sql: String, mapper: RowMapper<T>): List<T> = observed(sql, emptyArray()) { super.query(sql, mapper) }
+    override fun <T : Any?> query(sql: String, mapper: RowMapper<T>, vararg args: Any?): List<T> = observed(sql, args) { super.query(sql, mapper, *args) }
+    override fun <T : Any?> query(sql: String, extractor: ResultSetExtractor<T>, vararg args: Any?): T? = observed(sql, args) { super.query(sql, extractor, *args) }
+    override fun update(sql: String, vararg args: Any?): Int = observed(sql, args) { super.update(sql, *args) }
+    private fun <T> observed(sql: String, args: Array<out Any?>, execute: () -> T): T {
         if (observing.get()) return execute()
         observing.set(true)
         try {
@@ -459,7 +484,13 @@ internal class TestRegisteredInitialDeletionProbeJdbcV1(private val f: TestRegis
                 StepUpPhaseObservation(phase, lease, identity)
             }
             assertSame(lease, observation.lease); assertFalse(lease.completion.quiescent())
-            val call = TestRegisteredInitialDeletionSqlCallV1(phase, path, sql)
+            // Passive detached new-claim comparisons only. MAIN zeroes its original byte arrays;
+            // no retained argument copy is supplied back to a store, result, work or proof issuer.
+            val owned = if (sql == TestRegisteredRecurrentCheckpointDeletionSqlV1.owned) {
+                assertEquals(20, args.size); assertEquals(sql.count { it == '?' }, args.size)
+                args.map { if (it is ByteArray) it.copyOf() else it }
+            } else emptyList()
+            val call = TestRegisteredInitialDeletionSqlCallV1(phase, path, sql, owned)
             calls.add(call); before(call)
             return execute().also { after(call) }
         } catch (failure: AssertionError) { assertion.compareAndSet(null, failure); throw failure }
@@ -468,4 +499,5 @@ internal class TestRegisteredInitialDeletionProbeJdbcV1(private val f: TestRegis
     fun assertNoLostAssertions() { assertion.get()?.let { throw it } }
 }
 
-internal class TestRegisteredInitialDeletionSqlCallV1(val phase: PersistencePhaseContext, val path: PersistencePhasePath, val sql: String)
+internal class TestRegisteredInitialDeletionSqlCallV1(val phase: PersistencePhaseContext, val path: PersistencePhasePath, val sql: String,
+    val ownedArguments: List<Any?> = emptyList())

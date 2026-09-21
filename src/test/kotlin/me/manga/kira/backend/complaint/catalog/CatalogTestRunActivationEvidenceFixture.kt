@@ -71,7 +71,7 @@ import java.util.UUID
 
 internal enum class ActivationEvidencePrefix { GENESIS, ROTATED, INVENTORY_ROTATED, PENDING_OVERLAP }
 
-// One initial CREATE supplies genuine A/B history; the new specimen then pays CREATE + REPLY.
+// One initial CREATE supplies genuine A/B history; current consumers may pay two more creations.
 // This fixed synthetic quota is chosen before consumers/intake/full D, never reset on a live run.
 private const val RECURRENT_CONSUMER_CREATION_MEMBERS = 3
 
@@ -350,7 +350,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
                 if (pools === native.pools) original else projectedDeletionPolicies.getOrPut(pools) {
                     VersionBoundTestInitialCheckpointDeletionV1.fromIndependentInputs(
                         checkNotNull(ordinaryRawHttp?.initialCheckpointDeletion), pools, native.consumers.journalRouting,
-                        checkNotNull(checkpoint), checkNotNull(native.activeCutoffPublication))
+                        checkNotNull(checkpoint), checkNotNull(native.activeCutoffPublication), recurrent)
                 }
             }
             val queue = native.activeOwnerDeleteQueue?.let { original ->

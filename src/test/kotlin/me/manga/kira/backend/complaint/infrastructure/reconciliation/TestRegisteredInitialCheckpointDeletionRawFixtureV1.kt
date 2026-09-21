@@ -32,51 +32,60 @@ import java.util.concurrent.atomic.AtomicReference
 internal class TestRegisteredInitialCheckpointDeletionRawFixtureV1(
     queueHttp: TestActiveOwnerDeleteQueueHttpInputV1? = null,
     shortFreshness: Boolean = false,
+    initialCheckpointDeletion: TestInitialCheckpointDeletionInputV1 = TestInitialCheckpointDeletionInputV1(1, VersionBoundTestInitialCheckpointDeletionV1.PROFILE),
 ) {
     val ordinary = TestActiveOrdinaryRawFixtureV1()
     val checkpoint = TestActiveInitialCheckpointRawFixtureV1()
     val factories = ordinary.factories.let {
         TestActiveOrdinaryRawHttpV1(it.sts,
-            { remaining -> native("KMS", remaining) { publisher.kms.httpClient() } },
-            { remaining -> native("S3", remaining) { publisher.httpClient() } }, checkpoint.input,
+            { remaining -> native("KMS", remaining) { checkNotNull(publishing.get()).publisher.kms.httpClient() } },
+            { remaining -> native("S3", remaining) { checkNotNull(publishing.get()).publisher.httpClient() } }, checkpoint.input,
             initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
             shortInitialCheckpointFreshness = shortFreshness, activeOwnerDeleteQueue = queueHttp,
-            initialCheckpointDeletion = TestInitialCheckpointDeletionInputV1(1, VersionBoundTestInitialCheckpointDeletionV1.PROFILE))
+            initialCheckpointDeletion = initialCheckpointDeletion)
     }
-    private var owner: TestRegisteredInitialCheckpointDeletionFixtureV1? = null
-    private var expected: TestOwnerDeleteJournalEventV1? = null
-    private var generatedContext: Map<String, String>? = null
+    private var firstOwner: TestRegisteredInitialCheckpointDeletionFixtureV1? = null
+    private val owners = linkedSetOf<TestRegisteredInitialCheckpointDeletionFixtureV1>()
+    private val publications = linkedMapOf<TestRegisteredInitialCheckpointDeletionFixtureV1, NativePublication>()
+    private val publishing = AtomicReference<NativePublication?>()
     private var oldStsBefore: (() -> Unit)? = null
-    private var nativePublisher: TestOwnerDeleteJournalPublisherFixture? = null
-    private var originalKeyReply: ((JournalKmsHttpRequest) -> JournalKmsHttpReply)? = null
     private val assertion = AtomicReference<AssertionError?>()
     val requestBudgets = mutableListOf<Pair<String, Int>>()
-    val publisher: TestOwnerDeleteJournalPublisherFixture get() = checkNotNull(nativePublisher)
+    /** The original fixture's observation remains stable when a different request later publishes. */
+    val publisher: TestOwnerDeleteJournalPublisherFixture get() = publisher(checkNotNull(firstOwner))
+    fun publisher(fixture: TestRegisteredInitialCheckpointDeletionFixtureV1): TestOwnerDeleteJournalPublisherFixture =
+        publications.getValue(fixture).publisher
 
     fun attach(fixture: TestRegisteredInitialCheckpointDeletionFixtureV1) {
-        check(owner == null); owner = fixture
-        val before = ordinary.sts.beforePrepare
-        oldStsBefore = before
-        ordinary.sts.beforePrepare = { checked { before(); fixture.assertSqlReleased() } }
+        check(owners.add(fixture))
+        if (firstOwner == null) {
+            firstOwner = fixture
+            val before = ordinary.sts.beforePrepare
+            oldStsBefore = before
+            ordinary.sts.beforePrepare = { checked { before(); boundary(publishing.get()?.owner ?: fixture) } }
+        } else {
+            val first = checkNotNull(firstOwner)
+            assertSame(first.process, fixture.process); assertSame(first.binding, fixture.binding)
+            assertSame(first.deletionOwner, fixture.deletionOwner); assertSame(first.deletion, fixture.deletion)
+        }
     }
 
-    fun expect(event: TestOwnerDeleteJournalEventV1) {
-        requireConnectionFree(); check(expected == null)
-        val f = checkNotNull(owner)
+    fun expect(f: TestRegisteredInitialCheckpointDeletionFixtureV1, event: TestOwnerDeleteJournalEventV1) {
+        requireConnectionFree(); check(f in owners && f !in publications)
         f.assertSqlReleased()
-        expected = event
+        assertSame(event, f.event)
         // Capture the existing raw fixture's key responder BEFORE adding the producer's signing
         // assertions. A later queue has its own credentials; it must keep this original key map,
         // not borrow the producer's signature or substitute a plaintext key.
         val p = TestOwnerDeleteJournalPublisherFixture(f.process.consumers.journalRouting, event)
-        nativePublisher = p
-        p.beforePrepare = { checked { boundary(); p.wall = f.first.native.now() } }
-        p.onClientClose = { checked { boundary() } }
-        p.kms.onClientClose = { checked { boundary() } }
+        p.beforePrepare = { checked { boundary(f); p.wall = f.first.native.now() } }
+        p.onClientClose = { checked { boundary(f) } }
+        p.kms.onClientClose = { checked { boundary(f) } }
         val respond = p.kms.respond
-        originalKeyReply = respond
+        val original = NativePublication(f, event, p, respond)
+        publications[f] = original
         p.kms.respond = { request -> checked {
-            boundary()
+            boundary(f)
             val credentials = TestActiveFirstCutInputFixtureV1.ordinaryCredentials
             val region = p.journal.declaration().journalLocation.region
             assertEquals("https", request.http.protocol())
@@ -90,24 +99,33 @@ internal class TestRegisteredInitialCheckpointDeletionRawFixtureV1(
                 val fields = request.fields()["EncryptionContext"]
                 val observed = fields.fields().asSequence().associate { it.key to it.value.asText() }
                 assertEquals(setOf(AwsJournalKmsFixture.CONTEXT_KEY), observed.keys)
-                check(generatedContext == null)
-                generatedContext = observed.toMap()
+                check(original.generatedContext == null)
+                original.generatedContext = observed.toMap()
             }
             reply
         } }
         p.respond = { request -> checked {
-            boundary()
+            boundary(f)
             val location = p.journal.declaration().journalLocation
             journalPublisherRawAssertSigned(request, location.region, location.accountId, TestActiveFirstCutInputFixtureV1.ordinaryCredentials)
             p.statefulReply(request)
         } }
     }
 
+    /** Dispatch only this fresh native original; earlier owner/event/PUT/key contexts are immutable. */
+    fun <T> publish(f: TestRegisteredInitialCheckpointDeletionFixtureV1, action: () -> T): T {
+        requireConnectionFree(); check(f in owners)
+        val original = publications.getValue(f)
+        check(publishing.compareAndSet(null, original))
+        return try { action() } finally { check(publishing.compareAndSet(original, null)) }
+    }
+
     /** Passive record after real native PUT/readback/cleanup, including before persistence VERIFY. */
-    fun observed(readback: TestOwnerDeleteJournalReadbackV1): TestRegisteredInitialDeletionNativeRecordV1 {
-        requireConnectionFree(); checkNotNull(owner).assertSqlReleased()
-        val event = checkNotNull(expected)
-        val p = publisher
+    fun observed(f: TestRegisteredInitialCheckpointDeletionFixtureV1, readback: TestOwnerDeleteJournalReadbackV1): TestRegisteredInitialDeletionNativeRecordV1 {
+        requireConnectionFree(); f.assertSqlReleased()
+        val original = publications.getValue(f)
+        val event = original.event
+        val p = original.publisher
         val stored = p.objects.single { it.key == event.route.objectKey }
         val put = p.requests.single { it.kind == "PUT" }
         if (event.comparison.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) {
@@ -134,28 +152,28 @@ internal class TestRegisteredInitialCheckpointDeletionRawFixtureV1(
         assertEquals(Sha256.hex(stored.bytes), readback.wireSha256)
         assertEquals(stored.lastModified, readback.lastModified)
         assertEquals(stored.retainUntil, readback.retainUntil)
-        assertEquals(2L, event.comparison.epoch)
+        assertEquals(f.expectedEpoch, event.comparison.epoch)
         assertEquals(1, p.generated()); assertEquals(1, p.decrypted())
         ordinary.assertDisposed(); p.assertClientsClosed()
-        return TestRegisteredInitialDeletionNativeRecordV1(event, stored, checkNotNull(generatedContext), p, checkNotNull(originalKeyReply))
+        return TestRegisteredInitialDeletionNativeRecordV1(event, stored, checkNotNull(original.generatedContext), p, original.keyReply)
     }
 
-    fun counts(): List<Int> = listOf(ordinary.sts.requests.size, nativePublisher?.kms?.requests?.size ?: 0,
-        nativePublisher?.requests?.size ?: 0, ordinary.requestBudgets.size + requestBudgets.size)
+    fun counts(): List<Int> = listOf(ordinary.sts.requests.size, publications.values.sumOf { it.publisher.kms.requests.size },
+        publications.values.sumOf { it.publisher.requests.size }, ordinary.requestBudgets.size + requestBudgets.size)
 
-    private fun boundary() {
+    private fun boundary(f: TestRegisteredInitialCheckpointDeletionFixtureV1) {
         requireConnectionFree()
-        val f = checkNotNull(owner)
         f.assertSqlReleased(); f.checkpoint.sealer.assertProviderBoundary()
     }
 
     /** Existing HTTP SPI only, with the real recipe's remaining native budget; no new provider. */
     private fun native(kind: String, remaining: () -> Int, create: () -> SdkHttpClient): SdkHttpClient {
-        boundary()
+        val original = checkNotNull(publishing.get())
+        boundary(original.owner)
         val raw = create()
         return object : SdkHttpClient {
             override fun prepareRequest(request: HttpExecuteRequest): ExecutableHttpRequest = checked {
-                boundary()
+                assertSame(original, publishing.get()); boundary(original.owner)
                 val budget = remaining(); assertTrue(budget in 1..5_000)
                 requestBudgets.add(kind to budget)
                 raw.prepareRequest(request)
@@ -166,11 +184,18 @@ internal class TestRegisteredInitialCheckpointDeletionRawFixtureV1(
     }
 
     fun detach(fixture: TestRegisteredInitialCheckpointDeletionFixtureV1) {
-        check(owner === fixture)
-        ordinary.sts.beforePrepare = checkNotNull(oldStsBefore)
-        owner = null
-        ordinary.assertDisposed(); nativePublisher?.assertClientsClosed()
+        check(owners.remove(fixture)); check(publishing.get() == null)
+        if (firstOwner === fixture) {
+            check(owners.isEmpty())
+            ordinary.sts.beforePrepare = checkNotNull(oldStsBefore)
+        }
+        ordinary.assertDisposed(); publications[fixture]?.publisher?.assertClientsClosed()
         assertNoLostAssertions()
+    }
+    private class NativePublication(val owner: TestRegisteredInitialCheckpointDeletionFixtureV1,
+        val event: TestOwnerDeleteJournalEventV1, val publisher: TestOwnerDeleteJournalPublisherFixture,
+        val keyReply: (JournalKmsHttpRequest) -> JournalKmsHttpReply) {
+        var generatedContext: Map<String, String>? = null
     }
     private fun <T> checked(action: () -> T): T = try { action() } catch (failure: AssertionError) { assertion.compareAndSet(null, failure); throw failure }
     fun assertNoLostAssertions() { assertion.get()?.let { throw it } }

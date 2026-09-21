@@ -7,6 +7,7 @@ import me.manga.kira.backend.complaint.catalog.TestOrdinarySealHttpFixtureV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentInputV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentStorageV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointCreateInputV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointDeletionInputV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.complaint.journal.JournalPublisherHttpRequest
 import me.manga.kira.backend.complaint.journal.JournalPublisherObject
@@ -37,9 +38,20 @@ import java.util.concurrent.atomic.AtomicReference
 internal class TestActiveRecurrentRawFixtureV1(
     initialCheckpointCreate: TestInitialCheckpointCreateInputV1 = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
     shortFreshness: Boolean = false,
+    initialCheckpointDeletion: TestInitialCheckpointDeletionInputV1 = TestInitialCheckpointDeletionInputV1(1, VersionBoundTestInitialCheckpointDeletionV1.PROFILE),
 ) {
     val queue = TestActiveOwnerDeleteQueueRawFixtureV1()
-    val deletion = TestRegisteredInitialCheckpointDeletionRawFixtureV1(queue.input)
+    // Both HTTP contexts and this dispatcher exist before D. The first consumed context keeps
+    // its actual record, event, delivery counters and owner; it is never retargeted for new work.
+    private val freshQueue = TestActiveOwnerDeleteQueueRawFixtureV1()
+    private val selectedQueue = AtomicReference(queue)
+    private var freshQueueUsed = false
+    private val queueInput = TestActiveOwnerDeleteQueueHttpInputV1(
+        { remaining -> selectedQueue.get().input.sts(remaining) },
+        { remaining -> selectedQueue.get().input.kms(remaining) },
+        { remaining -> selectedQueue.get().input.s3(remaining) },
+        { remaining -> selectedQueue.get().input.sqs(remaining) })
+    val deletion = TestRegisteredInitialCheckpointDeletionRawFixtureV1(queueInput, initialCheckpointDeletion = initialCheckpointDeletion)
     val sts = AwsJournalKmsFixture()
     val kms = AwsJournalKmsFixture()
     val requests = mutableListOf<JournalPublisherHttpRequest>()
@@ -110,6 +122,16 @@ internal class TestActiveRecurrentRawFixtureV1(
         assertTrue(requests.isEmpty() && sts.requests.isEmpty() && kms.requests.isEmpty())
     }
     fun detach(f: TestActiveRecurrentFixtureV1) { check(fixture === f); fixture = null; listedObjects.clear(); assertNoLostAssertions() }
+    /** One independent additional raw B owner; every retry is a fresh genuine begin on its fixed record. */
+    fun <T> withFreshQueue(action: (TestActiveOwnerDeleteQueueRawFixtureV1) -> T): T {
+        checkNotNull(fixture).assertReleased()
+        check(!freshQueueUsed); freshQueueUsed = true
+        check(selectedQueue.compareAndSet(queue, freshQueue))
+        return try { action(freshQueue) } finally { check(selectedQueue.compareAndSet(freshQueue, queue)) }
+    }
+    fun queueProviderCounts(): List<Int> = listOf(queue, freshQueue).flatMap { selected -> listOf(
+        selected.sts.requests.size, selected.kms.requests.size, selected.sqs.requests.size,
+        selected.requests.size, selected.budgets.size) }
     private fun s3Client(): SdkHttpClient {
         boundary(); s3Created++
         return journalPublisherRawHttpClient(requests, { checked { boundary() } }, {}, {
@@ -174,7 +196,7 @@ internal class TestActiveRecurrentRawFixtureV1(
     }
     private fun boundary() { requireConnectionFree(); checkNotNull(fixture).assertSqlReleased() }
     private fun <T> checked(action: () -> T): T = try { action() } catch (problem: AssertionError) { assertion.compareAndSet(null, problem); throw problem }
-    fun assertNoLostAssertions() { assertion.get()?.let { throw it } }
+    fun assertNoLostAssertions() { assertion.get()?.let { throw it }; queue.assertNoLostAssertions(); freshQueue.assertNoLostAssertions() }
     fun resetFaults() { listing = { _, values -> values }; listDocument = { _, text -> text }; beforeS3 = {}; changeS3 = { _, _ -> }; changeSts = {}; onNativeClose = {} }
     fun assertDisposed(returned: Boolean = true) {
         assertEquals(s3Created, s3Closed)
