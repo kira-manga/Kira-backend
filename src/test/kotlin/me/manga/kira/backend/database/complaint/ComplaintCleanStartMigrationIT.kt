@@ -3,10 +3,12 @@ package me.manga.kira.backend.database.complaint
 import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.FlywayException
 import org.flywaydb.core.internal.exception.FlywayMigrateException
+import org.junit.jupiter.api.Assertions.assertAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.function.Executable
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
@@ -104,22 +106,27 @@ class ComplaintCleanStartMigrationIT : ComplaintPostgresTest() {
                 }
             }
         }
-        for ((label, seed) in cases) database.schema { schema ->
-            predecessor(schema).migrate()
-            seedCurrent(schema)
-            schema.exec(seed)
-            assertUnchanged(schema) {
-                val failure = assertThrows(FlywayMigrateException::class.java) { schema.flyway().migrate() }
-                assertEquals("23514", sqlCause(failure)?.sqlState, label)
-                assertEquals(MIGRATION, failure.migration.script, label)
-                assertEquals("31.4", failure.migration.version.toString(), label)
-                if (label.startsWith("retired ")) {
-                    assertTrue(sqlCause(failure)?.message.orEmpty().contains("Clean-start complaint accounting required"), label)
+        // Keep collecting failures from the remaining independently owned schemas.
+        assertAll(cases.map { (label, seed) ->
+            Executable {
+                database.schema { schema ->
+                    predecessor(schema).migrate()
+                    seedCurrent(schema)
+                    schema.exec(seed)
+                    assertUnchanged(schema) {
+                        val failure = assertThrows(FlywayMigrateException::class.java) { schema.flyway().migrate() }
+                        assertEquals("23514", sqlCause(failure)?.sqlState, label)
+                        assertEquals(MIGRATION, failure.migration.script, label)
+                        assertEquals("31.4", failure.migration.version.toString(), label)
+                        if (label.startsWith("retired ")) {
+                            assertTrue(sqlCause(failure)?.message.orEmpty().contains("Clean-start complaint accounting required"), label)
+                        }
+                    }
+                    assertEquals("31.3", schema.history().last(), label)
+                    assertTrue(predecessor(schema).validateWithResult().validationSuccessful, label)
                 }
             }
-            assertEquals("31.3", schema.history().last(), label)
-            assertTrue(schema.flyway().validateWithResult().validationSuccessful, label)
-        }
+        })
     }
 
     @Test
