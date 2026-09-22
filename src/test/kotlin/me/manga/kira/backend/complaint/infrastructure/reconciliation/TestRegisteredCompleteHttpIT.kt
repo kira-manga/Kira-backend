@@ -15,6 +15,13 @@ class TestRegisteredCompleteHttpIT {
     private val database = lazy { PgLifecycleDatabaseFixture(TestRegisteredCompleteHttpIT::class.java).also { it.start() } }
     @AfterAll fun closeDatabase() { if (database.isInitialized()) database.value.close() }
 
+    @Test fun actualLoginSharesSourceProofConsumerAndBoundComplaintEditWithoutCrossScopeAuthority() = withFixture {
+        TestRegisteredCompleteHttpCasesV1.sharedLoginSourceAndBoundComplaint(it)
+    }
+    @Test fun actualSourcePreviewAsyncResponseAndLateCompletionTailDrainBeforeJpaClose() = withFixture {
+        TestRegisteredCompleteHttpCasesV1.sharedPreviewAsyncAndCompletionTailDrain(it)
+    }
+
     @Test fun genuineSingleAdminHttpVerifyRemains503UntilSeparateBAndFreshCurrentAuthenticated204() = withFixture {
         TestRegisteredCompleteHttpCasesV1.separateBAndExactReceipt(it, batch = false)
     }

@@ -1,18 +1,27 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
+import jakarta.servlet.AsyncEvent
+import jakarta.servlet.AsyncListener
+import jakarta.servlet.DispatcherType
+import jakarta.servlet.http.HttpServletRequest
+import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestGate
+import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
+import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFact
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryResponses
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditFingerprint
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminJwtIdentityDecoder
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminReadStore
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.ADMIN
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.mapper
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpFixtureV1.Companion.PREVIEW
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpFixtureV1.Companion.authorization
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpFixtureV1.Companion.promise
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpFixtureV1.Companion.SECRET
@@ -20,6 +29,7 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegiste
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpFixtureV1.Companion.checked
 import me.manga.kira.backend.security.ComplaintInstallationRoutes
 import me.manga.kira.backend.user.domain.Role
+import org.apache.catalina.LifecycleState
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -27,13 +37,186 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
+import org.springframework.core.MethodParameter
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.oauth2.jwt.JwtDecoder
+import org.springframework.web.context.request.NativeWebRequest
+import org.springframework.web.method.support.AsyncHandlerMethodReturnValueHandler
+import org.springframework.web.method.support.HandlerMethodReturnValueHandler
+import org.springframework.web.method.support.ModelAndViewContainer
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter
 import java.net.http.HttpResponse
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /** Focused wiring/ownership scenarios; lower parser/max50 and owner DELETE/ALL suites are carried, not copied. */
 internal object TestRegisteredCompleteHttpCasesV1 {
+    fun sharedLoginSourceAndBoundComplaint(tls: VersionBoundPersistenceConnectedFixture) = withRegisteredCompleteHttp(tls) { f ->
+        val a = f.admin
+        a.withCurrent {
+            val bearer = f.login()
+            val me = f.web.get("/api/v1/auth/me", bearer); f.ordinary(me, 200)
+            assertEquals(a.users[0].id.toString(), a.json(me)["id"].textValue())
+            assertEquals(a.users[0].email, a.json(me)["email"].textValue()); assertEquals("ADMIN", a.json(me)["role"].textValue())
+            f.assertPreview(f.preview(bearer)); f.assertReleased()
+            val attempt = RegisteredAdminContentAttemptV1(a.report())
+            val uncreatedApi = "AbsentShared${UUID.randomUUID().toString().replace("-", "")}"
+            assertEquals(0L, f.jdbc.queryForObject("SELECT count(*) FROM source_configs WHERE api = ?", Long::class.java, uncreatedApi))
+            val sourceState = f.sourceImage(); val beforeSource = f.first.counters()
+            val source = f.sourceProof(bearer); val explicitSource = f.sourceProof(bearer, explicitScope = true)
+            assertEquals(beforeSource, f.first.counters(), "SOURCE issuance must not charge complaint capacity.")
+            val complaint = a.proof(bearer = bearer)
+            a.assertCharge(beforeSource, ComplaintCapacityCharges.MODERATION_GRANT)
+            val beforeDenials = f.image(); val counters = f.counters(); val native = f.raw.counts()
+
+            // Both families are genuine HTTP credentials. Neither can become the other family's principal.
+            f.ordinaryProblem(f.web.get("/api/v1/auth/me", a.ownerBearer), 401)
+            f.ordinaryProblem(f.sourceIssue(a.ownerBearer), 401)
+            a.problem(a.edit(attempt, complaint.token, a.ownerBearer), 401, "UNAUTHORIZED")
+            a.problem(f.web.get(ComplaintInstallationRoutes.HISTORY, bearer), 401, "UNAUTHORIZED")
+            a.problem(a.edit(attempt, source.token, bearer), 401, "ADMIN_STEP_UP_REQUIRED")
+            f.ordinaryProblem(f.sourceMode(uncreatedApi, bearer, complaint.token), 401, "ADMIN_STEP_UP_REQUIRED")
+            f.assertReleased()
+            assertEquals(beforeDenials, f.image()); assertEquals(counters, f.counters()); assertEquals(native, f.raw.counts())
+            a.unused(source.id); a.unused(explicitSource.id); a.unused(complaint.id)
+
+            // The real HTTP controller commits SOURCE proof consumption before the original source lookup.
+            // A real missing-source 404 is deliberate: no fabricated COMPLETE/source history or publication claim.
+            f.ordinaryProblem(f.sourceMode(uncreatedApi, bearer, source.token), 404, "SOURCE_NOT_FOUND")
+            a.used(source.id); val consumed = f.image(); val originalSourceGrant = a.grantRow(source.id)
+            f.ordinaryProblem(f.sourceMode(uncreatedApi, bearer, source.token), 401, "ADMIN_STEP_UP_REQUIRED")
+            assertEquals(consumed, f.image()); assertEquals(originalSourceGrant, a.grantRow(source.id))
+            assertEquals(sourceState, f.sourceImage()); assertEquals(counters, f.counters()); assertEquals(native, f.raw.counts())
+            a.unused(complaint.id); a.unused(explicitSource.id); f.assertReleased()
+
+            val immutable = a.immutable(attempt.id); val beforeEdit = f.first.counters()
+            val edited = a.edit(attempt, complaint.token, bearer)
+            a.acknowledged(edited, attempt, complaint.id); a.used(complaint.id)
+            a.assertCharge(beforeEdit, ComplaintCapacityCharges.ADMIN_EDIT)
+            assertEquals(immutable, a.immutable(attempt.id))
+            val detail = a.detail(attempt.id, bearer); a.checked(detail, 200)
+            assertEquals(2L, a.json(detail)["version"].longValue()); assertEquals("Registered Admin subject", a.json(detail)["subject"].textValue())
+            assertEquals(true, f.jdbc.queryForObject("SELECT test_only AND operation = 'ADMIN_EDIT' AND state = 'COMPLETED' AND outcome = 'APPLIED' " +
+                "AND response_status = 200 AND target_ids = ARRAY[?::uuid] AND ack_ids = target_ids AND ack_versions = ARRAY[2::bigint] " +
+                "AND consumed_grant_id = ? AND publication_ref IS NULL AND external_event_id IS NULL FROM complaint_idempotency_receipts " +
+                "WHERE actor_kind = 'ADMIN' AND actor_id = ? AND idempotency_key = ? AND data_scope_id = ?",
+                Boolean::class.java, attempt.id, complaint.id, a.users[0].id, attempt.key, f.scope))
+            assertEquals(true, f.jdbc.queryForObject("SELECT count(*) = 1 AND bool_and(complaint_actor_kind = 'ADMIN' AND actor_user_id = ?) " +
+                "FROM audit_log WHERE complaint_data_scope_id = ? AND entity_id = ? AND action = 'COMPLAINT_CONTENT_EDITED'",
+                Boolean::class.java, a.users[0].id, f.scope, attempt.id.toString()))
+            assertEquals(originalSourceGrant, a.grantRow(source.id)); a.unused(explicitSource.id)
+            assertEquals(sourceState, f.sourceImage()); assertEquals(native, f.raw.counts()); assertNull(f.raw.publisher)
+            f.assertReleased()
+        }
+    }
+
+    fun sharedPreviewAsyncAndCompletionTailDrain(tls: VersionBoundPersistenceConnectedFixture) = withRegisteredCompleteHttp(tls) { f ->
+        val bearer = f.login(); val web = f.web
+        val sourceState = f.sourceImage(); val image = f.image(); val counters = f.counters(); val native = f.raw.counts()
+        val adapter = web.context.getBean(RequestMappingHandlerAdapter::class.java)
+        val originalHandlers = checkNotNull(adapter.returnValueHandlers)
+        try {
+            OwnedCallerTestScope().use { callers ->
+                val responseGate = callers.gate(); val completionGate = callers.gate()
+                val hold = ActualPreviewAsyncHold(responseGate, completionGate)
+                // Public MVC SPI only. Every original supports/handle call remains authoritative.
+                adapter.setReturnValueHandlers(originalHandlers.map(hold::wrap))
+                val preview = callers.launch { f.preview(bearer) }
+                responseGate.awaitEntered()
+                assertTrue(hold.listenerAdded.get())
+                assertTrue(web.startup.ordinaryHttpObservation().accepting)
+                assertEquals(1, web.startup.ordinaryHttpObservation().activeRequests)
+                val releasing = callers.launch {
+                    try {
+                        awaitLifecycleFact(5_000) { !web.startup.ordinaryHttpObservation().accepting && web.ingressSnapshot().stopped }
+                        assertOrdinaryHeld(f)
+                        // The listener remains alive to refuse fresh intake, not to admit another ordinary owner.
+                        f.ordinaryProblem(web.get("/api/v1/auth/me", bearer), 503)
+                        assertOrdinaryHeld(f)
+                        responseGate.release()
+                        completionGate.awaitEntered()
+                        assertOrdinaryHeld(f) // This late real onComplete callback is not terminal request destruction.
+                    } finally {
+                        responseGate.release(); completionGate.release()
+                    }
+                }
+                web.startup.close() // Only the original assembly caller may close; no background close/reset.
+                releasing.value()
+                f.assertPreview(preview.value())
+                hold.failure.get()?.let { throw it } // Servlet containers may otherwise absorb callback failures.
+            }
+        } finally {
+            adapter.setReturnValueHandlers(originalHandlers) // Owned callers have exited before this restoration.
+        }
+        assertFalse(web.startup.ordinaryHttpObservation().accepting)
+        assertEquals(0, web.startup.ordinaryHttpObservation().activeRequests)
+        web.assertDisposed(nativeStillActive = true)
+        assertEquals(sourceState, f.sourceImage()); assertEquals(image, f.image()); assertEquals(counters, f.counters())
+        assertEquals(native, f.raw.counts()); assertNull(f.raw.publisher); f.assertReleased()
+    }
+
+    private fun assertOrdinaryHeld(f: TestRegisteredCompleteHttpFixtureV1) {
+        val web = f.web; val observed = web.startup.ordinaryHttpObservation()
+        assertFalse(observed.accepting); assertEquals(1, observed.activeRequests)
+        val ingress = web.ingressSnapshot(); assertTrue(ingress.stopped)
+        assertEquals(0, ingress.reservations); assertEquals(0, ingress.contexts)
+        f.assertSqlReleased()
+        assertTrue(web.context.isActive); assertTrue(web.emf.isOpen)
+        assertEquals(LifecycleState.STARTED, web.server.tomcat.server.state)
+        assertFalse(f.first.process.pools.shutdownRequested()); assertTrue(f.first.process.pools.ordinary.businessReady())
+        assertFalse(poolTestField<Boolean>(web.startup, "cleanupProven"))
+    }
+
+    /** Two real servlet lifetime cuts, not a fake controller/result or a coroutine-cancellation harness. */
+    private class ActualPreviewAsyncHold(private val response: OwnedCallerTestGate, private val completion: OwnedCallerTestGate) {
+        val listenerAdded = AtomicBoolean()
+        val failure = AtomicReference<Throwable?>()
+        private val dispatched = AtomicBoolean()
+        private val completed = AtomicBoolean()
+        private val tail = object : AsyncListener {
+            override fun onComplete(event: AsyncEvent) = recordCallback {
+                check(completed.compareAndSet(false, true))
+                completion.hold()
+            }
+            override fun onTimeout(event: AsyncEvent) { failure.compareAndSet(null, AssertionError("Actual preview async request timed out.")) }
+            override fun onError(event: AsyncEvent) { failure.compareAndSet(null, AssertionError("Actual preview async request failed.")) }
+            override fun onStartAsync(event: AsyncEvent) = recordCallback { event.asyncContext.addListener(this) }
+        }
+
+        fun wrap(original: HandlerMethodReturnValueHandler): HandlerMethodReturnValueHandler =
+            if (original is AsyncHandlerMethodReturnValueHandler) object : AsyncHandlerMethodReturnValueHandler by original {
+                override fun handleReturnValue(value: Any?, type: MethodParameter, container: ModelAndViewContainer, request: NativeWebRequest) =
+                    handle(original, value, type, container, request)
+            } else object : HandlerMethodReturnValueHandler by original {
+                override fun handleReturnValue(value: Any?, type: MethodParameter, container: ModelAndViewContainer, request: NativeWebRequest) =
+                    handle(original, value, type, container, request)
+            }
+
+        private fun handle(original: HandlerMethodReturnValueHandler, value: Any?, type: MethodParameter, container: ModelAndViewContainer, request: NativeWebRequest) {
+            val servlet = request.getNativeRequest(HttpServletRequest::class.java)
+            if (servlet == null || servlet.requestURI != PREVIEW) return original.handleReturnValue(value, type, container, request)
+            try {
+                if (servlet.dispatcherType == DispatcherType.ASYNC) {
+                    check(dispatched.compareAndSet(false, true))
+                    response.hold() // Real redispatch follows the initial REQUEST chain's return.
+                }
+                original.handleReturnValue(value, type, container, request)
+                if (servlet.dispatcherType == DispatcherType.REQUEST && servlet.isAsyncStarted) {
+                    check(listenerAdded.compareAndSet(false, true))
+                    servlet.asyncContext.addListener(tail) // Later than Spring's own listener; never complete/dispatch it ourselves.
+                }
+            } catch (problem: Throwable) {
+                failure.compareAndSet(null, problem)
+                throw problem
+            }
+        }
+
+        private fun recordCallback(action: () -> Unit) {
+            try { action() } catch (problem: Throwable) { failure.compareAndSet(null, problem) }
+        }
+    }
+
     fun separateBAndExactReceipt(tls: VersionBoundPersistenceConnectedFixture, batch: Boolean) = withRegisteredCompleteHttp(tls) { f ->
         val a = f.admin
         val bearers = listOf(a.ownerBearer) + if (batch) listOf(otherOwner(f)) else emptyList()

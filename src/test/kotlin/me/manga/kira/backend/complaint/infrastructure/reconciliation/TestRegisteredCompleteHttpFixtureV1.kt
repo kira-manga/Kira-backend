@@ -18,10 +18,16 @@ import me.manga.kira.backend.complaint.infrastructure.journal.TestAdminDeleteJou
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteAllJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.ADMIN
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.ISSUED_ID
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.PASSWORD
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.STEP_UP
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.mapper
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredHttpStartupCasesV1.StartedHttpView
 import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
+import me.manga.kira.backend.config.KiraSigningProperties
 import me.manga.kira.backend.security.ComplaintInstallationRoutes
+import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
+import me.manga.kira.backend.sourceconfig.parsing.SourceConfigParser
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -35,8 +41,11 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.security.KeyPairGenerator
 import java.sql.Timestamp
 import java.time.Duration
+import java.time.Instant
+import java.util.Base64
 import java.util.HexFormat
 import java.util.UUID
 
@@ -57,8 +66,10 @@ internal fun withRegisteredCompleteHttp(tls: VersionBoundPersistenceConnectedFix
         val startup = if (oldStatusOnly) first.assembly.beginRegisteredAdminContentStatusBatchStatusHttpStartup(first.registration)
             else first.assembly.beginRegisteredCompleteHttpStartup(first.registration)
         startup.use {
-            startup.start()
-            StartedHttpView(first, startup, if (oldStatusOnly) TestRegisteredCompleteHttpFixtureV1.OLD_PATHS else TestRegisteredCompleteHttpFixtureV1.PATHS).use { web ->
+            if (oldStatusOnly) startup.start() else startup.start(sourceSigning = sharedSourceSigning(),
+                normalProperties = mapOf("kira.security.throttle.max-entries" to "1024")) // Existing born TEST bound, never a raised limit.
+            StartedHttpView(first, startup, if (oldStatusOnly) TestRegisteredCompleteHttpFixtureV1.OLD_PATHS else TestRegisteredCompleteHttpFixtureV1.PATHS,
+                sharedOrdinary = !oldStatusOnly).use { web ->
                 withRegisteredAdminContentFixtureV1(first, raw.ordinary, raw.checkpoint, web) { admin ->
                     val f = TestRegisteredCompleteHttpFixtureV1(admin, raw, oldStatusOnly); raw.fixture = f
                     assertArrayEquals(configuration, first.process.canonicalBytes())
@@ -86,6 +97,14 @@ internal fun withRegisteredCompleteHttp(tls: VersionBoundPersistenceConnectedFix
     }
 }
 
+/** In-memory synthetic SOURCE signing input for the real configured signer; never a second user-JWT key or signer replacement. */
+private fun sharedSourceSigning(): KiraSigningProperties {
+    val pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+    val encoder = Base64.getEncoder(); val id = "registered-shared-source-fixture"
+    return KiraSigningProperties(enabled = true, activeKeyId = id, privateKey = encoder.encodeToString(pair.private.encoded),
+        verificationKeys = listOf(KiraSigningProperties.VerificationKey(id, encoder.encodeToString(pair.public.encoded))))
+}
+
 internal class TestRegisteredCompleteHttpFixtureV1(val admin: TestRegisteredAdminContentHttpFixtureV1,
     val raw: TestRegisteredCompleteHttpRawFixtureV1, oldStatusOnly: Boolean) {
     val first get() = admin.first
@@ -104,6 +123,73 @@ internal class TestRegisteredCompleteHttpFixtureV1(val admin: TestRegisteredAdmi
                 checkNotNull(poolTestField<Any?>(web.startup, field))
             }
         }
+    }
+
+    /** Actual ordinary HTTP login; never the older fixture's direct JWT signer. */
+    fun login(): String {
+        val user = admin.users[0]
+        val response = web.post("/api/v1/auth/login", mapper.writeValueAsBytes(mapOf("email" to user.email, "password" to PASSWORD)))
+        ordinary(response, 200)
+        val body = admin.json(response)
+        assertEquals("Bearer", body["tokenType"].textValue()); assertEquals("ADMIN", body["role"].textValue())
+        assertEquals(checkNotNull(first.process.consumers.jwt.boundUserKeyProvider).versionBoundAccessTokenTtl.seconds, body["expiresInSeconds"].longValue())
+        return checkNotNull(body["accessToken"].textValue()).also { assertTrue(it.isNotBlank()); web.assertRequestsReleased() }
+    }
+
+    fun sourceIssue(bearer: String, explicitScope: Boolean = false): HttpResponse<ByteArray> = web.post(STEP_UP,
+        mapper.writeValueAsBytes(if (explicitScope) mapOf("password" to PASSWORD, "scope" to SOURCE_SCOPE) else mapOf("password" to PASSWORD)), bearer)
+
+    /** Grant id is observed from its actual stored hash; SOURCE does not gain the COMPLAINT correlation header. */
+    fun sourceProof(bearer: String, explicitScope: Boolean = false): RegisteredAdminIssuedProofV1 {
+        val response = sourceIssue(bearer, explicitScope); ordinary(response, 200)
+        assertTrue(checkNotNull(admin.header(response, "Cache-Control")).contains("no-store"))
+        val body = admin.json(response)
+        assertEquals(setOf("token", "expiresAt", "scope"), body.fieldNames().asSequence().toSet())
+        assertEquals(SOURCE_SCOPE, body["scope"].textValue())
+        val token = checkNotNull(body["token"].textValue())
+        assertEquals(43, token.length); assertEquals(32, Base64.getUrlDecoder().decode(token).size)
+        val hash = Sha256.hexUtf8(token); val expires = Instant.parse(body["expiresAt"].textValue())
+        val id = checkNotNull(jdbc.queryForObject("SELECT id FROM admin_step_up_grants WHERE user_id = ? AND token_hash = ?",
+            UUID::class.java, admin.users[0].id, hash))
+        assertEquals(true, jdbc.queryForObject("SELECT scope = ? AND used_at IS NULL AND expires_at = ? " +
+            "AND expires_at = created_at + interval '300 seconds' FROM admin_step_up_grants WHERE id = ?",
+            Boolean::class.java, SOURCE_SCOPE, Timestamp.from(expires), id))
+        web.assertRequestsReleased()
+        return RegisteredAdminIssuedProofV1(token, id, expires)
+    }
+
+    fun sourceMode(api: String, bearer: String, proof: String): HttpResponse<ByteArray> =
+        web.put("/api/v1/admin/sources/$api/operational-mode", mapper.writeValueAsBytes(mapOf("mode" to "disabled")), bearer, proof)
+
+    fun preview(bearer: String): HttpResponse<ByteArray> = web.post(PREVIEW, mapper.writeValueAsBytes(mapOf(
+        "sourceJson" to SourceConfigParser.canonicalSource(SourceConfigFixtures.validGenericSource("Previewed")),
+        "operation" to "search", "page" to 3, "query" to "safe query", "responseStatus" to 200, "responseBody" to """{"items":[]}""")), bearer)
+
+    fun assertPreview(response: HttpResponse<ByteArray>) {
+        ordinary(response, 200)
+        val body = admin.json(response)
+        assertTrue(body["success"].booleanValue()); assertTrue(body["output"].isArray)
+        assertEquals("https://example.com/search?q=safe%20query&page=3", body["request"]["url"].textValue())
+        assertEquals("GET", body["request"]["method"].textValue()); assertTrue(body["request"]["headerNames"].isArray)
+    }
+
+    fun ordinary(response: HttpResponse<ByteArray>, status: Int) {
+        assertEquals(status, response.statusCode()); assertTrue(response.body().size in 1..2 * 1024 * 1024)
+        assertNull(admin.header(response, "X-Kira-Complaint-Contract")); assertNull(admin.header(response, ISSUED_ID))
+        assertNull(admin.header(response, "Set-Cookie")); assertNull(admin.header(response, "Content-Encoding"))
+        admin.association(response, null)
+    }
+
+    fun ordinaryProblem(response: HttpResponse<ByteArray>, status: Int, code: String? = null) {
+        ordinary(response, status)
+        assertTrue(checkNotNull(admin.header(response, "Content-Type")).startsWith("application/problem+json"))
+        val body = admin.json(response); assertEquals(status, body["status"].intValue())
+        if (code != null) assertEquals(code, body["errors"][0]["code"].textValue())
+    }
+
+    /** Read-only comparison: no source bootstrap/publication, global reset or manufactured history. */
+    fun sourceImage(): Map<String, List<String>> = SOURCE_TABLES.associateWith { table ->
+        jdbc.queryForList("SELECT jsonb_build_array(to_jsonb(s),s.xmin::text)::text FROM $table s ORDER BY to_jsonb(s)::text", String::class.java)
     }
 
     fun delete(attempt: RegisteredAdminDeleteHttpAttemptV1, proof: String? = null, bearer: String? = admin.admin()): HttpResponse<ByteArray> {
@@ -222,8 +308,13 @@ internal class TestRegisteredCompleteHttpFixtureV1(val admin: TestRegisteredAdmi
     }
     fun assertReleased() { web.assertRequestsReleased(); assertSqlReleased(); raw.assertDisposed(); assertEquals(0L, first.process.publicationLanes.activeOwners().totalOwners) }
     companion object {
+        const val PREVIEW = "/api/v1/admin/source-preview"
+        const val SOURCE_SCOPE = "source-admin-mutation"
+        private val SOURCE_TABLES = listOf("source_configs", "source_config_revisions", "source_validation_results", "published_documents",
+            "document_publication_state", "published_source_catalogs", "published_source_catalog_entries", "published_source_catalog_removed",
+            "source_editor_drafts", "source_changesets")
         val OLD_PATHS = TestRegisteredAdminContentHttpFixtureV1.PATHS + setOf("$ADMIN/{id}/status", "$ADMIN/{id}/closure", "$ADMIN/batch")
-        val PATHS = OLD_PATHS + setOf(ComplaintInstallationRoutes.ME, ComplaintInstallationRoutes.DELETE_ALL,
+        val PATHS = (OLD_PATHS - STEP_UP) + setOf(ComplaintInstallationRoutes.ME, ComplaintInstallationRoutes.DELETE_ALL,
             "${ComplaintInstallationRoutes.HISTORY}/{id}/replies", "${ComplaintInstallationRoutes.HISTORY}/{id}/content")
         val DELETION_TABLES = listOf("complaint_test_active_queue_observations", "complaint_idempotency_receipts", "complaint_recovery_capacity_reservations",
             "complaint_deletion_journal_retirements", "complaint_deletion_journal_applied", "complaint_journal_publications")

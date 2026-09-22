@@ -677,7 +677,7 @@ internal object TestRegisteredHttpStartupCasesV1 {
 
     /** Passive references to the actual product graph; this view owns only its real TCP client. */
     internal class StartedHttpView(val first: TestActiveFirstCutFixtureV1, val startup: ComplaintTestRegisteredHttpStartupV1,
-        expectedPaths: Set<String> = SUBSET) : AutoCloseable {
+        expectedPaths: Set<String> = SUBSET, sharedOrdinary: Boolean = false) : AutoCloseable {
         val context = poolTestField<AnnotationConfigServletWebServerApplicationContext>(startup, "context")
         val emf = poolTestField<EntityManagerFactory>(startup, "emf")
         val server = poolTestField<TomcatWebServer>(startup, "server")
@@ -705,6 +705,8 @@ internal object TestRegisteredHttpStartupCasesV1 {
             assertSame(first.process.consumers.jwt.boundUserKeyProvider, context.getBean(JwtKeyProvider::class.java))
             assertEquals(1, context.getBeansOfType(EntityManagerFactory::class.java).size)
             assertEquals(2, context.getBeansOfType(SecurityFilterChain::class.java).size)
+            assertEquals(sharedOrdinary, startup.ordinaryHttpObservation().accepting)
+            assertEquals(0, startup.ordinaryHttpObservation().activeRequests)
             val composition = context.getBean(ComplaintTestBootstrapHttpCompositionV1::class.java)
             val mapping = context.getBean("complaintTestBootstrapHandlerMapping", SimpleUrlHandlerMapping::class.java)
             assertEquals(expectedPaths, mapping.urlMap.keys)
@@ -727,6 +729,12 @@ internal object TestRegisteredHttpStartupCasesV1 {
                 key?.let { header("X-Kira-Idempotency-Key", it.toString()) }
                 proof?.let { header("X-Kira-Admin-Step-Up", it) }
             }.POST(HttpRequest.BodyPublishers.ofByteArray(body)))
+
+        /** Ordinary source consumer on the same listener/client, without complaint request metadata. */
+        fun put(path: String, body: ByteArray, bearer: String, proof: String): HttpResponse<ByteArray> =
+            send(HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json")
+                .header("Authorization", "Bearer $bearer").header("X-Kira-Admin-Step-Up", proof)
+                .PUT(HttpRequest.BodyPublishers.ofByteArray(body)))
 
         fun patch(attempt: RegisteredInitialEditAttemptV1, bearer: String): HttpResponse<ByteArray> =
             send(HttpRequest.newBuilder(uri(editPath(attempt))).header("Content-Type", "application/json")
@@ -774,7 +782,8 @@ internal object TestRegisteredHttpStartupCasesV1 {
             client.send(request.timeout(Duration.ofSeconds(5)).build(), HttpResponse.BodyHandlers.ofByteArray())
         fun ingressSnapshot(): IngressSnapshot = snapshot(ingress)
         fun assertRequestsReleased() {
-            awaitLifecycleFact(5_000) { ingressSnapshot().let { it.reservations == 0 && it.contexts == 0 } && admission.activeOwners() == 0 }
+            awaitLifecycleFact(5_000) { ingressSnapshot().let { it.reservations == 0 && it.contexts == 0 } && admission.activeOwners() == 0 &&
+                startup.ordinaryHttpObservation().activeRequests == 0 }
             requireConnectionFree()
             assertNull(PersistencePhaseOwnership.current())
         }
@@ -783,6 +792,7 @@ internal object TestRegisteredHttpStartupCasesV1 {
             assertFalse(context.isActive); assertFalse(emf.isOpen)
             assertEquals(LifecycleState.DESTROYED, server.tomcat.server.state)
             assertTrue(ingress.registeredStartupAdmissionReleased()); assertEquals(0, admission.activeOwners())
+            assertFalse(startup.ordinaryHttpObservation().accepting); assertEquals(0, startup.ordinaryHttpObservation().activeRequests)
             assertEquals(!nativeStillActive, first.process.pools.shutdownRequested())
             assertEquals(nativeStillActive, first.process.pools.ordinary.businessReady())
         }
