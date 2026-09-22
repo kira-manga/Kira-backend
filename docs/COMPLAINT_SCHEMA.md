@@ -1,4 +1,30 @@
-# Backend-Owned Complaint Schema — V14
+# Backend-Owned Complaint Schema — V14 and forward clean-start retirement
+
+## V31.4 clean-start compatibility retirement
+
+`V31_4__clean_start_complaint_retirement.sql` retires the unused legacy complaint representations
+without changing accepted migrations or deleting/copying any data. New backend history starts
+empty: old Firestore export/import, ownership adoption, reconciliation and recovery are excluded.
+Recovery of new backend data and installation credentials remains required.
+
+The forward migration adds validated constraints: complaints must be INSTALLATION/SYSTEM owned,
+not UNKNOWN, carry only absent/ADMIN closure provenance, and have all six legacy columns NULL.
+The four import/mapping tables remain as **empty compatibility relations**, because existing
+activation/replay collision guards reference them. Their CHECK(false) constraints reject every row.
+LEGACY_IMPORT_ACCEPTANCE and COMPLAINT_IMPORT_SEALED/COMPLAINT_IMPORT_PROMOTED are rejected without
+weakening the existing catalog/audit vocabulary, actor, scope or byte checks.
+
+The same transaction refuses nonzero actual/recovery-reserved/TEST-reserved units in retired slots
+5, 6, 7 and 14, with counter writers excluded while the upgrade preflight runs. Failure leaves
+prior data/schema/history intact; it does not authorize repair or deletion. Positive historical
+hard/free limits are not rewritten or admitted as current policy. The generic 22-slot ledger,
+vectors and canonical encoding stay lossless; new desired/TEST policy admission separately requires
+zero hard/creation limits in retired slots. This is deliberately not a permanent SQL zero-vector
+constraint or a change to authenticated historical recovery bytes.
+
+These constraints do not enable a service, accept a launch/policy, prove installed backup or
+retention behavior, or authorize production access, deployment or Firebase cutover. Old-client
+access retirement is distinct from permission to inspect/delete old production records.
 
 ## V15 dormant OWNER_CREATE receipt extension
 
@@ -23,7 +49,7 @@ all activation/restore/cutover authority remain absent; handlers are not registe
 adds storage for the App #29 complaint/feedback/moderation migration. **Schema support is not an
 enabled or production-ready complaint service.** It adds no endpoint, credential, active writer,
 accepted catalog or usable capacity. Authentication, locked writers, journal verification,
-restore quarantine, mobile/Admin integration and the legacy cutover remain separate gates.
+restore quarantine, mobile/Admin integration, backend cutover and old-client access retirement remain separate gates.
 
 Flyway owns this additive, transactional migration. V1–V13 remain unchanged; Hibernate must not
 generate these tables. Do not use `repair`, baseline-on-migrate or destructive schema cleanup to
@@ -42,20 +68,20 @@ scope fields null. SQL UUID columns do not validate incoming wire spelling; API 
 | `complaint_installation_ids` | Permanent identity reservation: `ACTIVE`, `DELETION_PENDING`, `RECOVERY_RESERVED`, `DELETED`, `RETIRED`. A recovery reservation is not an enrollable credential. |
 | `app_installations` | Scoped verifier and positive credential/row versions. `ACTIVE`/`DELETION_PENDING` retain platform, opaque owner reference and activity. `DELETED` clears those fields and retains only replay credential state for 192 elapsed hours. |
 | `complaint_resource_ids` | Permanent resource reservation: `LIVE`, `DELETION_PENDING`, `DELETED`. Reply parents reference this table, not erasable parent content. |
-| `complaints` | Versioned `REPORT`, `REPLY` or `NOTICE`, with ownership `INSTALLATION`, `LEGACY_UNCLAIMED` or `SYSTEM`. Notices are system-owned, pinned, keyed and contain no prose/diagnostics. |
+| `complaints` | Versioned `REPORT`, `REPLY` or `NOTICE`, with ownership `INSTALLATION` or `SYSTEM`; the historical `LEGACY_UNCLAIMED` shape is retired. Notices are system-owned, pinned, keyed and contain no prose/diagnostics. |
 
 Ordinary statuses are `OPEN`, `IN_PROGRESS`, `RESOLVED`, `CLOSED`, `PLANNED`, `PINNED` and
-`NOT_PLANNED`; `UNKNOWN` is legacy-only. Types are `TECHNICAL`, `LANGUAGES`, `SITES_ADD`,
+`NOT_PLANNED`; historical `UNKNOWN` is not admissible after V31.4. Types are `TECHNICAL`, `LANGUAGES`, `SITES_ADD`,
 `SITE_ERROR`, `FEATURES` and `CUSTOM`. Normal closed content requires an Admin actor, reason and
-time; only unclaimed legacy content may use incomplete `LEGACY` closure provenance. Leaving
+time; incomplete historical `LEGACY` closure provenance is retired. Leaving
 `CLOSED` requires all closure fields to be null.
 
 Stored subject/body/closure limits are respectively 200/1000/500 code points and 800/4000/2000
 UTF-8 bytes, with nonempty values and forbidden-control checks. These are persistence limits, not
 the narrower create-operation rules. Installation-owned content requires platform, OS,
-manufacturer and model fields; the three diagnostic strings may be empty. Missing legacy
-diagnostics remain null. Notice-thread replies use a notice key and no subject. Only the explicit
-legacy `AMBIGUOUS_NOTICE_PARENT` case permits a reply with no parent.
+manufacturer and model fields; the three diagnostic strings may be empty. Notice-thread replies
+use a notice key and no subject. Replies require a parent; the historical
+`AMBIGUOUS_NOTICE_PARENT` exception is retired with legacy ownership.
 
 ## Mutation and recovery records
 
@@ -81,7 +107,7 @@ purge 0. Neither is an ordinary `APPLIED` event. Epoch seals live in control/cat
 than the publication event set they seal. Event IDs use canonical 43-character unpadded Base64url
 SHA-256 spelling, including zero padding bits.
 
-## Control, capacity and import
+## Control, capacity and retired compatibility relations
 
 | Table | Stored responsibility and vocabulary |
 |---|---|
@@ -91,12 +117,13 @@ SHA-256 spelling, including zero padding bits.
 | `complaint_journal_control` | Scope/epoch/configuration/restore bindings, separate scan and retention leases, closed gates, seal intent and full checkpoint descriptor. |
 | `complaint_journal_scan_runs` | Two separately bounded passes; `SCANNING`, `COMPLETE`, `ABANDONED`, fencing and count/byte totals. |
 | `complaint_journal_scan_entries` | Exact scoped scan/pass/key/version identity; `PENDING`, `APPLIED`, `VERIFIED_ONLY`, `RETIRED`. |
-| `complaint_import_runs` | One frozen live legacy snapshot; `STAGING`, `SEALED`, `PROMOTED`, `ABORTED`. At most one staging/sealed run and one promoted snapshot. |
-| `complaint_import_staging` | Bounded normalized `ACCEPTED`/`REJECTED` records, assigned identities and HMAC-based source mapping; no raw legacy-name/device-ID column. |
-| `complaint_import_artifacts` | `PREPARED`/`VERIFIED` encrypted export/restore-map references and exact expected/verified-copy descriptors, not full encrypted exports in database rows. |
-| `complaint_legacy_records` | `PROMOTED`/`RESTORED` identity mapping, separate nullable content reference and cutoff + 13 UTC calendar-month expiry. |
+| `complaint_import_runs` | Retired, must remain empty. The historical schema shape is retained, not an importer. |
+| `complaint_import_staging` | Retired, must remain empty; historical columns/FKs remain interpretable. |
+| `complaint_import_artifacts` | Retired, must remain empty; no export/restore-map artifact may be inserted. |
+| `complaint_legacy_records` | Retired, must remain empty; retained mapping columns do not authorize adoption/recovery. |
 
-Counter/vector ordinals are fixed schema encoding, not inferred dynamically:
+Counter/vector ordinals are fixed schema encoding, not inferred dynamically. Retired slots
+5/6/7/14 remain present and retain their original names:
 
 ```text
  1 app_installations       2 audit_rows           3 catalog_mutations
@@ -166,6 +193,11 @@ still apply. `admin_step_up_grants` accepts both `source-admin-mutation` and
 
 ## Verification and remaining writer obligations
 
+Historical rich-fixture classes explicitly select V22, and `DatabaseBackupRestoreIT` selects
+V13/V14; those results do not qualify the current clean-start schema. The generic schema helper
+remains LATEST. Current migration/refusal/rollback and shared-reset cases use a separate nonlegacy
+fixture while retaining the original rich/backup resources byte-for-byte.
+
 The synthetic suites in `src/test/kotlin/me/manga/kira/backend/database/complaint/` cover fresh
 PostgreSQL 17.6 UTF8 and every V1–V13 upgrade, historical checksums, populated preservation,
 transaction rollback, exact constraint failures, finite/byte/array boundaries and prepared queries.
@@ -190,12 +222,14 @@ From the backend directory, with disposable Docker available:
 
 Preserve required test reports, then run `./gradlew clean` and `./gradlew --stop` again. Stop owned
 test services; never prune unrelated containers, source, secrets, signing material or global caches.
-Run the full backend `check` gate before acceptance; test presence alone is not a passing result.
+Select the affected migration, domain and admission/recovery checks for the actual diff; do not
+repeat unchanged broad gates. Test presence alone is not a passing result.
 
 Subsequent work must prove authenticated installation/Admin boundaries, same-connection capacity/
 audit/grant transactions, consistent receipt/installation/resource lock order, epoch/fencing rules,
 no external I/O under database ownership, durable-before-network deletion, exact-version verified
-evidence, retention/compaction authority, import reconciliation and restore replay convergence.
+evidence, retention/compaction authority and new-data restore replay convergence. Old Firestore
+import/reconciliation/recovery is excluded, not an unfinished implementation prerequisite.
 Rows labelled `VERIFIED`, `APPLIED`, `SUCCESS` or `PURGED` do not themselves establish those facts.
 Physical devices, deployed PostgreSQL/Redis/storage, cloud fencing, legacy freeze/denial, stores
 and privacy approval remain external gates. Backend #28/#29 remain independent deployment/recovery

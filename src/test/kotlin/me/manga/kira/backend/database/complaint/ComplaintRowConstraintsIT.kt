@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 
-class ComplaintRowConstraintsIT : ComplaintFixtureTest() {
+class ComplaintRowConstraintsIT : ComplaintFixtureTest(target = 22) {
     @ParameterizedTest(name = "{0}")
     @MethodSource("invalidRows")
     fun `malformed identity content and closure rows are rejected`(case: SqlViolation) {

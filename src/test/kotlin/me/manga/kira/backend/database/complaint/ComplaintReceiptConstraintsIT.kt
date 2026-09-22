@@ -3,7 +3,7 @@ package me.manga.kira.backend.database.complaint
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
-class ComplaintReceiptConstraintsIT : ComplaintFixtureTest() {
+class ComplaintReceiptConstraintsIT : ComplaintFixtureTest(target = 22) {
     @Test
     fun `actor key uniqueness survives operation and scope changes`() {
         val columns = "actor_kind,actor_id,idempotency_key,operation,fingerprint,target_ids,data_scope_id,test_only,state,created_at"

@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.sql.Connection
 
-class ComplaintJournalConstraintsIT : ComplaintFixtureTest() {
+class ComplaintJournalConstraintsIT : ComplaintFixtureTest(target = 22) {
     @Test
     fun `canonical event encoding rejects nonzero pad bits and hash or byte-bound mismatches`() {
         val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"

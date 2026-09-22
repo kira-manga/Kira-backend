@@ -5,7 +5,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import java.sql.Connection
 
-class ComplaintDescriptorMatrixIT : ComplaintFixtureTest() {
+class ComplaintDescriptorMatrixIT : ComplaintFixtureTest(target = 22) {
     @ParameterizedTest(name = "{0}")
     @MethodSource("descriptorCases")
     fun `persisted descriptor sites enforce exact minimum maximum and content hash`(case: DescriptorCase) {

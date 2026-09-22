@@ -42,7 +42,7 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
                 "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() AND " +
                     "(tablename LIKE 'complaint%' OR tablename IN ('app_installations','installation_deletion_receipts')) ORDER BY tablename",
             )
-            assertEquals((expectedTables + "complaint_test_terminal_intents").sorted(), actual)
+            assertEquals(currentTables.sorted(), actual)
         }
         assertTrue(schema.flyway().validateWithResult().validationSuccessful)
         assertEquals(0, schema.flyway().migrate().migrationsExecuted)
@@ -229,12 +229,13 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
     }
 
     companion object {
-        private val latestVersions = (1..13).map(Int::toString) + listOf("13.1", "13.2") + (14..22).map(Int::toString)
+        private val latestVersions = (1..13).map(Int::toString) + listOf("13.1", "13.2") +
+            (14..31).map(Int::toString) + listOf("31.1", "31.2", "31.3", "31.4")
         private const val V14 = "V14__backend_owned_complaints.sql"
         private const val SYNTHETIC_BCRYPT = "{bcrypt}\$2a\$10\$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
         private val historicalInputs = complaintResource("fixtures/complaint/migration-sha256.txt")
             .lineSequence().filter(String::isNotBlank).map { it.split(' ', limit = 2).let { pair -> pair[0] to pair[1] } }.toList()
-        // Original V14 fixture tables; V21 intents are separately checked by the fresh-schema/reset tests.
+        // Original V14 fixture tables remain the historical fixture/reset oracle.
         val expectedTables = listOf(
             "complaint_installation_ids", "app_installations", "complaint_resource_ids", "complaints",
             "complaint_idempotency_receipts", "installation_deletion_receipts", "complaint_journal_publications",
@@ -242,6 +243,11 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
             "complaint_journal_control", "complaint_journal_scan_runs", "complaint_journal_scan_entries",
             "complaint_catalog_mutations", "complaint_capacity_counters", "complaint_recovery_capacity_reservations",
             "complaint_import_runs", "complaint_import_staging", "complaint_import_artifacts", "complaint_legacy_records",
+        )
+        val currentTables = expectedTables + listOf(
+            "complaint_test_terminal_intents", "complaint_test_active_seal_intents",
+            "complaint_test_active_queue_observations", "complaint_test_active_checkpoint_history",
+            "complaint_test_active_recurrent_seal_intents",
         )
     }
 }

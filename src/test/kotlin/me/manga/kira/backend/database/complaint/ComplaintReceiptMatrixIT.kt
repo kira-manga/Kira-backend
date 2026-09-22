@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
 
-class ComplaintReceiptMatrixIT : ComplaintFixtureTest() {
+class ComplaintReceiptMatrixIT : ComplaintFixtureTest(target = 22) {
     @ParameterizedTest
     @CsvSource(
         "ADMIN_BATCH_STATUS,0",

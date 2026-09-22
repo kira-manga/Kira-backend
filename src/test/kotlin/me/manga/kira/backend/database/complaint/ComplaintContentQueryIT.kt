@@ -10,7 +10,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import java.util.UUID
 
-/** Representative storage queries, not yet the W05 HTTP/repository implementation. */
+/** Historical V22 storage queries, including retained legacy mapping/index specimens; not current API acceptance. */
 class ComplaintContentQueryIT : ComplaintPostgresTest() {
     private lateinit var schema: ComplaintSchema
     private val fixture = ComplaintContentQueryFixture()
@@ -19,7 +19,7 @@ class ComplaintContentQueryIT : ComplaintPostgresTest() {
     @BeforeAll
     fun seedQueryRows() {
         schema = database.createSchema()
-        schema.flyway().migrate()
+        schema.flyway(22).migrate()
         schema.connection().use { connection ->
             connection.autoCommit = false
             fixture.seed(connection)

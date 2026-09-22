@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.sql.Connection
 
-class ComplaintRunConstraintsIT : ComplaintFixtureTest() {
+class ComplaintRunConstraintsIT : ComplaintFixtureTest(target = 22) {
     @Test
     fun `one nonterminal run is enforced across active sealed and purging states`() {
         for (state in listOf("ACTIVE", "SEALED", "PURGING")) {

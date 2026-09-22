@@ -3,7 +3,7 @@ package me.manga.kira.backend.database.complaint
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
-class ComplaintScanConstraintsIT : ComplaintFixtureTest() {
+class ComplaintScanConstraintsIT : ComplaintFixtureTest(target = 22) {
     @Test
     fun `scan pass identity fencing and configured capacity stay finite and bounded`() {
         val update = "UPDATE complaint_journal_scan_runs SET "

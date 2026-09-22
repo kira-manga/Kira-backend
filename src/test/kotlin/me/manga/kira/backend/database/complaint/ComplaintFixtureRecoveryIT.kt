@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** Transactional synthetic erasure proof, not implementation of the W04 authorized purge worker. */
-class ComplaintFixtureRecoveryIT : ComplaintFixtureTest() {
+class ComplaintFixtureRecoveryIT : ComplaintFixtureTest(target = 22) {
     @Test
     fun `failure at every reset statement restores all fixture rows relationships and sequence values`() {
         val before = connection.tableSnapshots()

@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 
-class ComplaintIdentityMatrixIT : ComplaintFixtureTest() {
+class ComplaintIdentityMatrixIT : ComplaintFixtureTest(target = 22) {
     @Test
     fun `legacy identity ignores changed payload and notice uniqueness applies only within one scope`() {
         val newId = fixtureUuid(0x801, 1).toString()
