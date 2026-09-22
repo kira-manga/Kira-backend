@@ -6,7 +6,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import java.sql.Connection
 
-class ComplaintOptionalTimestampIT : ComplaintFixtureTest() {
+class ComplaintOptionalTimestampIT : ComplaintFixtureTest(target = 22) {
     @ParameterizedTest(name = "{0}")
     @MethodSource("timeCases")
     fun `each populated optional timestamp rejects both infinities without masking phase validation`(case: TimeCase) {

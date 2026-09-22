@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.sql.Connection
 
-class ComplaintControlConstraintsIT : ComplaintFixtureTest() {
+class ComplaintControlConstraintsIT : ComplaintFixtureTest(target = 22) {
     @Test
     fun `closed control cannot open with missing configuration catalog or projection state`() {
         connection.expectSqlFailure(controlUpdate("maintenance_closed=false"), constraint = "chk_complaint_control_closed")

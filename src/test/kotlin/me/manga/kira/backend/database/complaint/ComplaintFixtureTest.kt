@@ -6,15 +6,15 @@ import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import java.sql.Connection
 
-/** One schema per class, one rollback-only transaction per case. No data outlives its container. */
-abstract class ComplaintFixtureTest : ComplaintPostgresTest() {
+/** Explicit historical targets are chosen by each rich-fixture class; an omitted target remains LATEST. */
+abstract class ComplaintFixtureTest(private val target: Int? = null) : ComplaintPostgresTest() {
     protected lateinit var schema: ComplaintSchema
     protected lateinit var connection: Connection
 
     @BeforeAll
     fun migrateFixtureSchema() {
         schema = database.createSchema()
-        schema.flyway().migrate()
+        schema.flyway(target).migrate()
     }
 
     @AfterAll

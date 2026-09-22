@@ -7,7 +7,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /** Opt-in rich-state tests; the shared constraint fixture deliberately remains unchanged. */
-class ComplaintBackupStatesIT : ComplaintFixtureTest() {
+class ComplaintBackupStatesIT : ComplaintFixtureTest(target = 22) {
     @BeforeEach
     fun addBackupStateOverlay() {
         connection.exec(complaintResource("fixtures/complaint/v14-backup-states.sql"))

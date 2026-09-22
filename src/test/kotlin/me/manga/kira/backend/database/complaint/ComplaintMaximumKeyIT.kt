@@ -6,7 +6,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import java.util.Random
 
-class ComplaintMaximumKeyIT : ComplaintFixtureTest() {
+class ComplaintMaximumKeyIT : ComplaintFixtureTest(target = 22) {
     @ParameterizedTest
     @ValueSource(ints = [1, 2, 3, 4, 5, 6, 7, 8])
     fun `independent maximum byte pairs fit all composite indexes with foreign keys enabled`(seed: Int) {

@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 
-class ComplaintEventKindMatrixIT : ComplaintFixtureTest() {
+class ComplaintEventKindMatrixIT : ComplaintFixtureTest(target = 22) {
     @ParameterizedTest(name = "{0}")
     @MethodSource("ordinaryBounds")
     fun `applied evidence enforces its own event kind count endpoints`(case: EventBounds) {

@@ -14,12 +14,13 @@ class ComplaintResetIT : AbstractIntegrationTest() {
             // Synthetic historical catalog, not authenticated bootstrap completion.
             jdbcTemplate.update("UPDATE document_publication_state SET bootstrap_phase='reconciliation_required' WHERE id=1")
             jdbcTemplate.execute(complaintResource("fixtures/complaint/v13-rich.sql"))
-            jdbcTemplate.execute(complaintResource("fixtures/complaint/v14-rich.sql"))
+            // Current nonlegacy relationships; rich legacy reset oracles remain explicitly historical.
+            jdbcTemplate.execute(complaintResource("fixtures/complaint/v31_4-clean-start.sql"))
             resetState()
             resetState()
             requireNotNull(jdbcTemplate.dataSource).connection.use { connection ->
                 connection.assertClosedComplaintSeeds()
-                val tables = ComplaintMigrationIT.expectedTables + "complaint_test_terminal_intents" -
+                val tables = ComplaintMigrationIT.currentTables -
                     listOf("complaint_capacity_counters", "complaint_journal_control")
                 for (table in tables) {
                     assertEquals(listOf("0"), connection.strings("SELECT count(*) FROM $table"), table)

@@ -6,7 +6,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import java.sql.Connection
 
-class ComplaintReferenceMatrixIT : ComplaintFixtureTest() {
+class ComplaintReferenceMatrixIT : ComplaintFixtureTest(target = 22) {
     @ParameterizedTest(name = "{0}")
     @MethodSource("referenceCases")
     fun `routing signer and external reference sites preserve byte bounds without truncation`(case: ReferenceCase) {

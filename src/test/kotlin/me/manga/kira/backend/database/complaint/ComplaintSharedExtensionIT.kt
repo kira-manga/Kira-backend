@@ -3,7 +3,7 @@ package me.manga.kira.backend.database.complaint
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
-class ComplaintSharedExtensionIT : ComplaintFixtureTest() {
+class ComplaintSharedExtensionIT : ComplaintFixtureTest(target = 22) {
     @Test
     fun `existing source grants stay valid and only the two exact scopes are representable`() {
         assertEquals(

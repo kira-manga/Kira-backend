@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.sql.Connection
 
-class ComplaintImportConstraintsIT : ComplaintFixtureTest() {
+class ComplaintImportConstraintsIT : ComplaintFixtureTest(target = 22) {
     @Test
     fun `one staged or sealed import and one promoted snapshot prevent overlapping cutovers`() {
         for (state in listOf("STAGING", "SEALED")) {

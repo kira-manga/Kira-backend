@@ -4,7 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.sql.Connection
 
-class ComplaintCatalogConstraintsIT : ComplaintFixtureTest() {
+class ComplaintCatalogConstraintsIT : ComplaintFixtureTest(target = 22) {
     @Test
     fun `unsigned approval and complete envelope have separately enforced exact byte and hash bounds`() {
         for ((column, hash, maximum) in listOf(
