@@ -376,7 +376,10 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
                 edge = "CASE_CALLBACK"
                 action(f, a, b, inputs, historical)
                 edge = "CASE_RETURN_CHECK"
-                assertEquals(history, terminalCatalogActiveRows(f))
+                // D/E retain the exact source rows; only completed F removes V26. The
+                // permanent V29 observation (including xmin) is never erased or refunded.
+                val expectedHistory = if (terminalFixtureRunIsPurged(f)) history + ("V26" to emptyList()) else history
+                assertEquals(expectedHistory, terminalCatalogActiveRows(f))
                 val primaryImage = a.image()
                 edge = "CHILD_CLOSE"
                 primaryImage
