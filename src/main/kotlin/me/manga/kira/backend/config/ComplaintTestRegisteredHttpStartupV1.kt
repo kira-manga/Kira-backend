@@ -783,7 +783,7 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             "server.tomcat.remoteip.remote-ip-header" to "",
             "server.tomcat.remoteip.protocol-header" to "",
             "server.shutdown" to "immediate",
-            "management.server.port" to "0",
+            "management.server.port" to "", // Null Integer keeps the same listener; 0 opens another ephemeral server.
         ))
 
         /** Inert child construction only. start/close require the assembly's exact retained identity/caller. */
