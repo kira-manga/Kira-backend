@@ -10,6 +10,9 @@ import me.manga.kira.backend.complaint.domain.InstallationDeletionCandidate
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightRejection
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightResult
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationFailureV1
+import me.manga.kira.backend.complaint.infrastructure.journal.journalPublicationCall
+import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import org.springframework.jdbc.core.JdbcTemplate
@@ -51,6 +54,16 @@ internal class JdbcComplaintInstallationDeletionPreflightStore(private val jdbc:
         process?.requireOrdinary(jdbc)
         process?.requireInputs(process.desired, routing)
         return ComplaintInstallationDeletionPreflightOperation.bindReplay(comparison, issuer, ownerIdentity, routing, codec)
+    }
+
+    /** Separate original registered TEST binder; no LIVE relaxation or caller-issued Completed result. */
+    fun bindReplay(comparison: InstallationDeletionPreflightResult.Completed, ownerIdentity: Any,
+        routing: OwnerDeleteAllJournalBindingV1): BoundOwnerDeleteAllReplayV1 {
+        val graph = checkNotNull(testGraph)
+        checkNotNull(graph.initialDeletion).requireGraph(graph)
+        graph.requireOrdinary(jdbc)
+        routing.requireTest(graph.routing)
+        return ComplaintInstallationDeletionPreflightOperation.bindReplay(comparison, issuer, ownerIdentity, routing)
     }
 
     override fun toString(): String = "JdbcComplaintInstallationDeletionPreflightStore(read-only)"
@@ -187,6 +200,13 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
             snapshot.requireBound(this, routing, codec) // Even a cached outcome cannot bypass a mismatched same-J codec check.
             return boundReplay ?: ReleasedBoundReplay(snapshot.completedAt, snapshot.expiresAt).also { boundReplay = it }
         }
+
+        fun bindReplay(routing: OwnerDeleteAllJournalBindingV1): BoundOwnerDeleteAllReplayV1 {
+            // Only local validation of this original immutable observation is bounded here. Signals
+            // escape; malformed event/proof bytes cannot trigger a new read or an inferred receipt.
+            journalPublicationCall(JournalPublicationFailureV1.INVALID_READBACK) { snapshot.requireBound(this, routing) }
+            return boundReplay ?: ReleasedBoundReplay(snapshot.completedAt, snapshot.expiresAt).also { boundReplay = it }
+        }
     }
 
     private class ReleasedBoundReplay(override val completedAt: Instant, override val expiresAt: Instant) : BoundOwnerDeleteAllReplayV1 {
@@ -239,6 +259,14 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
             val retained = comparison as? ReleasedCompleted ?: throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
             retained.requireOwned(issuer, ownerIdentity)
             return retained.bindReplay(routing, codec)
+        }
+
+        fun bindReplay(comparison: InstallationDeletionPreflightResult.Completed, issuer: Any, ownerIdentity: Any,
+            routing: OwnerDeleteAllJournalBindingV1): BoundOwnerDeleteAllReplayV1 {
+            requireConnectionFree()
+            val retained = comparison as? ReleasedCompleted ?: throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
+            retained.requireOwned(issuer, ownerIdentity)
+            return retained.bindReplay(routing)
         }
     }
 }

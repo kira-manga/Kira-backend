@@ -13,6 +13,7 @@ import me.manga.kira.backend.complaint.api.ComplaintInstallationBootstrapHttpHan
 import me.manga.kira.backend.complaint.api.ComplaintInstallationHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerCreateHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteAllHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDetailHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerEditHttpHandler
@@ -23,6 +24,7 @@ import me.manga.kira.backend.complaint.application.ComplaintInstallationBootstra
 import me.manga.kira.backend.complaint.application.ComplaintInstallationMeService
 import me.manga.kira.backend.complaint.application.ComplaintInstallationService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerCreateService
+import me.manga.kira.backend.complaint.application.ComplaintOwnerDeleteAllService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerDeleteService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerDetailService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerEditService
@@ -59,6 +61,7 @@ import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBind
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteAllJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerCreatePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerEditPhaseExecutor
@@ -91,7 +94,8 @@ import java.util.UUID
  * A further explicit me/REPLY/EDIT selection combines that projection with the existing owner cohort.
  * A separate born-with Admin read sibling adds its fixed normal-ADMIN search/detail/stats cohort.
  * A separate registered owner-deletion sibling selects read/CREATE plus DELETE/status, never direct APPLY.
- * No delete-all, LIVE/restart/quarantine or broad Core; all earlier selectors remain narrower.
+ * A further explicit sibling adds body-secret owner-delete-all with the same original deletion owners.
+ * No LIVE/restart/quarantine or broad Core; all earlier selectors remain narrower.
  */
 internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     registration: ComplaintTestNamespaceRegistrationV1,
@@ -107,6 +111,8 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     private val adminContent: ComplaintTestRegisteredAdminContentV1? = null,
     private val ownerDelete: TestOwnerDeleteProcessBindingV1.OwnerHttpResources? = null,
     private val ownerDeletePublisher: TestOwnerDeleteJournalPublisherFactoryV1? = null,
+    private val ownerDeleteAll: TestOwnerDeleteProcessBindingV1.OwnerDeleteAllHttpResources? = null,
+    private val ownerDeleteAllPublisher: TestOwnerDeleteAllJournalPublisherFactoryV1? = null,
 ) {
     init {
         require((assembly == null) == (audit == null))
@@ -119,6 +125,8 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         require(adminContent == null || adminReads != null)
         require((ownerDelete == null) == (ownerDeletePublisher == null))
         require(ownerDelete == null || (reads != null && replyStore == null && editStore == null && me == null && adminReads == null && adminContent == null))
+        require((ownerDeleteAll == null) == (ownerDeleteAllPublisher == null))
+        require(ownerDeleteAll == null || ownerDelete != null)
     }
 
     private val producer = ComplaintInstallationBootstrapHttpHandler(
@@ -144,6 +152,10 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             ComplaintOwnerDeleteHttpHandler(ComplaintOwnerDeleteService(it.adapter(registration, assembly, ownership, jdbc, jwt,
                 checkNotNull(ownerDeletePublisher))), ingress, responses)
         }
+        val deleteAll = ownerDeleteAll?.let {
+            ComplaintOwnerDeleteAllHttpHandler(ComplaintOwnerDeleteAllService(it.adapter(registration, assembly, ownership, jdbc,
+                checkNotNull(ownerDelete), checkNotNull(ownerDeleteAllPublisher))), ingress)
+        }
         val create = ComplaintOwnerCreateHttpHandler(
             ComplaintOwnerCreateService(ComplaintOwnerCreateAdapter(scope, jwt, ComplaintOwnerCreatePhaseExecutor(ownership, store), ingress)), ingress, responses,
             deleteStatus = delete, editStatus = edit,
@@ -157,7 +169,11 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         // AUTH remains early rejection only. Direct CREATE constructs no read producer/handler.
         val authentication = ComplaintInstallationBearerAuthenticator(scope, jwt,
             reads?.authenticationPhases ?: ComplaintOwnerHistoryPhaseExecutor(ownership, JdbcComplaintOwnerHistoryStore(jdbc, scope)), ingress)
-        if (delete != null) {
+        if (deleteAll != null) {
+            val selectedReads = checkNotNull(reads)
+            ComplaintInstallationSecurityChainFactory.registeredReadCreateOwnerDeleteAllSubset(
+                bridge, producer, authentication, installations, create, selectedReads.history, selectedReads.detail, checkNotNull(delete), deleteAll)
+        } else if (delete != null) {
             val selectedReads = checkNotNull(reads)
             ComplaintInstallationSecurityChainFactory.registeredReadCreateOwnerDeleteSubset(
                 bridge, producer, authentication, installations, create, selectedReads.history, selectedReads.detail, delete)
@@ -185,7 +201,8 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     private val literalPaths: Set<String> = (if (assembly == null) setOf(ComplaintInstallationRoutes.BOOTSTRAP) else setOf(
         ComplaintInstallationRoutes.BOOTSTRAP, ComplaintInstallationRoutes.ENROLLMENT, ComplaintInstallationRoutes.SESSION,
         ComplaintInstallationRoutes.HISTORY, ComplaintInstallationRoutes.STATUS,
-    )) + (if (me == null) emptySet() else setOf(ComplaintInstallationRoutes.ME))
+    )) + (if (me == null) emptySet() else setOf(ComplaintInstallationRoutes.ME)) +
+        (if (ownerDeleteAll == null) emptySet() else setOf(ComplaintInstallationRoutes.DELETE_ALL))
 
     /** MVC templates do not grant ingress. Both pre-buffer guards use the concrete method/path predicates below. */
     val mappedPaths: Set<String> = literalPaths +
@@ -226,6 +243,7 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
                 if ((selected.method == "GET" && (path == ComplaintInstallationRoutes.ME ||
                         path == ComplaintInstallationRoutes.HISTORY || ComplaintInstallationRoutes.isDetail(selected))) ||
                     (ownerDelete != null && selected.method == "DELETE" && ComplaintInstallationRoutes.isDetail(selected)) ||
+                    (ownerDeleteAll != null && selected.method == "POST" && path == ComplaintInstallationRoutes.DELETE_ALL) ||
                     (replyStore != null && selected.method == "POST" && ComplaintInstallationRoutes.isReply(selected)) ||
                     (editStore != null && selected.method == "PATCH" && ComplaintInstallationRoutes.isContent(selected))) {
                     reads?.requireWithinIngress()
@@ -372,6 +390,25 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             registration.requireIdentityAdmissionPhaseResources(ownership, jdbc)
             return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
                 RegisteredOwnerReads(registration, assembly, ownership, jdbc), ownerDelete = ownerResources, ownerDeletePublisher = publisher)
+        }
+
+        /** Explicit ALL addition on the same original binding; both native factories are already retained by startup. */
+        fun fromRegisteredInitialCheckpointReadCreateOwnerDeleteAll(
+            registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership,
+            jdbc: JdbcTemplate,
+            audit: AuditService,
+            ownerResources: TestOwnerDeleteProcessBindingV1.OwnerHttpResources,
+            publisher: TestOwnerDeleteJournalPublisherFactoryV1,
+            allResources: TestOwnerDeleteProcessBindingV1.OwnerDeleteAllHttpResources,
+            allPublisher: TestOwnerDeleteAllJournalPublisherFactoryV1,
+        ): ComplaintTestBootstrapHttpCompositionV1 {
+            registration.requireActiveIdentityTarget(assembly)
+            registration.requireIdentityAdmissionPhaseResources(ownership, jdbc)
+            return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
+                RegisteredOwnerReads(registration, assembly, ownership, jdbc), ownerDelete = ownerResources, ownerDeletePublisher = publisher,
+                ownerDeleteAll = allResources, ownerDeleteAllPublisher = allPublisher)
         }
 
         /** Concrete me reader on the same registered read/CREATE graph; no earlier selector expands. */

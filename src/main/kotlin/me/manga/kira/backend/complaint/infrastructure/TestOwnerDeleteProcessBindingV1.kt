@@ -19,6 +19,9 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestInitial
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionSqlV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredRecurrentCheckpointDeletionCurrentV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveCutoffPublicationV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintInstallationDeletionPreflightPhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteAllPhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteAllVerificationPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeletePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteReadPhaseExecutor
 import me.manga.kira.backend.security.ComplaintAdmittedAdminErasure
@@ -36,8 +39,10 @@ import java.util.UUID
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteAllExchange
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteAllJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalPublisherFactoryV1
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
@@ -128,6 +133,7 @@ internal class TestOwnerDeleteProcessBindingV1 private constructor(
     internal fun adminPublisher(store: JdbcComplaintAdminDeleteStore) = publication.adminPublisher(this, store)
 
     internal fun ownerHttpResources(audit: AuditService): OwnerHttpResources = OwnerHttpResources(this, audit)
+    internal fun ownerDeleteAllHttpResources(audit: AuditService): OwnerDeleteAllHttpResources = OwnerDeleteAllHttpResources(this, audit)
 
     /** One fixed original SQL graph. Its publisher stays separately retained by the startup before any listener. */
     internal class OwnerHttpResources(private val original: TestOwnerDeleteProcessBindingV1, audit: AuditService) {
@@ -146,6 +152,8 @@ internal class TestOwnerDeleteProcessBindingV1 private constructor(
 
         internal fun publisher(): TestOwnerDeleteJournalPublisherFactoryV1 = original.ownerPublisher(store)
 
+        internal fun requireOriginal(binding: TestOwnerDeleteProcessBindingV1) { check(original === binding) }
+
         internal fun adapter(registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1,
             ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, jwt: InstallationJwtCodec,
             publisher: TestOwnerDeleteJournalPublisherFactoryV1): ComplaintOwnerDeleteAdapter {
@@ -155,6 +163,37 @@ internal class TestOwnerDeleteProcessBindingV1 private constructor(
             original.requireEntry(ownership, PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHENTICATION)
             original.requireEntry(original.deletionOwner, PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE)
             return ComplaintOwnerDeleteAdapter(graph, jwt, reads, phases, publisher)
+        }
+    }
+
+    /** Same original ordinary/deletion pair as owner DELETE. No request APPLY resources are constructed. */
+    internal class OwnerDeleteAllHttpResources(private val original: TestOwnerDeleteProcessBindingV1, audit: AuditService) {
+        init {
+            original.requireEntry(original.ordinaryOwner, PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT)
+            original.requireEntry(original.deletionOwner, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE)
+        }
+        private val graph = original.lower
+        private val capacity = JdbcComplaintCapacityStore(original.deletion, graph.policy.digestBytes())
+        private val store = JdbcComplaintOwnerDeleteAllStore(original.deletion, capacity, audit, graph,
+            TestOwnerDeleteJournalCodecV1.forCanonicalization(graph.routing))
+        private val preflights = ComplaintInstallationDeletionPreflightPhaseExecutor(original.ordinaryOwner,
+            JdbcComplaintInstallationDeletionPreflightStore(original.ordinary, testGraph = graph))
+        private val phases = ComplaintOwnerDeleteAllPhaseExecutor(original.deletionOwner, store, preflights)
+        private val verification = ComplaintOwnerDeleteAllVerificationPhaseExecutor(original.deletionOwner,
+            JdbcComplaintOwnerDeleteAllVerificationStore(original.deletion, graph, store))
+
+        internal fun publisher(): TestOwnerDeleteAllJournalPublisherFactoryV1 = original.allPublisher(store)
+
+        internal fun adapter(registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, ownerResources: OwnerHttpResources,
+            publisher: TestOwnerDeleteAllJournalPublisherFactoryV1): ComplaintOwnerDeleteAllExchange {
+            requireConnectionFree()
+            check(registration === original.registration && assembly === original.assembly &&
+                ownership === original.ordinaryOwner && jdbc === original.ordinary)
+            ownerResources.requireOriginal(original)
+            original.requireEntry(ownership, PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT)
+            original.requireEntry(original.deletionOwner, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE)
+            return ComplaintTestRegisteredOwnerDeleteAllExchangeV1(graph, store, preflights, phases, verification, publisher)
         }
     }
 
