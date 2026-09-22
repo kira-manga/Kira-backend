@@ -54,6 +54,7 @@ internal class TestTerminalInventoryReaderV1 private constructor(
     private val graph = AtomicReference<AwsTestTerminalInventoryRecoveryV1?>()
     private var stage = Stage.READY
     private var completedPasses = 0
+    // STS acquisition only; the inventory pair, including SQL and gaps, uses the original scan budget.
     private var passAttempt: TestTerminalAttemptV1? = null
     private var codecAttempt: TestTerminalAttemptV1? = null
     private var currentReadback: Observed? = null
@@ -186,6 +187,11 @@ internal class TestTerminalInventoryReaderV1 private constructor(
     internal fun requireRecovery(owner: AwsTestTerminalInventoryRecoveryV1) {
         requireReader(); requireJournalPublication(graph.get() === owner && busy.get() && stage in setOf(Stage.ACQUISITION, Stage.INVENTORY))
     }
+    /** The exact graph's scan clock, without recursing through its session-usability check. */
+    internal fun remainingRecoveryMillis(owner: AwsTestTerminalInventoryRecoveryV1, ceiling: Int): Int {
+        requireRecovery(owner)
+        return budget.remainingMillis(ceiling.toLong()).toInt()
+    }
     internal fun recoveryAttempt(): TestTerminalAttemptV1 {
         requireReader(); requireJournalPublication(stage === Stage.ACQUISITION)
         return checkNotNull(passAttempt)
@@ -193,11 +199,10 @@ internal class TestTerminalInventoryReaderV1 private constructor(
     internal fun requireNativeRead() {
         requireReader(); requireJournalPublication(busy.get() && stage === Stage.INVENTORY)
         checkNotNull(graph.get()).requireUsable(this)
-        checkNotNull(passAttempt).remainingMillis(1)
     }
     internal fun remainingNativeMillis(ceiling: Int): Int {
         requireNativeRead()
-        return checkNotNull(passAttempt).remainingMillis(ceiling)
+        return budget.remainingMillis(ceiling.toLong()).toInt()
     }
     internal fun requireCodecAttempt(attempt: TestTerminalAttemptV1) {
         requireNativeRead(); requireJournalPublication(codecAttempt === attempt)

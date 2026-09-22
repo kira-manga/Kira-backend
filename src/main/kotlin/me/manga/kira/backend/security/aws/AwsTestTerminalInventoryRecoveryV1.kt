@@ -54,7 +54,7 @@ internal class AwsTestTerminalInventoryRecoveryV1 private constructor(
     private var original: TestTerminalInventoryReaderV1? = null
     @Volatile private var opening = false
 
-    internal fun acquireOwned(reader: TestTerminalInventoryReaderV1) = epochSealStsCall {
+    internal fun acquireOwned(reader: TestTerminalInventoryReaderV1): Unit = epochSealStsCall {
         requireConnectionFree(); reader.requireRecovery(this)
         requireEpochSealSts(used.compareAndSet(false, true) && !closed.get())
         original = reader
@@ -66,7 +66,7 @@ internal class AwsTestTerminalInventoryRecoveryV1 private constructor(
         val region = region()
         val source = newClient(sourceCredentials, region, acquisition, false)
         identity(source, acquisition, binding.sourceAccountId, binding.sourceArn, binding.sourceUserId)
-        val timing = EpochSealStsSessionTiming(attempt, limits, nanoTime, wallClock).also { this.timing = it }
+        val timing = EpochSealStsSessionTiming(reader, this, limits, nanoTime, wallClock).also { this.timing = it }
         val call = call("AssumeRole", mapOf("RoleArn" to binding.targetRoleArn, "RoleSessionName" to name,
             "Policy" to policy, "DurationSeconds" to "900"), acquisition)
         val assumed = source.execute(call, { sdk, overrides -> sdk.assumeRole(AssumeRoleRequest.builder()
@@ -78,6 +78,8 @@ internal class AwsTestTerminalInventoryRecoveryV1 private constructor(
         val target = newClient(assumed.credentials, region, acquisition, true)
         identity(target, acquisition, binding.targetAccountId, binding.targetArn(name), "${binding.targetRoleId}:$name")
         requireUsable(reader)
+        // Final request cleanup is still charged to the original acquisition, not the inventory pass.
+        acquisition.remainingMillis(1)
     }
 
     internal fun openS3(reader: TestTerminalInventoryReaderV1): TestOrdinaryInventoryS3ClientV1 = epochSealStsCall {

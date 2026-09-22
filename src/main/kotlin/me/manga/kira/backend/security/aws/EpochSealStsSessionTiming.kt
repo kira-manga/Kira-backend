@@ -1,5 +1,6 @@
 package me.manga.kira.backend.security.aws
 
+import me.manga.kira.backend.complaint.infrastructure.journal.TestTerminalInventoryReaderV1
 import me.manga.kira.backend.security.EpochSealAttemptV1
 import me.manga.kira.backend.security.TestTerminalAttemptV1
 import java.time.Duration
@@ -10,14 +11,19 @@ import kotlin.math.abs
 internal class EpochSealStsSessionTiming private constructor(
     private val live: EpochSealAttemptV1?,
     private val test: TestTerminalAttemptV1?,
+    private val inventory: TestTerminalInventoryReaderV1?,
+    private val recovery: AwsTestTerminalInventoryRecoveryV1?,
     private val limits: AwsEpochSealStsLimits,
     private val nanoTime: () -> Long,
     private val wallClock: () -> Instant,
 ) {
     constructor(original: EpochSealAttemptV1, limits: AwsEpochSealStsLimits, nanoTime: () -> Long, wallClock: () -> Instant) :
-        this(original, null, limits, nanoTime, wallClock)
+        this(original, null, null, null, limits, nanoTime, wallClock)
     constructor(original: TestTerminalAttemptV1, limits: AwsEpochSealStsLimits, nanoTime: () -> Long, wallClock: () -> Instant) :
-        this(null, original, limits, nanoTime, wallClock)
+        this(null, original, null, null, limits, nanoTime, wallClock)
+    constructor(original: TestTerminalInventoryReaderV1, recovery: AwsTestTerminalInventoryRecoveryV1,
+        limits: AwsEpochSealStsLimits, nanoTime: () -> Long, wallClock: () -> Instant) :
+        this(null, null, original, recovery, limits, nanoTime, wallClock)
 
     private val started = nanoTime()
     private val wallStarted = wallClock()
@@ -27,7 +33,8 @@ internal class EpochSealStsSessionTiming private constructor(
 
     @Synchronized
     fun requireUsable(expiration: Instant) {
-        val remainingSeal = live?.remainingMillis(Int.MAX_VALUE) ?: checkNotNull(test).remainingMillis(Int.MAX_VALUE)
+        val remainingWork = live?.remainingMillis(Int.MAX_VALUE) ?: test?.remainingMillis(Int.MAX_VALUE)
+            ?: checkNotNull(inventory).remainingRecoveryMillis(checkNotNull(recovery), Int.MAX_VALUE)
         val elapsed = nanoTime() - started
         val wall = wallClock()
         val uncertainty = limits.clockUncertaintyMillis
@@ -40,7 +47,7 @@ internal class EpochSealStsSessionTiming private constructor(
         if (abs(Duration.between(projected, wall).toMillis()) > uncertainty) expired = true
         // Use the later clock estimate, then subtract the independently configured uncertainty.
         val conservativeNow = maxOf(projected, wall).plusMillis(uncertainty)
-        if (Duration.between(conservativeNow, expiration).toMillis() <= remainingSeal) expired = true
+        if (Duration.between(conservativeNow, expiration).toMillis() <= remainingWork) expired = true
         requireEpochSealSts(!expired, EpochSealStsFailure.SESSION_EXPIRED)
         lastElapsed = elapsed
         lastWall = wall
