@@ -13,6 +13,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentInputV1
 import me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadInputV1
+import me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminStatusInputV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredHttpStartupCasesV1.StartedHttpView
 import me.manga.kira.backend.config.ComplaintTestBootstrapHttpCompositionV1
 import me.manga.kira.backend.config.KiraSecurityProperties
@@ -234,13 +235,20 @@ internal class TestRegisteredAdminContentHttpFixtureV1(
 
 /** Only immutable declarations differ; true intake, full D, activation, registration and startup are reused. */
 internal fun withRegisteredAdminContentHttpV1(tls: VersionBoundPersistenceConnectedFixture, perHour: Int = 60,
+    adminStatus: TestRegisteredAdminStatusInputV1? = null, selectAdminStatus: Boolean = adminStatus != null,
     action: (TestRegisteredAdminContentHttpFixtureV1) -> Unit) {
+    require(!selectAdminStatus || adminStatus != null)
     TestRegisteredHttpStartupCasesV1.withPrepared(tls, globalScanBeforeActivation = true,
         adminRead = TestRegisteredAdminReadInputV1(1, TestRegisteredAdminReadInputV1.PROFILE, 60),
-        adminContent = TestRegisteredAdminContentInputV1(1, TestRegisteredAdminContentInputV1.PROFILE, perHour)) { first, ordinary, raw ->
-        first.assembly.beginRegisteredAdminContentHttpStartup(first.registration).use { startup ->
+        adminContent = TestRegisteredAdminContentInputV1(1, TestRegisteredAdminContentInputV1.PROFILE, perHour),
+        adminStatus = adminStatus) { first, ordinary, raw ->
+        val selected = if (selectAdminStatus) first.assembly.beginRegisteredAdminContentStatusHttpStartup(first.registration)
+            else first.assembly.beginRegisteredAdminContentHttpStartup(first.registration)
+        selected.use { startup ->
             startup.start()
-            StartedHttpView(first, startup, TestRegisteredAdminContentHttpFixtureV1.PATHS).use { web ->
+            val paths = TestRegisteredAdminContentHttpFixtureV1.PATHS + if (selectAdminStatus) setOf(
+                "/api/v1/admin/complaints/{id}/status", "/api/v1/admin/complaints/{id}/closure") else emptySet()
+            StartedHttpView(first, startup, paths).use { web ->
                 val users = mutableListOf<User>()
                 try {
                     repeat(2) {

@@ -31,6 +31,8 @@ internal class TestActiveOrdinaryRawHttpV1(
     val adminRead: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadInputV1? = null,
     // Optional single-content/password cohort; never supplies a grant, authenticated identity or current checkpoint.
     val adminContent: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentInputV1? = null,
+    // Optional status/closure declaration; selection and every grant/current-state check remain product work.
+    val adminStatus: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminStatusInputV1? = null,
 ) {
     init { require(ordinaryPoolSize == 2 || ordinaryPoolSize == 3 && initialCheckpointCreate != null) }
 }
