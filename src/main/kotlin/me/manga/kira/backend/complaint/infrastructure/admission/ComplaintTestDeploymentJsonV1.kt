@@ -46,12 +46,17 @@ internal object ComplaintTestDeploymentJsonV1 {
                 var adminReadObject = false
                 var adminContentObject = false
                 var adminStatusObject = false
+                var adminBatchStatusObject = false
                 while (depth > 0) {
                     val token = parser.nextToken()
                     requireTestDeployment(token != null && ++tokens <= MAX_TOKENS, ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
                     if (depth == 1 && token == JsonToken.START_OBJECT && parser.currentName == "adminRead") adminReadObject = true
                     if (depth == 1 && token == JsonToken.START_OBJECT && parser.currentName == "adminContent") adminContentObject = true
                     if (depth == 1 && token == JsonToken.START_OBJECT && parser.currentName == "adminStatus") adminStatusObject = true
+                    if (depth == 1 && token != JsonToken.FIELD_NAME && parser.currentName == "adminBatchStatus") {
+                        requireTestDeployment(token == JsonToken.START_OBJECT, ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
+                        adminBatchStatusObject = true
+                    }
                     if (adminReadObject && depth == 2 && token != JsonToken.FIELD_NAME && token != JsonToken.END_OBJECT) {
                         // Closed new-member types only: kotlinx integer coercion must not accept quoted numbers.
                         // Legacy fields keep their existing grammar and every token keeps the same bounded pass.
@@ -70,7 +75,7 @@ internal object ComplaintTestDeploymentJsonV1 {
                         }
                         requireTestDeployment(exactType, ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
                     }
-                    if (adminStatusObject && depth == 2 && token != JsonToken.FIELD_NAME && token != JsonToken.END_OBJECT) {
+                    if ((adminStatusObject || adminBatchStatusObject) && depth == 2 && token != JsonToken.FIELD_NAME && token != JsonToken.END_OBJECT) {
                         val exactType = when (parser.currentName) {
                             "schemaVersion", "perHour" -> token == JsonToken.VALUE_NUMBER_INT
                             "profile" -> token == JsonToken.VALUE_STRING
@@ -87,6 +92,7 @@ internal object ComplaintTestDeploymentJsonV1 {
                     if (depth == 1) adminReadObject = false
                     if (depth == 1) adminContentObject = false
                     if (depth == 1) adminStatusObject = false
+                    if (depth == 1) adminBatchStatusObject = false
                 }
                 requireTestDeployment(parser.nextToken() == null, ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
             }
@@ -132,6 +138,7 @@ internal data class ComplaintTestDeploymentDocumentV1(
     val adminRead: TestRegisteredAdminReadInputV1? = null,
     val adminContent: TestRegisteredAdminContentInputV1? = null,
     val adminStatus: TestRegisteredAdminStatusInputV1? = null,
+    val adminBatchStatus: TestRegisteredAdminBatchStatusInputV1? = null,
 )
 
 /** Independent born-with read cohort only. This declaration is not registered/current TEST authority. */
@@ -167,6 +174,18 @@ internal data class TestRegisteredAdminStatusInputV1(
 ) {
     companion object {
         const val PROFILE = "TEST_REGISTERED_ADMIN_SINGLE_STATUS_V1"
+    }
+}
+
+/** Explicit atomic STATUS-only addition; no deletion capability or separate complaint issuer. */
+@Serializable
+internal data class TestRegisteredAdminBatchStatusInputV1(
+    val schemaVersion: Int,
+    val profile: String,
+    val perHour: Int,
+) {
+    companion object {
+        const val PROFILE = "TEST_REGISTERED_ADMIN_BATCH_STATUS_V1"
     }
 }
 

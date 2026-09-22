@@ -17,6 +17,7 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperat
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerEditOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminContentOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminStatusMutation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminBatchStatusMutation
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
 import me.manga.kira.backend.security.EpochSealFramesV1
@@ -170,6 +171,20 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
     internal fun checkCurrent(operation: ComplaintAdminStatusMutation, phase: PersistencePhaseContext, selected: TestRegisteredAdminContentV1) {
         selected.requireCurrentOperation(this, operation, phase)
         operation.requireCheckpointTime(selected, phase, readCurrent(phase.adminStatus.connection(operation, jdbc)))
+        selected.requireCurrentOperation(this, operation, phase)
+    }
+
+    /** Same original signed/current reader, with the batch's exact retained new-claim boundary. */
+    internal fun lockAndCheck(operation: ComplaintAdminBatchStatusMutation, phase: PersistencePhaseContext, selected: TestRegisteredAdminContentV1) {
+        selected.requireCurrentOperation(this, operation, phase)
+        check(jdbc.query(TestActiveInitialCheckpointSqlV1.lockGlobal, { _, _ -> true }).single())
+        check(jdbc.query(TestActiveInitialCheckpointSqlV1.lockScope, { _, _ -> true }, identity.scope).single())
+        checkCurrent(operation, phase, selected)
+    }
+
+    internal fun checkCurrent(operation: ComplaintAdminBatchStatusMutation, phase: PersistencePhaseContext, selected: TestRegisteredAdminContentV1) {
+        selected.requireCurrentOperation(this, operation, phase)
+        operation.requireCheckpointTime(selected, phase, readCurrent(phase.adminBatchStatus.connection(operation, jdbc)))
         selected.requireCurrentOperation(this, operation, phase)
     }
 

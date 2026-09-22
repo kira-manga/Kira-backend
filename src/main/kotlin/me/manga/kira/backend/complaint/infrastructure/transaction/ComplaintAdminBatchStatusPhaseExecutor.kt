@@ -21,25 +21,33 @@ import me.manga.kira.backend.security.ComplaintAdmittedAdminBatchStatus
 internal class ComplaintAdminBatchStatusPhaseExecutor(private val ownership: PersistencePhaseOwnership, private val store: JdbcComplaintAdminBatchStatusStore) {
     @Suppress("TooGenericExceptionCaught")
     fun authenticate(identity: ComplaintAdminReadIdentity): ComplaintAdminReadRows {
+        store.requireResources(ownership)
         val phase = ownership.enterComplaintAdminReadAuthentication()
         var operation: ComplaintAdminReadOperation? = null
+        var registeredRows: ComplaintAdminReadRows? = null
         try {
+            store.bind(phase)
             phase.begin()
             operation = store.authenticate(identity)
+            registeredRows = store.registeredAuthentication(phase, identity)
             phase.commit()
         } catch (failure: Throwable) {
             phase.recordFailure(failure)
         } finally {
             phase.finish()
         }
-        return (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).result
+        val rows = (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).result
+        if (!rows.contractValid) return rows
+        return registeredRows ?: rows
     }
 
     @Suppress("TooGenericExceptionCaught")
     fun preflight(identity: ComplaintAdminReadIdentity, tuple: ComplaintAdminBatchStatusTuple): ComplaintAdminBatchStatusObservation {
+        store.requireResources(ownership)
         val phase = ownership.enterComplaintAdminBatchStatusPreflight()
         var operation: ComplaintAdminBatchStatusMutation? = null
         try {
+            store.bind(phase)
             phase.begin()
             operation = store.preflight(identity, tuple)
             phase.commit()
@@ -58,11 +66,13 @@ internal class ComplaintAdminBatchStatusPhaseExecutor(private val ownership: Per
         proof: String?,
         admission: ComplaintAdmittedAdminBatchStatus,
     ): ComplaintAdminBatchStatusObservation {
+        store.requireResources(ownership)
         val phase = ownership.enterComplaintAdminBatchStatus()
         var operation: ComplaintAdminBatchStatusMutation? = null
         var refusal: ComplaintAdminStatusFailure? = null
         try {
             phase.adminBatchStatus.bindStatus(admission)
+            store.bind(phase)
             phase.begin()
             operation = store.change(identity, candidate, proof)
             phase.commit()
