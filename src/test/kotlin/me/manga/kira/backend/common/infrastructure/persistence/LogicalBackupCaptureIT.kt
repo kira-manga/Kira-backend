@@ -4,6 +4,7 @@ import me.manga.kira.backend.complaint.infrastructure.restore.ComplaintLogicalBa
 import me.manga.kira.backend.complaint.infrastructure.restore.LocalLogicalBackupInputV1
 import me.manga.kira.backend.complaint.infrastructure.restore.LogicalBackupCaptureResultV1
 import me.manga.kira.backend.complaint.infrastructure.restore.LogicalCaptureCleanupV1
+import me.manga.kira.backend.complaint.infrastructure.restore.LogicalCaptureExportV1
 import me.manga.kira.backend.complaint.infrastructure.restore.LogicalCaptureFailureV1
 import me.manga.kira.backend.complaint.infrastructure.restore.LogicalCaptureFilesV1
 import me.manga.kira.backend.complaint.infrastructure.restore.LogicalCaptureImageV1
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.TestMethodOrder
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.junit.jupiter.api.parallel.ResourceLock
 import java.nio.channels.FileChannel
+import java.nio.channels.FileLock
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
@@ -33,6 +35,7 @@ import java.sql.Driver
 import java.util.Properties
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -40,8 +43,8 @@ import java.util.zip.GZIPOutputStream
 
 /**
  * NOT_RUN. Explicit disposable host-local PG17.6 qualification, not Docker/NAT or an existing app DB.
- * No fake process/pg_stat_activity replies. The guard-failure selector deliberately poisons the original
- * JVM capture slot and is last. Run this class in a fresh isolated test JVM, never enable it implicitly.
+ * No fake process/pg_stat_activity replies. Guard failure and pre-ACK exporter loss permanently retain
+ * the JVM capture slot: select either alone in a fresh isolated test JVM, never enable it implicitly.
  */
 @EnabledIfEnvironmentVariable(named = "KIRA_QCAP_IT", matches = "disposable-local-17\\.6")
 @TestMethodOrder(OrderAnnotation::class)
@@ -198,6 +201,96 @@ class LogicalBackupCaptureIT {
         }
     }
 
+    @Test
+    @Order(5)
+    fun `real native exporter loss before import acknowledgment retains unknown custody`() {
+        val fixture = Fixture()
+        fixture.withEmptySource {
+            // PG17.6 imports the snapshot BEFORE these table locks, but cannot reach the product's
+            // guard-wait acknowledgment while this earlier table remains blocked.
+            fixture.execute("CREATE TABLE public.capture_rows (id integer NOT NULL)")
+            fixture.execute("INSERT INTO public.capture_rows VALUES (1)")
+            fixture.execute("CREATE TABLE public.complaint_journal_control (marker integer NOT NULL)")
+            fixture.execute("INSERT INTO public.complaint_journal_control VALUES (7)")
+            assertEquals(1L, fixture.scalar("SELECT ('public.capture_rows'::regclass::oid < 'public.complaint_journal_control'::regclass::oid)::int"))
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                fixture.connect().use { blocker ->
+                    blocker.autoCommit = false
+                    blocker.createStatement().use { it.execute("LOCK TABLE public.capture_rows IN ACCESS EXCLUSIVE MODE") }
+                    // Pre-open the observer: no new TLS connection during the unchanged 1000ms lock wait.
+                    fixture.connect().use { observer ->
+                        val original = ComplaintLogicalBackupCaptureV1.prepare(fixture.input())
+                        val running = executor.submit<LogicalBackupCaptureResultV1> { original.capture() }
+                        try {
+                            val lost = fixture.loseExporterBeforeAck(observer, blocker, running)
+                            // Keep the blocker through fault delivery AND the original's completed cleanup.
+                            val result = running.get(125, TimeUnit.SECONDS) as LogicalBackupCaptureResultV1.Refused
+                            blocker.rollback()
+                            assertEquals(LogicalCaptureCleanupV1.RETAINED_UNKNOWN, result.cleanup)
+                            val exporter = checkNotNull(ownedCutField(original, "session"))
+                            val dump = checkNotNull(ownedCutField(original, "dump"))
+                            val exported = ownedCutField(exporter, "exported") as LogicalCaptureExportV1
+                            assertEquals(lost.exporterPid, exported.backendPid)
+                            assertEquals(lost.exporterStarted, exported.backendStartedMicros)
+                            assertEquals(lost.exporterTransaction, exported.transactionStartedMicros)
+                            assertEquals("kira-qcap-d-${lost.token}", ownedCutField(dump, "application"))
+                            assertEquals(true, ownedCutField(exporter, "exportSent"))
+                            assertNull(ownedCutField(exporter, "witness"))
+                            assertNull(ownedCutField(dump, "imported"))
+                            assertEquals(false, ownedCutField(exporter, "released"))
+                            assertEquals(true, ownedCutField(exporter, "localChildrenEnded"))
+                            val exporterProcess = ownedCutField(exporter, "process") as Process
+                            val dumpProcess = ownedCutField(dump, "process") as Process
+                            assertFalse(exporterProcess.isAlive)
+                            assertFalse(dumpProcess.isAlive)
+                            assertNotEquals(0, exporterProcess.exitValue())
+                            assertNotEquals(0, dumpProcess.exitValue())
+                            assertTrue((ownedCutField(exporter, "readerEnded") as AtomicBoolean).get())
+                            assertFalse((ownedCutField(exporter, "reader") as Thread).isAlive)
+                            assertTrue((ownedCutField(dump, "pumpEnded") as AtomicBoolean).get())
+                            assertFalse((ownedCutField(dump, "pump") as Thread).isAlive)
+                            assertFalse((ownedCutField(dump, "output") as FileChannel).isOpen)
+                            assertEquals(3, (ownedCutField(dump, "shorts") as List<*>).size, "No TOC or bundle helper after exporter loss.")
+                            assertEquals(".logical-backup-q-${lost.token}", result.stageName)
+                            val stage = fixture.output.resolve(checkNotNull(result.stageName))
+                            assertTrue(Files.isDirectory(stage, NOFOLLOW_LINKS))
+                            assertTrue(Files.isRegularFile(stage.resolve("capture.dump"), NOFOLLOW_LINKS))
+                            assertTrue(Files.isRegularFile(stage.resolve("capture.media.tar.gz"), NOFOLLOW_LINKS))
+                            assertTrue(Files.notExists(stage.resolve(".pgpass"), NOFOLLOW_LINKS))
+                            assertTrue(Files.notExists(stage.resolve("capture.bundle.json"), NOFOLLOW_LINKS))
+                            assertTrue(Files.notExists(stage.resolve("capture.json"), NOFOLLOW_LINKS))
+                            val parentLock = ownedCutField(original, "parentLock") as FileLock
+                            val lockChannel = ownedCutField(original, "lockChannel") as FileChannel
+                            assertTrue(parentLock.isValid && lockChannel.isOpen)
+                            assertSame(lockChannel, parentLock.channel())
+                            assertSame(original, (ownedCutField(original, "retained") as AtomicReference<*>).get())
+                            assertEquals(0L, fixture.scalar("SELECT count(*) FROM pg_catalog.pg_stat_activity WHERE datname=current_database() AND application_name LIKE 'kira-qcap-%'"))
+                            val next = ComplaintLogicalBackupCaptureV1.prepare(fixture.input()).capture() as LogicalBackupCaptureResultV1.Refused
+                            assertEquals(LogicalCaptureFailureV1.BUSY, next.failure)
+                            assertNull(next.stageName)
+                            assertEquals(LogicalCaptureFailureV1.ALREADY_USED, (original.capture() as LogicalBackupCaptureResultV1.Refused).failure)
+                            assertTrue(parentLock.isValid && lockChannel.isOpen)
+                            assertSame(original, (ownedCutField(original, "retained") as AtomicReference<*>).get())
+                            assertEquals(7L, fixture.scalar("SELECT marker FROM public.complaint_journal_control"))
+                            assertEquals(1L, fixture.scalar("SELECT count(*) FROM public.capture_rows"))
+                        } finally {
+                            try { blocker.rollback() } finally { if (!running.isDone) running.cancel(true) }
+                        }
+                    }
+                }
+            } finally {
+                executor.shutdownNow()
+                assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+            }
+        }
+    }
+
+    private data class PreAckBackends(
+        val token: String, val exporterPid: Int, val exporterStarted: Long, val exporterTransaction: Long,
+        val dumpPid: Int, val dumpStarted: Long, val dumpTransaction: Long,
+    )
+
     /** Passive reads only after Future.get publishes the original's completed work and cleanup. */
     private fun assertReleasedExporterAndFailedDump(original: ComplaintLogicalBackupCaptureV1) {
         val exporter = checkNotNull(ownedCutField(original, "session"))
@@ -306,6 +399,104 @@ class LogicalBackupCaptureIT {
 
         fun awaitExporterGone() = await(500) {
             scalar("SELECT count(*) FROM pg_catalog.pg_stat_activity WHERE datname=current_database() AND application_name LIKE 'kira-qcap-e-%'") == 0L
+        }
+
+        /** One destructive fixture cut, never a general backend killer or a product release receipt. */
+        fun loseExporterBeforeAck(observer: Connection, blocker: Connection, running: Future<*>): PreAckBackends {
+            assertTrue(observer.autoCommit) // Each observation is fresh, not an open stats transaction.
+            observer.createStatement().use { it.execute("SET stats_fetch_consistency = 'none'") }
+            val blockerPid = blocker.createStatement().use { statement ->
+                statement.executeQuery("SELECT pg_catalog.pg_backend_pid()").use { row ->
+                    check(row.next()); val pid = row.getInt(1); check(!row.next()); pid
+                }
+            }
+            val budget = PersistenceTimeBudget.start(10_000)
+            var token: String? = null
+            await(budget.remainingMillis(10_000)) {
+                assertFalse(running.isDone, "Capture ended before the fixture cut.")
+                Files.list(output).use { paths ->
+                    val stages = paths.filter { Regex("\\.logical-backup-q-[0-9a-f]{32}").matches(it.fileName.toString()) }.toList()
+                    check(stages.size <= 1)
+                    token = stages.singleOrNull()?.also { check(Files.isDirectory(it, NOFOLLOW_LINKS)) }
+                        ?.fileName?.toString()?.removePrefix(".logical-backup-q-")
+                }
+                token != null
+            }
+            val run = checkNotNull(token)
+            // Exact token comes from this sole private stage, not LIKE or precompletion private-field reads.
+            // Reuse the full predicate at the signal, including both backend starts/transactions and locks.
+            val cut = """WITH tagged AS MATERIALIZED (
+                SELECT * FROM pg_catalog.pg_stat_activity WHERE application_name IN ('kira-qcap-e-$run','kira-qcap-d-$run')
+              ), pair AS MATERIALIZED (
+                SELECT e.pid AS exporter_pid, (extract(epoch FROM e.backend_start)*1000000)::bigint AS exporter_started,
+                  (extract(epoch FROM e.xact_start)*1000000)::bigint AS exporter_transaction,
+                  d.pid AS dump_pid, (extract(epoch FROM d.backend_start)*1000000)::bigint AS dump_started,
+                  (extract(epoch FROM d.xact_start)*1000000)::bigint AS dump_transaction
+                FROM tagged e, tagged d
+                WHERE e.application_name='kira-qcap-e-$run' AND d.application_name='kira-qcap-d-$run'
+                  AND e.datname=? AND e.usename=? AND e.datname=current_database() AND e.usename=current_user
+                  AND d.datid=e.datid AND d.usename=e.usename AND e.pid<>d.pid AND e.pid<>pg_catalog.pg_backend_pid()
+                  AND e.backend_type='client backend' AND d.backend_type='client backend'
+                  AND e.client_addr='127.0.0.1'::inet AND d.client_addr=e.client_addr
+                  AND e.xact_start>=e.backend_start AND d.backend_start>=e.xact_start AND d.xact_start>=d.backend_start
+                  AND e.backend_xmin IS NOT NULL AND d.backend_xmin=e.backend_xmin
+                  AND d.state='active' AND d.wait_event_type='Lock' AND d.wait_event='relation'
+                  AND pg_catalog.pg_blocking_pids(d.pid)=ARRAY[$blockerPid]
+                  AND EXISTS (SELECT 1 FROM pg_catalog.pg_locks l WHERE l.pid=$blockerPid AND l.database=e.datid
+                    AND l.locktype='relation' AND l.relation='public.capture_rows'::regclass AND l.mode='AccessExclusiveLock' AND l.granted)
+                  AND EXISTS (SELECT 1 FROM pg_catalog.pg_locks l WHERE l.pid=d.pid AND l.database=e.datid
+                    AND l.locktype='relation' AND l.relation='public.capture_rows'::regclass AND l.mode='AccessShareLock' AND NOT l.granted)
+                  AND EXISTS (SELECT 1 FROM pg_catalog.pg_locks l WHERE l.pid=e.pid AND l.database=e.datid
+                    AND l.locktype='relation' AND l.relation='public.complaint_journal_control'::regclass AND l.mode='AccessExclusiveLock' AND l.granted)
+                  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_locks l WHERE l.pid=d.pid AND l.database=e.datid
+                    AND l.locktype='relation' AND l.relation='public.complaint_journal_control'::regclass)
+              )"""
+            var observed: PreAckBackends? = null
+            observer.prepareStatement("""$cut SELECT
+                (SELECT count(*) FROM tagged WHERE application_name='kira-qcap-e-$run') AS exporters,
+                (SELECT count(*) FROM tagged WHERE application_name='kira-qcap-d-$run') AS dumps, p.*
+                FROM (SELECT 1) one LEFT JOIN pair p ON true""").use { statement ->
+                statement.setString(1, database); statement.setString(2, username)
+                await(budget.remainingMillis(10_000)) {
+                    assertFalse(running.isDone, "Capture ended before the exact earlier-table wait.")
+                    statement.executeQuery().use { row ->
+                        check(row.next())
+                        check(row.getLong("exporters") in 0L..1L && row.getLong("dumps") in 0L..1L) { "Ambiguous fixture run tags." }
+                        val pid = row.getInt("exporter_pid")
+                        if (!row.wasNull()) observed = PreAckBackends(run, pid, row.getLong("exporter_started"), row.getLong("exporter_transaction"),
+                            row.getInt("dump_pid"), row.getLong("dump_started"), row.getLong("dump_transaction"))
+                        check(!row.next())
+                    }
+                    observed != null
+                }
+            }
+            val exact = checkNotNull(observed)
+            observer.prepareStatement("""$cut SELECT pg_catalog.pg_terminate_backend(exporter_pid) FROM pair
+                WHERE exporter_pid=? AND exporter_started=? AND exporter_transaction=?
+                  AND dump_pid=? AND dump_started=? AND dump_transaction=?
+                  AND (SELECT count(*) FROM tagged WHERE application_name='kira-qcap-e-$run')=1
+                  AND (SELECT count(*) FROM tagged WHERE application_name='kira-qcap-d-$run')=1""").use { statement ->
+                statement.setString(1, database); statement.setString(2, username)
+                listOf(exact.exporterPid.toLong(), exact.exporterStarted, exact.exporterTransaction,
+                    exact.dumpPid.toLong(), exact.dumpStarted, exact.dumpTransaction).forEachIndexed { index, value -> statement.setLong(index + 3, value) }
+                assertFalse(running.isDone, "Capture ended before the exact exporter-loss signal.")
+                statement.executeQuery().use { row ->
+                    check(row.next()) { "Exact pre-ACK fixture identities/locks changed; no signal admitted." }
+                    check(row.getBoolean(1) && !row.wasNull() && !row.next())
+                }
+            }
+            // A signal Boolean is not termination. Match PID/start even if other metadata changed,
+            // and require actual disappearance BEFORE Future completion; a missed window fails.
+            observer.prepareStatement("""SELECT count(*) FROM pg_catalog.pg_stat_activity
+                WHERE pid=? AND (extract(epoch FROM backend_start)*1000000)::bigint=?""").use { statement ->
+                statement.setInt(1, exact.exporterPid); statement.setLong(2, exact.exporterStarted)
+                await(500) {
+                    assertFalse(running.isDone, "Capture completed before exporter-loss observation.")
+                    statement.executeQuery().use { row -> check(row.next()); val count = row.getLong(1); check(!row.next()); count == 0L }
+                }
+                assertFalse(running.isDone, "Capture completed before exporter-loss observation.")
+            }
+            return exact
         }
 
         fun dumpRows(dump: Path, table: String): List<String> {
