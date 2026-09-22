@@ -95,6 +95,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
     private val edit: ComplaintOwnerEditHttpHandler? get() = core?.edit ?: initialCreate?.edit
     private val me: ComplaintInstallationMeHttpHandler? get() = core?.me ?: initialCreate?.me
     private val delete: ComplaintOwnerDeleteHttpHandler? get() = core?.delete ?: initialOwnerDelete?.delete
+    private val deleteAll: ComplaintOwnerDeleteAllHttpHandler? get() = core?.deleteAll ?: initialOwnerDelete?.deleteAll
 
     fun build(http: HttpSecurity): SecurityFilterChain {
         http.securityMatcher(ComplaintInstallationRoutes)
@@ -156,7 +157,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
 
                 ComplaintInstallationRoutes.STATUS -> checkNotNull(core?.create ?: initialCreate?.create ?: initialOwnerDelete?.create).handleWithinIngress(request, response, context)
 
-                ComplaintInstallationRoutes.DELETE_ALL -> checkNotNull(core?.deleteAll).handleWithinIngress(request, response, context)
+                ComplaintInstallationRoutes.DELETE_ALL -> checkNotNull(deleteAll).handleWithinIngress(request, response, context)
 
                 ComplaintInstallationRoutes.HISTORY -> if (request.method == "GET") {
                     checkNotNull(core?.history ?: initialCreate?.reads?.history ?: initialOwnerDelete?.reads?.history).handleWithinIngress(request, response, context)
@@ -185,7 +186,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
         ((initialCreate?.reads != null || initialOwnerDelete != null) && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.HISTORY) ||
         (me != null && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.ME) ||
         (bootstrap != null && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.BOOTSTRAP) ||
-        (core?.deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
+        (deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
         (reply != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
         (edit != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
         (detail != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
@@ -233,13 +234,14 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
         val me: ComplaintInstallationMeHttpHandler? = null,
     )
 
-    /** Separate fixed tuple: no /me, reply, EDIT, delete-all or weakening of the original CREATE guard. */
+    /** Separate fixed tuple: no /me, reply, EDIT or weakening of the original CREATE guard. ALL needs its explicit handler. */
     private class InitialOwnerDelete(
         val authentication: ComplaintInstallationBearerAuthenticator,
         val installations: ComplaintInstallationHttpHandler,
         val create: ComplaintOwnerCreateHttpHandler,
         val reads: OwnerReads,
         val delete: ComplaintOwnerDeleteHttpHandler,
+        val deleteAll: ComplaintOwnerDeleteAllHttpHandler? = null,
     )
 
     private class OwnerReads(val history: ComplaintOwnerHistoryHttpHandler, val detail: ComplaintOwnerDetailHttpHandler)
@@ -272,6 +274,15 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
             detail: ComplaintOwnerDetailHttpHandler, delete: ComplaintOwnerDeleteHttpHandler): ComplaintInstallationSecurityChainFactory =
             ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap,
                 initialOwnerDelete = InitialOwnerDelete(authentication, installations, create, OwnerReads(history, detail), delete))
+
+        /** Adds only the body-secret POST to the original owner-deletion cohort, never a bearer or broad Core substitute. */
+        fun registeredReadCreateOwnerDeleteAllSubset(bridge: ComplaintHttpIngressBridge, bootstrap: ComplaintInstallationBootstrapHttpHandler,
+            authentication: ComplaintInstallationBearerAuthenticator, installations: ComplaintInstallationHttpHandler,
+            create: ComplaintOwnerCreateHttpHandler, history: ComplaintOwnerHistoryHttpHandler,
+            detail: ComplaintOwnerDetailHttpHandler, delete: ComplaintOwnerDeleteHttpHandler,
+            deleteAll: ComplaintOwnerDeleteAllHttpHandler): ComplaintInstallationSecurityChainFactory =
+            ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap,
+                initialOwnerDelete = InitialOwnerDelete(authentication, installations, create, OwnerReads(history, detail), delete, deleteAll))
 
         /** Same read/CREATE subset plus one concrete me handler; not the broader Core constructor. */
         fun registeredReadCreateMeSubset(bridge: ComplaintHttpIngressBridge, bootstrap: ComplaintInstallationBootstrapHttpHandler,

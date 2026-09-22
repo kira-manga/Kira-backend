@@ -10,7 +10,9 @@ import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVeri
 import me.manga.kira.backend.security.ComplaintJournalActorKindV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionTupleV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalJsonV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import java.security.MessageDigest
@@ -69,9 +71,28 @@ internal class InstallationDeletionCompletedReplaySnapshot private constructor(
         // canonicalize is local only; this uses the existing codec without opening its data-key port.
         val event = codec.canonicalize(tuple, targets, publication.routingKeyId)
         check(event.belongsTo(routing) && publication.writer.toString() == declaration.writer.generationId)
+        requireEventAndProof(comparison, event, targets.size, OwnerDeleteAllVerificationCodecV1(routing))
+    }
+
+    /** Registered TEST replay only; the original preflight issuer separately proves graph/owner custody. */
+    fun requireBound(comparison: InstallationDeletionPreflightResult.Completed, routing: OwnerDeleteAllJournalBindingV1) {
+        requireConnectionFree()
+        check(comparison.installation.scope.testOnly && comparison.installation.scope == routing.scope)
+        // Restore frozen IDs with the existing closed TEST family codec, then reconstruct the
+        // submitted secret-authenticated tuple. Stored bytes alone never choose replay success.
+        val targets = routing.restore(publication.bytes, publication.routingKeyId).complaintIds()
+        val tuple = ComplaintJournalDeletionTupleV1.testOwnerDeleteAll(publication.epoch, comparison.installation.id,
+            comparison.submittedCredentialVersion, comparison.operationKey, comparison.fingerprint.bytes(), comparison.installation.scope)
+        val event = routing.canonicalize(tuple, targets, publication.routingKeyId)
+        check(routing.owns(event) && publication.writer.toString() == routing.writer.generationId)
+        requireEventAndProof(comparison, event, targets.size, OwnerDeleteAllVerificationCodecV1(routing))
+    }
+
+    private fun requireEventAndProof(comparison: InstallationDeletionPreflightResult.Completed, event: OwnerDeleteAllJournalEventV1,
+        targetCount: Int, codec: OwnerDeleteAllVerificationCodecV1) {
         check(comparison.publicationReference == publication.eventId && event.route.eventId == publication.eventId)
         check(event.route.routingKeyId == publication.routingKeyId && event.route.objectKey == publication.objectKey)
-        check(publication.targetCount == targets.size.toLong())
+        check(publication.targetCount == targetCount.toLong())
         val canonical = event.canonicalBytes()
         try {
             check(publication.bytes.contentEquals(canonical))
@@ -82,7 +103,7 @@ internal class InstallationDeletionCompletedReplaySnapshot private constructor(
         check(MessageDigest.isEqual(proof.hash, HexFormat.of().parseHex(Sha256.hex(proof.bytes))))
         // Strict same-routing/J parsing authenticates every canonical proof field. It does not
         // refresh verifiedAt/retention, contact S3 or mint a new verified-publication capability.
-        val record = OwnerDeleteAllVerificationCodecV1(routing).parse(proof.bytes, event)
+        val record = codec.parse(proof.bytes, event)
         check(record.objectVersion == proof.objectVersion)
         check(MessageDigest.isEqual(proof.ciphertextHash, HexFormat.of().parseHex(record.ciphertextSha256)))
         check(Instant.parse(record.objectCreatedAt) == proof.objectCreatedAt)

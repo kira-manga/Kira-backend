@@ -9,6 +9,8 @@ import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
 import me.manga.kira.backend.complaint.infrastructure.BoundOwnerDeleteAllReplayV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationDeletionPreflightOperation
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintInstallationDeletionPreflightStore
+import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteLocalGraphV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 
@@ -58,6 +60,15 @@ internal class ComplaintInstallationDeletionPreflightPhaseExecutor(
     ): BoundOwnerDeleteAllReplayV1 {
         requireConnectionFree()
         return store.bindReplay(completed, ownership.installationDeletionIdentity, routing, codec)
+    }
+
+    /** Original registered owner/graph only, after a fresh secret-authenticated released preflight. */
+    fun bindReplay(completed: InstallationDeletionPreflightResult.Completed, graph: TestOwnerDeleteLocalGraphV1,
+        routing: OwnerDeleteAllJournalBindingV1): BoundOwnerDeleteAllReplayV1 {
+        requireConnectionFree()
+        requireGraph(graph)
+        store.requireEntry(ownership)
+        return store.bindReplay(completed, ownership.installationDeletionIdentity, routing)
     }
 
     override fun toString(): String = "ComplaintInstallationDeletionPreflightPhaseExecutor(read-only)"
