@@ -57,14 +57,14 @@ internal fun withRegisteredOwnerDeleteAllHttp(tls: VersionBoundPersistenceConnec
             StartedHttpView(first, startup, TestRegisteredOwnerDeleteAllHttpFixtureV1.PATHS).use { web ->
                 val f = TestRegisteredOwnerDeleteAllHttpFixtureV1(first, web, raw); raw.fixture = f
                 assertArrayEquals(configuration, first.process.canonicalBytes())
-                try { action(f) } finally {
+                AutoCloseable {
                     f.assertReleased()
                     // Disposable fixture teardown only, after all requests/B and assertions. No history,
                     // quota, verifier or proof is reset to make another product attempt eligible.
                     for (table in TestRegisteredOwnerDeleteAllHttpFixtureV1.CLEANUP) f.jdbc.update("DELETE FROM $table WHERE data_scope_id = ?", f.scope)
                     f.jdbc.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND action IN " +
                         "('COMPLAINT_CREATED','COMPLAINT_INSTALLATION_DELETE_AUTHORIZED','COMPLAINT_DELETED','COMPLAINT_RECOVERY_APPLIED')", f.scope)
-                }
+                }.use { action(f) }
                 startup.close(); web.assertDisposed(nativeStillActive = true)
                 raw.fixture = null
             }

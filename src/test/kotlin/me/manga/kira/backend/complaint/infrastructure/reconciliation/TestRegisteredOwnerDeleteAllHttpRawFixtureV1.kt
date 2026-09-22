@@ -40,7 +40,10 @@ internal class TestRegisteredOwnerDeleteAllHttpRawFixtureV1(shortFreshness: Bool
     private var keyReply: ((JournalKmsHttpRequest) -> JournalKmsHttpReply)? = null
     private var keyContext: Map<String, String>? = null
     private val assertion = AtomicReference<AssertionError?>()
-    val factories = TestActiveOrdinaryRawHttpV1(ordinary.factories.sts,
+    private val sts = TestRegisteredDeletionHttpStsFixtureV1(
+        { checkNotNull(fixture).assertSqlReleased() },
+        { checkNotNull(fixture).first.process.consumers.journalConfiguration.declaration().journalLocation.region })
+    val factories = TestActiveOrdinaryRawHttpV1(sts::httpClient,
         { remaining -> native(remaining) { selected().kms.httpClient() } },
         { remaining -> native(remaining) { selected().httpClient() } }, checkpoint.input,
         initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
@@ -109,10 +112,10 @@ internal class TestRegisteredOwnerDeleteAllHttpRawFixtureV1(shortFreshness: Bool
     fun counts(): List<Int> {
         val first = checkNotNull(fixture).first
         return listOf(first.native.sts.requests.size, first.native.kms.requests.size, first.native.requests.size, first.p.f.http.read.requests.size,
-            ordinary.sts.requests.size, publisher?.kms?.requests?.size ?: 0, publisher?.requests?.size ?: 0,
+            ordinary.sts.requests.size, sts.requestCount, publisher?.kms?.requests?.size ?: 0, publisher?.requests?.size ?: 0,
             checkpoint.sts.requests.size, checkpoint.kms.requests.size, checkpoint.requests.size,
             queue.sts.requests.size, queue.kms.requests.size, queue.requests.size, queue.sqs.requests.size)
     }
-    fun assertDisposed() { ordinary.assertDisposed(); publisher?.assertClientsClosed(); checkpoint.assertDisposed(); queue.assertDisposed(); assertion.get()?.let { throw it } }
+    fun assertDisposed() { ordinary.assertDisposed(); sts.assertDisposed(); publisher?.assertClientsClosed(); checkpoint.assertDisposed(); queue.assertDisposed(); assertion.get()?.let { throw it } }
     private fun <T> checked(action: () -> T): T = try { action() } catch (failure: AssertionError) { assertion.compareAndSet(null, failure); throw failure }
 }

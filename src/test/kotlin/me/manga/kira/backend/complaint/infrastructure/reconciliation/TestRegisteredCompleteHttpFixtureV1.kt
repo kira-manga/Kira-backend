@@ -62,13 +62,13 @@ internal fun withRegisteredCompleteHttp(tls: VersionBoundPersistenceConnectedFix
                 withRegisteredAdminContentFixtureV1(first, raw.ordinary, raw.checkpoint, web) { admin ->
                     val f = TestRegisteredCompleteHttpFixtureV1(admin, raw, oldStatusOnly); raw.fixture = f
                     assertArrayEquals(configuration, first.process.canonicalBytes())
-                    try { action(f) } finally {
+                    AutoCloseable {
                         f.assertReleased()
                         // Disposable teardown AFTER assertions/B. No new request follows this cleanup.
                         for (table in TestRegisteredCompleteHttpFixtureV1.DELETION_TABLES) f.jdbc.update("DELETE FROM $table WHERE data_scope_id = ?", f.scope)
                         f.jdbc.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND action IN " +
                             "('COMPLAINT_REPLIED','COMPLAINT_DELETE_AUTHORIZED','COMPLAINT_DELETED','COMPLAINT_RECOVERY_APPLIED')", f.scope)
-                    }
+                    }.use { action(f) }
                 }
                 startup.close(); web.assertDisposed(nativeStillActive = true)
                 if (!oldStatusOnly) {
