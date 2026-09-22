@@ -660,11 +660,12 @@ internal object TestRegisteredHttpStartupCasesV1 {
     internal fun withPrepared(tls: VersionBoundPersistenceConnectedFixture, globalScanBeforeActivation: Boolean = false,
         initialCheckpointCreate: TestInitialCheckpointCreateInputV1 = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
         adminRead: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadInputV1? = null,
+        adminContent: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentInputV1? = null,
         action: (TestActiveFirstCutFixtureV1, TestActiveOrdinaryRawFixtureV1, TestActiveInitialCheckpointRawFixtureV1) -> Unit) {
         val ordinary = TestActiveOrdinaryRawFixtureV1()
         val raw = TestActiveInitialCheckpointRawFixtureV1()
         val factories = ordinary.factories.let { TestActiveOrdinaryRawHttpV1(it.sts, it.kms, it.s3, raw.input,
-            initialCheckpointCreate = initialCheckpointCreate, adminRead = adminRead) }
+            initialCheckpointCreate = initialCheckpointCreate, adminRead = adminRead, adminContent = adminContent) }
         withTestActiveFirstCut(tls, ordinaryRawHttp = factories, globalScanBeforeActivation = globalScanBeforeActivation) {
             first -> action(first, ordinary, raw)
         }
@@ -726,6 +727,15 @@ internal object TestRegisteredHttpStartupCasesV1 {
             send(HttpRequest.newBuilder(uri(editPath(attempt))).header("Content-Type", "application/json")
                 .header("Authorization", "Bearer $bearer").header("X-Kira-Idempotency-Key", attempt.input.key.toString())
                 .header("If-Match", attempt.input.precondition.canonical).method("PATCH", HttpRequest.BodyPublishers.ofByteArray(editBody(attempt))))
+
+        /** Reuse this original loopback client for the explicitly selected Admin-content request. */
+        fun patchAdminContent(path: String, body: ByteArray, bearer: String?, key: UUID, etag: String?, proof: String?): HttpResponse<ByteArray> =
+            send(HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json")
+                .header("X-Kira-Idempotency-Key", key.toString()).apply {
+                    bearer?.let { header("Authorization", "Bearer $it") }
+                    etag?.let { header("If-Match", it) }
+                    proof?.let { header("X-Kira-Admin-Step-Up", it) }
+                }.method("PATCH", HttpRequest.BodyPublishers.ofByteArray(body)))
 
         /** No body is sent. An optional container 100 Continue is not the required final refusal. */
         fun refusedBeforeBody(method: String, path: String, bearer: String, expected: Int) = Socket().use { socket ->
