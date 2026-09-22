@@ -11,12 +11,14 @@ import me.manga.kira.backend.audit.infrastructure.AuditLogEntity
 import me.manga.kira.backend.audit.infrastructure.JpaAuditRepositoryAdapter
 import me.manga.kira.backend.audit.infrastructure.SpringDataAuditLogRepository
 import me.manga.kira.backend.common.infrastructure.persistence.GuardedDataSource
+import me.manga.kira.backend.common.infrastructure.persistence.GuardedJdbcTransactionManager
 import me.manga.kira.backend.common.infrastructure.persistence.GuardedJpaTransactionManager
 import me.manga.kira.backend.common.infrastructure.persistence.OrdinaryPersistenceAdmission
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcParticipantRole
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestDeploymentExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestDeploymentFailureV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
@@ -24,6 +26,9 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestPro
 import me.manga.kira.backend.complaint.infrastructure.admission.boundedTestDeploymentFailure
 import me.manga.kira.backend.complaint.infrastructure.admission.requireTestDeployment
 import me.manga.kira.backend.complaint.infrastructure.catalog.preferCatalogFreezeCleanup
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalPublisherFactoryV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointDeletionV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
 import me.manga.kira.backend.security.ComplaintSecurityFailure
 import me.manga.kira.backend.security.ComplaintSecurityResponses
 import me.manga.kira.backend.security.CurrentUser
@@ -79,6 +84,7 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
     private val selectAdminContent: Boolean = false,
     private val selectAdminStatus: Boolean = false,
     private val selectAdminBatchStatus: Boolean = false,
+    private val deletionPolicy: VersionBoundTestInitialCheckpointDeletionV1? = null,
 ) : AutoCloseable {
     private val startupBudget = PersistenceTimeBudget.start(60_000)
     private val ingress = registration.process.consumers.ingressAdmission
@@ -98,6 +104,14 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
     private var jdbc: JdbcTemplate? = null
     private var installationBindingEntered = false
     private var installationBindingReturned = false
+    private var deletionAdmission: DeletionPersistenceAdmission? = null
+    private var deletionOwnership: PersistencePhaseOwnership? = null
+    private var deletionJdbc: JdbcTemplate? = null
+    private var deletionBindingEntered = false
+    private var deletionBindingReturned = false
+    private var ownerDeleteBinding: TestOwnerDeleteProcessBindingV1? = null
+    private var ownerDeletePublisher: TestOwnerDeleteJournalPublisherFactoryV1? = null
+    private var ownerDeletePublisherCloseReturned = false
     private var audit: AuditService? = null
     private var adminReadDecoder: JwtDecoder? = null
     private var adminReadCompositionClaimed = false
@@ -148,6 +162,8 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             requireTestDeployment(!selectAdminBatchStatus || (selectAdminStatus &&
                 registration.process.consumers.adminBatchStatusPolicy is me.manga.kira.backend.security.ComplaintAdminBatchStatusAdmissionPolicy.Bounded),
                 ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+            requireTestDeployment(deletionPolicy == null || (deletionPolicy === registration.process.initialCheckpointDeletion &&
+                !selectMe && replyPolicy == null && editPolicy == null && !selectAdminReads), ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             val pool = registration.process.pools.ordinary
             val originalFactory = LocalContainerEntityManagerFactoryBean().also { factory = it }
             originalFactory.dataSource = pool
@@ -180,7 +196,20 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             val repositories = JpaRepositoryFactory(SharedEntityManagerCreator.createSharedEntityManager(checkNotNull(emf)))
             val counted = JpaAuditRepositoryAdapter(repositories.getRepository(SpringDataAuditLogRepository::class.java))
             val service = AuditService(counted, CurrentUser(), Clock.systemUTC()).also { audit = it }
-            val composition = if (selectAdminReads) {
+            val composition = if (deletionPolicy != null) {
+                val deletionPool = registration.process.pools.deletion
+                val deletionPermits = DeletionPersistenceAdmission().also { deletionAdmission = it }
+                val deletionOwner = PersistencePhaseOwnership.deletion(deletionPermits, GuardedJdbcTransactionManager(deletionPool)).also { deletionOwnership = it }
+                val deletionTemplate = JdbcTemplate(deletionPool).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }.also { deletionJdbc = it }
+                deletionBindingEntered = true
+                val binding = TestOwnerDeleteProcessBindingV1.fromRegistered(registration, assembly, owner, template, deletionOwner, deletionTemplate)
+                    .also { ownerDeleteBinding = it; deletionBindingReturned = true }
+                val resources = binding.ownerHttpResources(service)
+                val publisher = resources.publisher().also { ownerDeletePublisher = it }
+                checkpoint()
+                ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateOwnerDelete(
+                    registration, assembly, owner, template, service, resources, publisher)
+            } else if (selectAdminReads) {
                 null // The new concrete supplier resolves the original configured user decoder only during refresh.
             } else if (selectMe && editPolicy != null) {
                 ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateMeReplyEdit(registration, assembly, owner, template, service)
@@ -256,6 +285,10 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             checkpoint()
             registration.requireActiveIdentityTarget(assembly)
             registration.requireInstallationResources(owner, template)
+            ownerDeleteBinding?.let {
+                it.requireGraph(it.lower)
+                registration.requireInitialDeletionPhaseResources(checkNotNull(deletionOwnership), checkNotNull(deletionJdbc))
+            }
             requireTestDeployment(selected.isActive && checkNotNull(emf).isOpen, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             selectedPort = checkNotNull(server).port.also { requireTestDeployment(it in 1..65_535, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED) }
             started = true
@@ -297,6 +330,12 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
         }
         // No clock error may skip an original close after release was positively established.
         attempt { if (budget == null) cleanupRefused() else budget.remainingMillis(1) }
+        ownerDeletePublisher?.let { original -> attempt {
+            original.close()
+            requireTestDeployment(original.isClosed() && registration.process.publicationLanes.activeOwners().totalOwners == 0L,
+                ComplaintTestDeploymentFailureV1.CLEANUP_UNPROVEN)
+            ownerDeletePublisherCloseReturned = true
+        } }
         context?.let { selected ->
             attempt {
                 selected.close() // All supplied persistence instances explicitly have no inferred destroy method.
@@ -305,10 +344,14 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
                 if (contextInitialized) requireTestDeployment(server?.tomcat?.server?.state === LifecycleState.DESTROYED, ComplaintTestDeploymentFailureV1.CLEANUP_UNPROVEN)
             }
         }
-        // Stopped ingress + zero original ordinary owners is stable; no other route on this fixed
-        // context can reach JPA. A context/EMF initialization that threw still stays unproved below.
+        // Stopped ingress + revoked registration + positive original SQL/native release, not a
+        // standalone lane snapshot. A context/EMF initialization that threw stays unproved below.
         var released = false
-        attempt { requireReleased(); released = true }
+        attempt {
+            requireReleased()
+            requireTestDeployment(ownerDeletePublisher == null || ownerDeletePublisherCloseReturned, ComplaintTestDeploymentFailureV1.CLEANUP_UNPROVEN)
+            released = true
+        }
         if (released) {
             factory?.let { original -> attempt {
                 original.destroy()
@@ -320,10 +363,11 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
         val initialized = !factoryInitializing && !contextInitializing
         // Each returned close's actual state was checked in its guarded attempt above. Do not
         // repeat a potentially throwing provider getter outside the retained failure boundary.
-        val disposed = (factory == null || factoryCloseReturned) && (context == null || contextCloseReturned)
+        val disposed = (factory == null || factoryCloseReturned) && (context == null || contextCloseReturned) &&
+            (ownerDeletePublisher == null || ownerDeletePublisherCloseReturned)
         // A refused bind may belong to an earlier JPA owner. Disposing our own factory cannot
         // establish that owner released; keep assembly/native custody without inspecting or rebinding it.
-        val bound = !installationBindingEntered || installationBindingReturned
+        val bound = (!installationBindingEntered || installationBindingReturned) && (!deletionBindingEntered || deletionBindingReturned)
         if (failure == null && initialized && disposed && bound) {
             cleanupProven = true
             return
@@ -415,7 +459,7 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
 
     private fun awaitReleased(budget: PersistenceTimeBudget?) {
         while (true) {
-            if (ingress.registeredStartupAdmissionReleased() && admission?.activeOwners().let { it == null || it == 0 }) return
+            if (originalOwnersReleased()) return
             if (Thread.currentThread().isInterrupted || budget == null) cleanupRefused()
             val millis = checkNotNull(budget).remainingMillis(5)
             LockSupport.parkNanos(millis * 1_000_000L) // Observation only, bounded by the one original close attempt.
@@ -423,9 +467,15 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
     }
 
     private fun requireReleased() = requireTestDeployment(
-        ingress.registeredStartupAdmissionReleased() && admission?.activeOwners().let { it == null || it == 0 },
+        originalOwnersReleased(),
         ComplaintTestDeploymentFailureV1.CLEANUP_UNPROVEN,
     )
+
+    /** Called only after original ingress stop and registration revocation, never a public quiescence receipt. */
+    private fun originalOwnersReleased(): Boolean =
+        ingress.registeredStartupAdmissionReleased() && admission?.activeOwners().let { it == null || it == 0 } &&
+            deletionAdmission?.activeOwners()?.totalOwners.let { it == null || it == 0 } &&
+            (deletionPolicy == null || registration.process.publicationLanes.activeOwners().totalOwners == 0L)
 
     private fun checkpoint() {
         requireCaller()
@@ -445,6 +495,13 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
         /** Explicit read-only projection selection, never a new birth policy, readiness grant or default mount. */
         internal fun retainedWithMe(assembly: ComplaintTestProcessAssemblyV1, registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 =
             ComplaintTestRegisteredHttpStartupV1(assembly, registration, selectMe = true)
+
+        /** Existing deletion birth policy and original publisher only; no new declaration or default route expansion. */
+        internal fun retainedWithOwnerDelete(assembly: ComplaintTestProcessAssemblyV1, registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
+            val policy = checkNotNull(registration.process.initialCheckpointDeletion)
+            requireTestDeployment(registration.process.initialCheckpointCreate != null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+            return ComplaintTestRegisteredHttpStartupV1(assembly, registration, deletionPolicy = policy)
+        }
 
         /** Explicit pre-D read consumer required; no normal owner startup acquires these routes. */
         internal fun retainedWithAdminReads(assembly: ComplaintTestProcessAssemblyV1, registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {

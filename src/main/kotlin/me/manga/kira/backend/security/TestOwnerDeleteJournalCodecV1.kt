@@ -20,12 +20,17 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /** Actual J-bound content/cryptography only; never a receipt, PREPARED row, durable object or capability. */
-internal class TestOwnerDeleteJournalCodecV1(
+internal class TestOwnerDeleteJournalCodecV1 private constructor(
     private val routingOwner: TestOwnerDeleteJournalRoutingV1,
-    private val dataKeys: JournalDataKeyPortV1,
-    private val random: SecureRandom = SecureRandom(),
-    private val nanoTime: () -> Long = System::nanoTime,
+    private val native: Native?,
 ) {
+    constructor(routingOwner: TestOwnerDeleteJournalRoutingV1, dataKeys: JournalDataKeyPortV1,
+        random: SecureRandom = SecureRandom(), nanoTime: () -> Long = System::nanoTime) :
+        this(routingOwner, Native(dataKeys, random, nanoTime))
+
+    private class Native(val dataKeys: JournalDataKeyPortV1, val random: SecureRandom, val nanoTime: () -> Long)
+    private fun nativeOwner(): Native = native ?: throw OwnerDeleteAllJournalException(OwnerDeleteAllJournalFailure.INVALID_INPUT)
+
     private val declaration = routingOwner.journalConfiguration.declaration()
     private val limits = declaration.limits.decoder
     private val writer = declaration.writer.generationId
@@ -38,7 +43,7 @@ internal class TestOwnerDeleteJournalCodecV1(
     /** Start once for the entire connection-free publication attempt, not once for each key call. */
     fun startAttempt(enclosingBudget: PersistenceTimeBudget? = null): TestOwnerDeleteCodecAttemptV1 = testDeleteCodecBoundary {
         requireConnectionFree()
-        TestOwnerDeleteCodecAttemptV1(routingOwner, nanoTime, enclosingBudget).also { it.remainingMillis(1) }
+        TestOwnerDeleteCodecAttemptV1(routingOwner, nativeOwner().nanoTime, enclosingBudget).also { it.remainingMillis(1) }
     }
 
     /** Null selects active for a new candidate. A retry must supply its already selected retained ID. */
@@ -100,6 +105,7 @@ internal class TestOwnerDeleteJournalCodecV1(
 
     /** Fresh randomized candidate. Its exact bytes may be reused, but it is not durably frozen evidence. */
     fun seal(event: TestOwnerDeleteJournalEventV1, attempt: TestOwnerDeleteCodecAttemptV1): EncodedTestOwnerDeleteEnvelopeV1 = testDeleteCodecBoundary {
+        val keys = nativeOwner()
         attempt.requireOwner(routingOwner)
         attempt.remainingMillis(1)
         requireJournalCodec(event.belongsTo(routingOwner))
@@ -113,7 +119,7 @@ internal class TestOwnerDeleteJournalCodecV1(
             }
             requireJournalCodec(bound.route == event.route)
             val nonce = buffers.own(ByteArray(NONCE_BYTES))
-            random.nextBytes(nonce)
+            keys.random.nextBytes(nonce)
             val header = header(bound.route, bound.tuple.epoch, bound.tuple.eventKind.name, encode(nonce))
             val headerBytes = buffers.own(json.encodeHeader(header))
             val ciphertextLength = plaintext.size + TAG_BYTES
@@ -121,7 +127,7 @@ internal class TestOwnerDeleteJournalCodecV1(
             requireJournalCodec(availableWrappedBytes > 0, OwnerDeleteAllJournalFailure.LIMIT_EXCEEDED)
             val request = request(header, minOf(limits.maximumWrappedKeyBytes.toLong(), availableWrappedBytes).toInt(), attempt, buffers)
             requireConnectionFree()
-            val lease = journalKeyCall { dataKeys.generate(request) }
+            val lease = journalKeyCall { keys.dataKeys.generate(request) }
             var selectedWrapped: ByteArray? = null
             val ciphertext = withJournalDataKey(request, lease, generated = true) { key, wrapped ->
                 attempt.remainingMillis(1)
@@ -157,6 +163,7 @@ internal class TestOwnerDeleteJournalCodecV1(
 
     private fun openFamily(expectedBucket: String, expectedObjectKey: String, wireBytes: ByteArray, attempt: TestOwnerDeleteCodecAttemptV1, family: OpenFamily): DecodedTestOwnerDeleteJournalEventV1 =
         testDeleteCodecBoundary {
+            val keys = nativeOwner()
             val j = routingOwner.journalConfiguration
             requireJournalCodec(family != OpenFamily.ADMIN_SINGLE || j.adminDelete)
             requireJournalCodec(family != OpenFamily.ADMIN_BATCH || j.adminBatchDelete)
@@ -183,7 +190,7 @@ internal class TestOwnerDeleteJournalCodecV1(
                 requireConnectionFree()
                 val request = request(header, limits.maximumWrappedKeyBytes, attempt, buffers)
                 val lease = try {
-                    journalKeyCall { dataKeys.unwrap(request, wrappedForPort) }
+                    journalKeyCall { keys.dataKeys.unwrap(request, wrappedForPort) }
                 } finally {
                     wrappedForPort.fill(0)
                 }
@@ -355,6 +362,10 @@ internal class TestOwnerDeleteJournalCodecV1(
     private class TestDeleteEnvelopeParts(val header: ByteArray, val wrapped: ByteArray, val ciphertext: ByteArray)
 
     companion object {
+        /** Pure original-routing semantics for SQL preparation; no native port, random or attempt authority. */
+        internal fun forCanonicalization(routingOwner: TestOwnerDeleteJournalRoutingV1): TestOwnerDeleteJournalCodecV1 =
+            TestOwnerDeleteJournalCodecV1(routingOwner, null)
+
         /** Portless local restoration only; callers must independently match the complete durable row and proof. */
         fun restoreCanonical(
             routingOwner: TestOwnerDeleteJournalRoutingV1,

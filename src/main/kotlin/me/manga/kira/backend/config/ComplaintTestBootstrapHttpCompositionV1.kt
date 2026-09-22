@@ -13,6 +13,7 @@ import me.manga.kira.backend.complaint.api.ComplaintInstallationBootstrapHttpHan
 import me.manga.kira.backend.complaint.api.ComplaintInstallationHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerCreateHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDetailHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerEditHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerOperationResponse
@@ -22,6 +23,7 @@ import me.manga.kira.backend.complaint.application.ComplaintInstallationBootstra
 import me.manga.kira.backend.complaint.application.ComplaintInstallationMeService
 import me.manga.kira.backend.complaint.application.ComplaintInstallationService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerCreateService
+import me.manga.kira.backend.complaint.application.ComplaintOwnerDeleteService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerDetailService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerEditService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerHistoryService
@@ -53,9 +55,11 @@ import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerCreateSt
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerEditStore
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDetailStore
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerHistoryStore
+import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerCreatePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerEditPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDetailPhaseExecutor
@@ -86,7 +90,8 @@ import java.util.UUID
  * An explicit read/CREATE/me sibling adds only the existing installation projection.
  * A further explicit me/REPLY/EDIT selection combines that projection with the existing owner cohort.
  * A separate born-with Admin read sibling adds its fixed normal-ADMIN search/detail/stats cohort.
- * No delete, LIVE/restart/quarantine or broad Core; all earlier selectors remain narrower.
+ * A separate registered owner-deletion sibling selects read/CREATE plus DELETE/status, never direct APPLY.
+ * No delete-all, LIVE/restart/quarantine or broad Core; all earlier selectors remain narrower.
  */
 internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     registration: ComplaintTestNamespaceRegistrationV1,
@@ -100,6 +105,8 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     private val me: ComplaintInstallationMeHttpHandler? = null,
     private val adminReads: ComplaintTestRegisteredAdminReadsV1? = null,
     private val adminContent: ComplaintTestRegisteredAdminContentV1? = null,
+    private val ownerDelete: TestOwnerDeleteProcessBindingV1.OwnerHttpResources? = null,
+    private val ownerDeletePublisher: TestOwnerDeleteJournalPublisherFactoryV1? = null,
 ) {
     init {
         require((assembly == null) == (audit == null))
@@ -110,6 +117,8 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             ((replyStore == null && editStore == null) || (replyStore != null && editStore != null))))
         require(adminReads == null || (reads != null && replyStore == null && editStore == null && me == null))
         require(adminContent == null || adminReads != null)
+        require((ownerDelete == null) == (ownerDeletePublisher == null))
+        require(ownerDelete == null || (reads != null && replyStore == null && editStore == null && me == null && adminReads == null && adminContent == null))
     }
 
     private val producer = ComplaintInstallationBootstrapHttpHandler(
@@ -131,8 +140,13 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             ComplaintOwnerEditHttpHandler(ComplaintOwnerEditService(ComplaintOwnerEditAdapter(scope, jwt,
                 ComplaintOwnerEditPhaseExecutor(ownership, it), ingress)), ingress, responses)
         }
+        val delete = ownerDelete?.let {
+            ComplaintOwnerDeleteHttpHandler(ComplaintOwnerDeleteService(it.adapter(registration, assembly, ownership, jdbc, jwt,
+                checkNotNull(ownerDeletePublisher))), ingress, responses)
+        }
         val create = ComplaintOwnerCreateHttpHandler(
-            ComplaintOwnerCreateService(ComplaintOwnerCreateAdapter(scope, jwt, ComplaintOwnerCreatePhaseExecutor(ownership, store), ingress)), ingress, responses, editStatus = edit,
+            ComplaintOwnerCreateService(ComplaintOwnerCreateAdapter(scope, jwt, ComplaintOwnerCreatePhaseExecutor(ownership, store), ingress)), ingress, responses,
+            deleteStatus = delete, editStatus = edit,
         )
         val enrollmentAudit = ComplaintInstallationEnrollmentAudit { selectedScope, allocation, at ->
             selectedAudit.recordInstallationEnrollment(selectedScope, allocation, at)
@@ -143,7 +157,11 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         // AUTH remains early rejection only. Direct CREATE constructs no read producer/handler.
         val authentication = ComplaintInstallationBearerAuthenticator(scope, jwt,
             reads?.authenticationPhases ?: ComplaintOwnerHistoryPhaseExecutor(ownership, JdbcComplaintOwnerHistoryStore(jdbc, scope)), ingress)
-        if (me != null && edit != null) {
+        if (delete != null) {
+            val selectedReads = checkNotNull(reads)
+            ComplaintInstallationSecurityChainFactory.registeredReadCreateOwnerDeleteSubset(
+                bridge, producer, authentication, installations, create, selectedReads.history, selectedReads.detail, delete)
+        } else if (me != null && edit != null) {
             val selectedReads = checkNotNull(reads)
             ComplaintInstallationSecurityChainFactory.registeredReadCreateMeReplyEditSubset(
                 bridge, producer, authentication, installations, create, selectedReads.history, selectedReads.detail, me, edit)
@@ -178,6 +196,7 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
 
     internal fun mapsRequest(request: HttpServletRequest): Boolean = ComplaintInstallationRoutes.path(request) in literalPaths ||
         (reads != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
+        (ownerDelete != null && request.method == "DELETE" && ComplaintInstallationRoutes.isDetail(request)) ||
         (replyStore != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
         (editStore != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
         adminReads?.mapsRequest(request) == true || adminContent?.mapsRequest(request) == true
@@ -206,6 +225,7 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
                 val selected = admitted as HttpServletRequest
                 if ((selected.method == "GET" && (path == ComplaintInstallationRoutes.ME ||
                         path == ComplaintInstallationRoutes.HISTORY || ComplaintInstallationRoutes.isDetail(selected))) ||
+                    (ownerDelete != null && selected.method == "DELETE" && ComplaintInstallationRoutes.isDetail(selected)) ||
                     (replyStore != null && selected.method == "POST" && ComplaintInstallationRoutes.isReply(selected)) ||
                     (editStore != null && selected.method == "PATCH" && ComplaintInstallationRoutes.isContent(selected))) {
                     reads?.requireWithinIngress()
@@ -336,6 +356,22 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             registration.requireInstallationResources(ownership, jdbc)
             return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
                 RegisteredOwnerReads(registration, assembly, ownership, jdbc))
+        }
+
+        /** Original deletion resources and publisher are retained by startup BEFORE constructing this fixed route cohort. */
+        fun fromRegisteredInitialCheckpointReadCreateOwnerDelete(
+            registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership,
+            jdbc: JdbcTemplate,
+            audit: AuditService,
+            ownerResources: TestOwnerDeleteProcessBindingV1.OwnerHttpResources,
+            publisher: TestOwnerDeleteJournalPublisherFactoryV1,
+        ): ComplaintTestBootstrapHttpCompositionV1 {
+            registration.requireActiveIdentityTarget(assembly)
+            registration.requireIdentityAdmissionPhaseResources(ownership, jdbc)
+            return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
+                RegisteredOwnerReads(registration, assembly, ownership, jdbc), ownerDelete = ownerResources, ownerDeletePublisher = publisher)
         }
 
         /** Concrete me reader on the same registered read/CREATE graph; no earlier selector expands. */

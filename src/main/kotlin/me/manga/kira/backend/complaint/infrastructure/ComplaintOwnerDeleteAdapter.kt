@@ -11,6 +11,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationFailure
 import me.manga.kira.backend.complaint.domain.rejectOwnerOperation
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestDeploymentExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeletePhaseExecutor
@@ -20,7 +22,7 @@ import me.manga.kira.backend.security.InstallationJwtCodec
 import me.manga.kira.backend.security.InstallationJwtRejectedException
 import me.manga.kira.backend.security.OwnerDeleteAllJournalException
 
-/** Explicit lower TEST composition, dormant and not a bean. The unavailable registered/current runtime proof is NOT issued here. */
+/** Explicit TEST composition only. Registered requests publish/VERIFY but can never borrow lower direct APPLY. */
 internal class ComplaintOwnerDeleteAdapter(
     private val graph: TestOwnerDeleteLocalGraphV1,
     private val jwt: InstallationJwtCodec,
@@ -41,6 +43,7 @@ internal class ComplaintOwnerDeleteAdapter(
             val candidate = ComplaintOwnerDeleteCandidate.prepare(identity.installation, ComplaintOwnerDeleteRequest.normalize(graph.routing.journalConfiguration.scope, input))
             val preflight = checked(reads.preflight(identity, candidate.tuple))
             preflight.receipt?.let { return it }
+            if (graph.initialDeletion != null) return registeredDelete(identity, candidate, preflight, ingress)
             if (preflight.authorized) return continuation.complete(phases.reload(identity, candidate, preflight))
             val admitted = admission.admitOwnerDelete(ingress, candidate.tuple)
             // Same shared privacy owner is retained before AUTH, but constructs no SDK while SQL is held.
@@ -48,7 +51,25 @@ internal class ComplaintOwnerDeleteAdapter(
         } catch (_: PersistencePhaseException) { rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE) }
         catch (_: JournalPublicationExceptionV1) { rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE) }
         catch (_: OwnerDeleteAllJournalException) { rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE) }
+        catch (_: ComplaintTestNamespaceRegistrationExceptionV1) { rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE) }
+        catch (_: ComplaintTestDeploymentExceptionV1) { rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE) }
     }
+
+    private fun registeredDelete(identity: ComplaintOwnerOperationIdentity, candidate: ComplaintOwnerDeleteCandidate,
+        preflight: ComplaintOwnerDeleteObservation, ingress: ComplaintIngressContext): ComplaintOwnerDeleteReceipt {
+        if (preflight.authorized) {
+            continuation.publishRegistered(phases.reload(identity, candidate, preflight))
+        } else {
+            val admitted = admission.admitOwnerDelete(ingress, candidate.tuple)
+            publisher.reserve().use { lane ->
+                continuation.publishRegistered(phases.authorize(identity, candidate, preflight, admitted, lane), lane)
+            }
+        }
+        // Successful A/VERIFY is not completion. Only this fresh authenticated exact-tuple read
+        // may observe separately owned B's receipt; no catch/fallback may turn phase failure into 204.
+        return checked(reads.status(identity, candidate.tuple)).receipt ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE)
+    }
+
     override fun status(context: ComplaintOwnerOperationContext, bearer: String, query: ComplaintOwnerDeleteStatusQuery): ComplaintOwnerDeleteReceipt {
         requireConnectionFree()
         val ingress = ingress(context)
@@ -62,6 +83,8 @@ internal class ComplaintOwnerDeleteAdapter(
             admission.consumeOwnerStatus(ingress, read)
             return checked(reads.status(identity, tuple)).receipt ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND)
         } catch (_: PersistencePhaseException) { rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE) }
+        catch (_: ComplaintTestNamespaceRegistrationExceptionV1) { rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE) }
+        catch (_: ComplaintTestDeploymentExceptionV1) { rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE) }
     }
     private fun checked(observed: ComplaintOwnerDeleteObservation): ComplaintOwnerDeleteObservation {
         requireConnectionFree()

@@ -42,6 +42,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
     private val core: Core?,
     private val bootstrap: ComplaintInstallationBootstrapHttpHandler?,
     private val initialCreate: InitialCreate? = null,
+    private val initialOwnerDelete: InitialOwnerDelete? = null,
 ) {
     /** Existing explicit core construction is unchanged; bootstrap is an optional concrete producer, not a ready flag. */
     constructor(
@@ -60,13 +61,19 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
     ) : this(bridge, Core(authentication, installations, me, history, create, deleteAll, detail, reply, edit, delete), bootstrap)
 
     init {
-        require(core == null || initialCreate == null)
+        require(core == null || (initialCreate == null && initialOwnerDelete == null))
+        require(initialCreate == null || initialOwnerDelete == null)
         initialCreate?.let {
             require(!it.create.hasDeleteStatus() && it.create.hasEditStatus() == (it.edit != null)) { "Complaint CREATE subset refused." }
             if (it.edit != null) require(it.reply != null && it.create.usesEditStatus(it.edit)) { "Complaint EDIT subset refused." }
             require(it.reply == null || it.reply === it.create) { "Complaint REPLY subset refused." }
             require(it.me == null || (it.reads != null &&
                 ((it.reply == null && it.edit == null) || (it.reply === it.create && it.edit != null)))) { "Installation read subset refused." }
+        }
+        initialOwnerDelete?.let {
+            require(it.create.hasDeleteStatus() && it.create.usesDeleteStatus(it.delete) && !it.create.hasEditStatus()) {
+                "Complaint owner DELETE subset refused."
+            }
         }
         core?.let {
             require(it.create.hasDeleteStatus() == (it.delete != null)) { "Complaint delete/status composition refused." }
@@ -82,11 +89,12 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
     private val denied = AccessDeniedHandler { request, response, _ ->
         ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.FORBIDDEN)
     }
-    private val authentication: ComplaintInstallationBearerAuthenticator? get() = core?.authentication ?: initialCreate?.authentication
-    private val detail: ComplaintOwnerDetailHttpHandler? get() = core?.detail ?: initialCreate?.reads?.detail
+    private val authentication: ComplaintInstallationBearerAuthenticator? get() = core?.authentication ?: initialCreate?.authentication ?: initialOwnerDelete?.authentication
+    private val detail: ComplaintOwnerDetailHttpHandler? get() = core?.detail ?: initialCreate?.reads?.detail ?: initialOwnerDelete?.reads?.detail
     private val reply: ComplaintOwnerCreateHttpHandler? get() = core?.reply ?: initialCreate?.reply
     private val edit: ComplaintOwnerEditHttpHandler? get() = core?.edit ?: initialCreate?.edit
     private val me: ComplaintInstallationMeHttpHandler? get() = core?.me ?: initialCreate?.me
+    private val delete: ComplaintOwnerDeleteHttpHandler? get() = core?.delete ?: initialOwnerDelete?.delete
 
     fun build(http: HttpSecurity): SecurityFilterChain {
         http.securityMatcher(ComplaintInstallationRoutes)
@@ -142,18 +150,18 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
                 ComplaintInstallationRoutes.BOOTSTRAP -> checkNotNull(bootstrap).handleWithinIngress(request, response, context)
 
                 ComplaintInstallationRoutes.ENROLLMENT, ComplaintInstallationRoutes.SESSION ->
-                    checkNotNull(core?.installations ?: initialCreate?.installations).handleWithinIngress(request, response, context)
+                    checkNotNull(core?.installations ?: initialCreate?.installations ?: initialOwnerDelete?.installations).handleWithinIngress(request, response, context)
 
                 ComplaintInstallationRoutes.ME -> checkNotNull(me).handleWithinIngress(request, response, context)
 
-                ComplaintInstallationRoutes.STATUS -> checkNotNull(core?.create ?: initialCreate?.create).handleWithinIngress(request, response, context)
+                ComplaintInstallationRoutes.STATUS -> checkNotNull(core?.create ?: initialCreate?.create ?: initialOwnerDelete?.create).handleWithinIngress(request, response, context)
 
                 ComplaintInstallationRoutes.DELETE_ALL -> checkNotNull(core?.deleteAll).handleWithinIngress(request, response, context)
 
                 ComplaintInstallationRoutes.HISTORY -> if (request.method == "GET") {
-                    checkNotNull(core?.history ?: initialCreate?.reads?.history).handleWithinIngress(request, response, context)
+                    checkNotNull(core?.history ?: initialCreate?.reads?.history ?: initialOwnerDelete?.reads?.history).handleWithinIngress(request, response, context)
                 } else {
-                    checkNotNull(core?.create ?: initialCreate?.create).handleWithinIngress(request, response, context)
+                    checkNotNull(core?.create ?: initialCreate?.create ?: initialOwnerDelete?.create).handleWithinIngress(request, response, context)
                 }
 
                 else -> if (ComplaintInstallationRoutes.isReply(request)) {
@@ -161,7 +169,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
                 } else if (ComplaintInstallationRoutes.isContent(request)) {
                     checkNotNull(edit).handleWithinIngress(request, response, context)
                 } else if (request.method == "DELETE") {
-                    checkNotNull(core?.delete).handleWithinIngress(request, response, context)
+                    checkNotNull(delete).handleWithinIngress(request, response, context)
                 } else {
                     checkNotNull(detail).handleWithinIngress(request, response, context)
                 }
@@ -173,15 +181,15 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
 
     /** Concrete optional composition only; no public readiness flag can open this route. */
     internal fun implemented(request: HttpServletRequest): Boolean = (core != null && ComplaintInstallationRoutes.implemented(request)) ||
-        (initialCreate != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) in INITIAL_CREATE_PATHS) ||
-        (initialCreate?.reads != null && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.HISTORY) ||
+        ((initialCreate != null || initialOwnerDelete != null) && request.method == "POST" && ComplaintInstallationRoutes.path(request) in INITIAL_CREATE_PATHS) ||
+        ((initialCreate?.reads != null || initialOwnerDelete != null) && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.HISTORY) ||
         (me != null && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.ME) ||
         (bootstrap != null && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.BOOTSTRAP) ||
         (core?.deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
         (reply != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
         (edit != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
         (detail != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
-        (core?.delete != null && request.method == "DELETE" && ComplaintInstallationRoutes.isDetail(request))
+        (delete != null && request.method == "DELETE" && ComplaintInstallationRoutes.isDetail(request))
 
     /** Used by the registered outer filter before generic buffering, and rechecked before bearer SQL. */
     internal fun validateDetailWithinIngress(request: HttpServletRequest, response: HttpServletResponse): Boolean =
@@ -225,6 +233,15 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
         val me: ComplaintInstallationMeHttpHandler? = null,
     )
 
+    /** Separate fixed tuple: no /me, reply, EDIT, delete-all or weakening of the original CREATE guard. */
+    private class InitialOwnerDelete(
+        val authentication: ComplaintInstallationBearerAuthenticator,
+        val installations: ComplaintInstallationHttpHandler,
+        val create: ComplaintOwnerCreateHttpHandler,
+        val reads: OwnerReads,
+        val delete: ComplaintOwnerDeleteHttpHandler,
+    )
+
     private class OwnerReads(val history: ComplaintOwnerHistoryHttpHandler, val detail: ComplaintOwnerDetailHttpHandler)
 
     companion object {
@@ -247,6 +264,14 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
             create: ComplaintOwnerCreateHttpHandler, history: ComplaintOwnerHistoryHttpHandler,
             detail: ComplaintOwnerDetailHttpHandler): ComplaintInstallationSecurityChainFactory =
             ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap, InitialCreate(authentication, installations, create, OwnerReads(history, detail)))
+
+        /** Explicit original owner-deletion cohort; the older read/CREATE selector still refuses DELETE status. */
+        fun registeredReadCreateOwnerDeleteSubset(bridge: ComplaintHttpIngressBridge, bootstrap: ComplaintInstallationBootstrapHttpHandler,
+            authentication: ComplaintInstallationBearerAuthenticator, installations: ComplaintInstallationHttpHandler,
+            create: ComplaintOwnerCreateHttpHandler, history: ComplaintOwnerHistoryHttpHandler,
+            detail: ComplaintOwnerDetailHttpHandler, delete: ComplaintOwnerDeleteHttpHandler): ComplaintInstallationSecurityChainFactory =
+            ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap,
+                initialOwnerDelete = InitialOwnerDelete(authentication, installations, create, OwnerReads(history, detail), delete))
 
         /** Same read/CREATE subset plus one concrete me handler; not the broader Core constructor. */
         fun registeredReadCreateMeSubset(bridge: ComplaintHttpIngressBridge, bootstrap: ComplaintInstallationBootstrapHttpHandler,

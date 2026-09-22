@@ -119,6 +119,16 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         return ComplaintTestRegisteredHttpStartupV1.retainedWithMe(this, registration).also { httpStartup = it }
     }
 
+    /** Explicit read/CREATE + owner DELETE/status sibling; original born-with deletion resources, never request APPLY. */
+    fun beginRegisteredOwnerDeleteHttpStartup(registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
+        requireConnectionFree()
+        requireTestDeployment(caller === Thread.currentThread() && httpStartup == null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+        registration.requireActiveIdentityTarget(this)
+        requireTestDeployment(registration.process === target && target.initialCheckpointCreate != null &&
+            target.initialCheckpointDeletion != null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+        return ComplaintTestRegisteredHttpStartupV1.retainedWithOwnerDelete(this, registration).also { httpStartup = it }
+    }
+
     /** One explicit born-with read cohort. This never widens the older owner-only startup selectors. */
     fun beginRegisteredAdminReadHttpStartup(registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
         requireConnectionFree()
