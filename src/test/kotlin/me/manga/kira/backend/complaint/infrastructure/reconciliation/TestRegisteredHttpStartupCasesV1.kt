@@ -661,11 +661,12 @@ internal object TestRegisteredHttpStartupCasesV1 {
         initialCheckpointCreate: TestInitialCheckpointCreateInputV1 = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
         adminRead: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadInputV1? = null,
         adminContent: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentInputV1? = null,
+        adminStatus: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminStatusInputV1? = null,
         action: (TestActiveFirstCutFixtureV1, TestActiveOrdinaryRawFixtureV1, TestActiveInitialCheckpointRawFixtureV1) -> Unit) {
         val ordinary = TestActiveOrdinaryRawFixtureV1()
         val raw = TestActiveInitialCheckpointRawFixtureV1()
         val factories = ordinary.factories.let { TestActiveOrdinaryRawHttpV1(it.sts, it.kms, it.s3, raw.input,
-            initialCheckpointCreate = initialCheckpointCreate, adminRead = adminRead, adminContent = adminContent) }
+            initialCheckpointCreate = initialCheckpointCreate, adminRead = adminRead, adminContent = adminContent, adminStatus = adminStatus) }
         withTestActiveFirstCut(tls, ordinaryRawHttp = factories, globalScanBeforeActivation = globalScanBeforeActivation) {
             first -> action(first, ordinary, raw)
         }

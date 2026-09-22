@@ -164,6 +164,7 @@ internal class PgLifecycleDatabaseTls private constructor(val root: Path, privat
             "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
             "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminReadHttpIT",
             "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpIT",
+            "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminStatusHttpIT",
             "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInstallationMeHttpIT",
             "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
             "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
