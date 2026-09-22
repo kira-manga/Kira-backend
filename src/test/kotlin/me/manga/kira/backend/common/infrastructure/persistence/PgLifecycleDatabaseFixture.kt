@@ -379,6 +379,7 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminStatusHttpIT",
                     "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminBatchStatusHttpIT",
                     "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+                    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpIT",
                     PgLifecycleDatabaseTls.CLASS_NAME,
                 ),
             )
