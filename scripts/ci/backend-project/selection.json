@@ -1,0 +1,94 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 37,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveServicePoisonProcessCasesV1",
+      "cohort": "NEW_CONNECTED_RETAINED_CUSTODY",
+      "expected_invocations_from_annotation": 1,
+      "method": "firstScannerStsCloseRefusalRetainsServiceParentsWithoutRedispatch",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveServicePoisonProcessCasesV1.kt",
+      "source_head": "0be4bff4eee36de38d6c8fc28d80544e2c002e74",
+      "source_sha256": "36a530719add4b1495a5497f2e29f2f916d8af09f8ea0d356aedc6a8f3e9ca1b",
+      "xml_names": [
+        "firstScannerStsCloseRefusalRetainsServiceParentsWithoutRedispatch()"
+      ]
+    },
+    {
+      "annotation_line": 24,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "FAILED74_PENDING_COMPLETE",
+      "expected_invocations_from_annotation": 1,
+      "method": "priorOwnerAndAdminFamiliesShareTheSameCompleteListenerAndResponseOwner",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "0be4bff4eee36de38d6c8fc28d80544e2c002e74",
+      "source_sha256": "24fd294a7012364ce7a07bc73b3a76d554d12613b2a74550b8ba048e7b4d9161",
+      "xml_names": [
+        "priorOwnerAndAdminFamiliesShareTheSameCompleteListenerAndResponseOwner()"
+      ]
+    },
+    {
+      "annotation_line": 27,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "FAILED74_PENDING_COMPLETE",
+      "expected_invocations_from_annotation": 1,
+      "method": "olderStatusOnlySelectionStillRejectsDeleteWithAllColdInputsPresent",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "0be4bff4eee36de38d6c8fc28d80544e2c002e74",
+      "source_sha256": "24fd294a7012364ce7a07bc73b3a76d554d12613b2a74550b8ba048e7b4d9161",
+      "xml_names": [
+        "olderStatusOnlySelectionStillRejectsDeleteWithAllColdInputsPresent()"
+      ]
+    },
+    {
+      "annotation_line": 30,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "FAILED74_PENDING_COMPLETE",
+      "expected_invocations_from_annotation": 1,
+      "method": "batchOfOneNativeGetFailurePreservesConsumedGrantAndPendingOriginalCleanup",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "0be4bff4eee36de38d6c8fc28d80544e2c002e74",
+      "source_sha256": "24fd294a7012364ce7a07bc73b3a76d554d12613b2a74550b8ba048e7b4d9161",
+      "xml_names": [
+        "batchOfOneNativeGetFailurePreservesConsumedGrantAndPendingOriginalCleanup()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 4,
+  "expected_source_paths": 2495,
+  "expected_total": 4,
+  "selection_basis": {
+    "batch": "CONNECTED_SERVICE_CUSTODY_AND_REMAINING_COMPLETE",
+    "carryforward": "No unchanged successful methods repeated; natural recurrence75 and prior74/72/70/69/68/66/65 remain separately recorded.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "FAILED74_PENDING_COMPLETE": 3,
+      "NEW_CONNECTED_RETAINED_CUSTODY": 1
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "expected_source_paths": 2495,
+    "gradle_seconds": 2400,
+    "inventory": "Every committed source path and all348 historical paths, root-pin final count, no fixed exclusion.",
+    "plan": "review/working/app-29-backend-focused-20260922-76/PLAN.md",
+    "prerequisite": "Root reviewed connected-poison TEST3 and final shared Complete codec behavior; preserve original controls.",
+    "required_source": "0be4bff4eee36de38d6c8fc28d80544e2c002e74",
+    "required_tree": "fcef17717ad36d8816c03c400d6cef9ddaf70579",
+    "scope": "New fixed connected service poison declaration plus three failed74 Complete declarations explicitly carried forward75."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveServicePoisonProcessCasesV1.kt": "36a530719add4b1495a5497f2e29f2f916d8af09f8ea0d356aedc6a8f3e9ca1b",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt": "24fd294a7012364ce7a07bc73b3a76d554d12613b2a74550b8ba048e7b4d9161"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveServicePoisonProcessCasesV1": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT": 3
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.priorOwnerAndAdminFamiliesShareTheSameCompleteListenerAndResponseOwner",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.batchOfOneNativeGetFailurePreservesConsumedGrantAndPendingOriginalCleanup",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.olderStatusOnlySelectionStillRejectsDeleteWithAllColdInputsPresent",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveServicePoisonProcessCasesV1.firstScannerStsCloseRefusalRetainsServiceParentsWithoutRedispatch"
+  ]
+}

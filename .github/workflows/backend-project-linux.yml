@@ -1,0 +1,236 @@
+name: Backend App29 focused admission batch purge and recovery verification
+
+on:
+  push:
+    branches: [remediation/backend-app29-focused-4-20260922-76]
+
+permissions:
+  contents: read
+  actions: read # Read only the explicitly pinned public producer artifact; no package/publication permission.
+
+concurrency:
+  group: backend-project-source-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: >-
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.event.repository.private == false &&
+      github.event.created == true && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    env:
+      CONTROL: ${{ github.workspace }}/carrier/scripts/ci/backend-project
+      KIRA_PUBLIC_SOURCE: ${{ github.workspace }}/backend
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Exact carrier controls, no credentials retained
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: carrier
+          persist-credentials: false
+          fetch-depth: 2
+          sparse-checkout: scripts/ci/backend-project
+          sparse-checkout-cone-mode: false
+          show-progress: false
+
+      - name: Exact reviewed backend source, not main or a release
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: 0be4bff4eee36de38d6c8fc28d80544e2c002e74
+          path: backend
+          persist-credentials: false
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Admission and fresh owned directories
+        id: owned
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          cd "$CONTROL"
+          sha256sum --check --strict SHA256SUMS
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, tempfile
+          b=json.loads(pathlib.Path('binding.json').read_text())
+          assert b['status']=='BOUND' and b['primary_dispatch_authority']=='ADMITTED_BY_PRIMARY'
+          assert os.environ['RUNNER_ENVIRONMENT']=='github-hosted'
+          assert os.environ['GITHUB_REF']=='refs/heads/remediation/backend-app29-focused-4-20260922-76'
+          assert subprocess.check_output(['git','rev-parse','HEAD^@'],text=True).strip()==b['source']['sha']
+          java=pathlib.Path(os.environ['JAVA_HOME_21_X64'])
+          assert 'JAVA_VERSION="21.' in (java/'release').read_text()
+          with open(os.environ['GITHUB_ENV'],'a') as env:
+              env.write('JAVA_HOME='+str(java)+'\nKIRA_PUBLIC_CONTROL='+str(pathlib.Path.cwd())+'\n')
+          with open(os.environ['GITHUB_PATH'],'a') as path: path.write(str(java/'bin')+'\n')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out:
+              for key,prefix in [('runtime','.kira-public-runtime-'),('run','.kira-public-backend-'),
+                                 ('runtime_evidence','kira-public-runtime-evidence-'),('evidence','kira-public-backend-evidence-')]:
+                  p=pathlib.Path(tempfile.mkdtemp(prefix=prefix,dir=os.environ['RUNNER_TEMP']))
+                  out.write(f'{key}={p}\n{key}_dev={p.stat().st_dev}\n{key}_ino={p.stat().st_ino}\n')
+          PY
+
+      # Exact source gate with explicitly pinned verified seed; no fallback or product acceptance claim.
+      - name: Select one explicitly pinned public runtime artifact or a fresh seed build
+        id: runtime_input
+        run: python3 -B "$CONTROL/reconstruct-runtime.py" --reuse-download-outputs
+
+      - name: Download only the exact producer run and artifact ID
+        if: steps.runtime_input.outputs.enabled == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          repository: kira-manga/Kira-backend
+          run-id: ${{ steps.runtime_input.outputs.run_id }}
+          artifact-ids: ${{ steps.runtime_input.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ steps.owned.outputs.runtime_evidence }}/reuse-input
+          github-token: ${{ github.token }} # Transient read-only job token; never passed to reconstruction/JVM env.
+
+      - name: Prepare exact public verification dependencies, preserving fresh cleanup
+        id: dependency_runtime
+        timeout-minutes: 47
+        env:
+          KIRA_PUBLIC_RUNTIME: ${{ steps.owned.outputs.runtime }}
+          KIRA_PUBLIC_RUNTIME_EVIDENCE: ${{ steps.owned.outputs.runtime_evidence }}
+        run: python3 -B "$CONTROL/reconstruct-runtime.py"
+
+      - name: Retain only the successful unqualified seed runtime and existing provenance
+        if: steps.dependency_runtime.outputs.retained == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: verification-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: false
+          path: |
+            ${{ steps.owned.outputs.runtime_evidence }}/reusable-runtime/runtime-maven.tar
+            ${{ steps.owned.outputs.runtime_evidence }}/reusable-runtime/runtime-manifest.json
+            ${{ steps.owned.outputs.runtime_evidence }}/reusable-runtime/runtime-provenance.json
+
+      - name: One ordinary compilation and 4 selected methods (4 invocations)
+        timeout-minutes: 44
+        env:
+          KIRA_PUBLIC_RUNTIME: ${{ steps.owned.outputs.runtime }}
+          KIRA_PUBLIC_RUN: ${{ steps.owned.outputs.run }}
+          KIRA_PUBLIC_EVIDENCE: ${{ steps.owned.outputs.evidence }}
+        run: python3 -B "$CONTROL/run-source-verification.py"
+
+      - name: Dispose verified-quiescent temporary runtime, never unknown workers
+        if: always() && steps.owned.outputs.run != ''
+        env:
+          OWN_RUNTIME: ${{ steps.owned.outputs.runtime }}
+          RUNTIME_DEV: ${{ steps.owned.outputs.runtime_dev }}
+          RUNTIME_INO: ${{ steps.owned.outputs.runtime_ino }}
+          OWN_RUN: ${{ steps.owned.outputs.run }}
+          RUN_DEV: ${{ steps.owned.outputs.run_dev }}
+          RUN_INO: ${{ steps.owned.outputs.run_ino }}
+          RUNTIME_EVIDENCE: ${{ steps.owned.outputs.runtime_evidence }}
+          BACKEND_EVIDENCE: ${{ steps.owned.outputs.evidence }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, shutil, subprocess, sys
+          assert shutil.rmtree.avoids_symlink_attacks
+          run=pathlib.Path(os.environ['OWN_RUN'])
+          runtime=pathlib.Path(os.environ['OWN_RUNTIME'])
+          expected_run={'device': int(os.environ['RUN_DEV']), 'inode': int(os.environ['RUN_INO']), 'uid': os.geteuid()}
+          expected_runtime={'device': int(os.environ['RUNTIME_DEV']), 'inode': int(os.environ['RUNTIME_INO']), 'uid': os.geteuid()}
+          result={'backend_removed': False, 'runtime_removed': False, 'docker_containers_absent': None, 'errors': []}
+
+          def read_receipt(path):
+              assert path.is_file() and not path.is_symlink() and path.stat().st_size <= 256 * 1024, 'Receipt missing or unbounded'
+              with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), 'rb') as stream:
+                  raw=stream.read(256 * 1024 + 1)
+              assert len(raw) <= 256 * 1024, 'Receipt exceeded bound'
+              return json.loads(raw)
+
+          def owned_root(path, expected):
+              assert not path.is_symlink(), 'Owned root became a symlink'
+              stat=path.stat()
+              assert {'device': stat.st_dev, 'inode': stat.st_ino, 'uid': stat.st_uid}==expected, 'Owned root identity changed'
+
+          def backend_use_ended(row, backend_identity, runtime_identity):
+              return (row.get('schema')==1 and row.get('state')=='JAVA_ENDED' and row.get('backendRuntimeUseEnded') is True and
+                  row.get('rootIdentity')==backend_identity and row.get('runtimeIdentity')==runtime_identity and
+                  all(isinstance(row.get(key), dict) and row[key].get('absent') is True and row[key].get('errors')==[]
+                      for key in ('children', 'final_children')) and
+                  isinstance(row.get('subreaper'), dict) and row['subreaper'].get('active') is False)
+
+          # Backend scratch can still be mounted by an unproved Docker actor. Its refusal is sticky,
+          # but must not skip the separate runtime attempt. BOTH Java-user proofs AND a fresh
+          # empty Docker observation are required; Java absence says nothing about container mounts.
+          backend_identity_known=False
+          backend_never_started=False
+          try:
+              if os.path.lexists(run):
+                  owned_root(run, expected_run)
+                  backend_identity_known=True
+                  backend_never_started=not os.path.lexists(run/'run-started.marker')
+                  assert backend_never_started, 'Backend controller retained scratch; no fallback deletion'
+                  shutil.rmtree(run)
+              else:
+                  backend_identity_known=True  # Absence alone does not prove that its Java users ended.
+              result['backend_removed']=not os.path.lexists(run)
+          except BaseException as error:
+              result['errors'].append({'stage': 'backend-disposal', 'type': type(error).__name__})
+          try:
+              owned_root(runtime, expected_runtime)
+              # A failed selector/download can leave this original admitted root empty and unstarted.
+              runtime_empty_unstarted=not os.path.lexists(runtime/'runtime-started.marker') and not any(runtime.iterdir())
+              if not runtime_empty_unstarted:
+                  row=read_receipt(pathlib.Path(os.environ['RUNTIME_EVIDENCE'])/'runtime-cleanup.json')
+                  assert row['state']=='ENDED' and row['safeToRemove'] is True and row['rootIdentity']==expected_runtime, 'Runtime build quiescence unproved'
+                  assert read_receipt(runtime/'runtime-cleanup.json')==row, 'Runtime cleanup states disagree'
+              backend_ended=backend_never_started or (backend_identity_known and backend_use_ended(
+                  read_receipt(pathlib.Path(os.environ['BACKEND_EVIDENCE'])/'backend-java-quiescence.json'), expected_run, expected_runtime))
+              assert backend_ended, 'Backend Java runtime users remain or are unknown'
+              # Applies even when backend never started (e.g. a nonempty Docker baseline refused
+              # admission). No actor/mount inference and no raw Docker output enters evidence.
+              result['docker_containers_absent']=not subprocess.check_output(
+                  ['docker', 'ps', '-aq', '--no-trunc'], timeout=4, stderr=subprocess.DEVNULL)
+              assert result['docker_containers_absent'], 'Docker runtime users remain or are unknown'
+              if runtime_empty_unstarted:
+                  owned_root(runtime, expected_runtime)
+                  runtime.rmdir()  # Refuse if anything appeared after the empty-root check.
+              else:
+                  shutil.rmtree(runtime)
+              result['runtime_removed']=not os.path.lexists(runtime)
+          except BaseException as error:
+              result['errors'].append({'stage': 'runtime-disposal', 'type': type(error).__name__})
+          (pathlib.Path(os.environ['RUNTIME_EVIDENCE'])/'temporary-disposal.json').write_text(json.dumps(result, sort_keys=True)+'\n')
+          print(json.dumps(result, sort_keys=True))
+          sys.exit(1 if result['errors'] else 0)
+          PY
+
+      - name: Retain per-run public metadata and logs only (seed runtime has its separate exact artifact)
+        if: always() && steps.owned.outputs.evidence != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-project-source-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            ${{ steps.owned.outputs.evidence }}/**/*.json
+            ${{ steps.owned.outputs.evidence }}/**/*.xml
+            ${{ steps.owned.outputs.evidence }}/**/*.log
+            ${{ steps.owned.outputs.runtime_evidence }}/**/*.json
+            ${{ steps.owned.outputs.runtime_evidence }}/**/*.log
+
+      - name: Delete temporary evidence after upload attempt
+        if: always() && steps.owned.outputs.evidence != ''
+        env:
+          EVIDENCE: ${{ steps.owned.outputs.evidence }}
+          EVIDENCE_DEV: ${{ steps.owned.outputs.evidence_dev }}
+          EVIDENCE_INO: ${{ steps.owned.outputs.evidence_ino }}
+          RUNTIME_EVIDENCE: ${{ steps.owned.outputs.runtime_evidence }}
+          RUNTIME_EVIDENCE_DEV: ${{ steps.owned.outputs.runtime_evidence_dev }}
+          RUNTIME_EVIDENCE_INO: ${{ steps.owned.outputs.runtime_evidence_ino }}
+        run: |
+          python3 - <<'PY'
+          import os,pathlib,shutil
+          for key in ['EVIDENCE','RUNTIME_EVIDENCE']:
+              p=pathlib.Path(os.environ[key])
+              assert not p.is_symlink() and (p.stat().st_dev,p.stat().st_ino)==(int(os.environ[key+'_DEV']),int(os.environ[key+'_INO']))
+              shutil.rmtree(p)
+          PY
