@@ -1749,6 +1749,18 @@ internal class ComplaintIngressAdmission(
             owner.locked { owner.state(context) }
         }
 
+        /** Atomic STATUS's original handoff, not scalar status/content or either deletion family. */
+        internal fun requireAdminBatchStatusOwner(handoff: ComplaintAdmittedAdminBatchStatus, owner: ComplaintIngressAdmission) {
+            val selected = handoff as? AdmittedAdminBatchStatus ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            if (selected.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            owner.locked { owner.requireAdminBatchStatusState(selected) }
+        }
+
+        internal fun requireRegisteredAdminBatchStatusIngressOwner(owner: ComplaintIngressAdmission) {
+            val context = current.get() ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            owner.locked { owner.state(context) }
+        }
+
         internal fun requireOwnerDeleteOwner(handoff: ComplaintAdmittedOwnerDelete, owner: ComplaintIngressAdmission) {
             val selected = handoff as? AdmittedDelete ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
             if (selected.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)

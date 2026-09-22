@@ -14,12 +14,15 @@ import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersi
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.api.ComplaintAdminStepUpHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintAdminStatusHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintAdminBatchStatusHttpHandler
+import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchStatusInput
 import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusOperation
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.security.ComplaintAdmissionPolicy
 import me.manga.kira.backend.security.ComplaintAdminContentAdmissionPolicy
 import me.manga.kira.backend.security.ComplaintAdminReadAdmissionPolicy
 import me.manga.kira.backend.security.ComplaintAdminStatusAdmissionPolicy
+import me.manga.kira.backend.security.ComplaintAdminBatchStatusAdmissionPolicy
 import me.manga.kira.backend.security.SecretMaterialFamily
 import me.manga.kira.backend.security.SecretMaterialPurpose
 import me.manga.kira.backend.security.VersionBoundTestComplaintConsumerConfigurationV1
@@ -254,6 +257,27 @@ internal object ComplaintEffectiveTestConfigurationV1 {
                 put("responseOwner", "ONE_SHARED_OWNER_HISTORY_DETAIL_ADMIN_EIGHT_UNTIL_DELIVERY")
                 put("stepUpOwner", "EXISTING_REGISTERED_ADMIN_CONTENT_COMPLAINT_ISSUER")
                 put("bodyMaximumBytes", ComplaintAdminStatusHttpHandler.MAX_BODY_BYTES)
+            })
+        }
+        (owner.adminBatchStatusPolicy as? ComplaintAdminBatchStatusAdmissionPolicy.Bounded)?.let { policy ->
+            check(owner.adminStatusPolicy is ComplaintAdminStatusAdmissionPolicy.Bounded &&
+                owner.adminContentPolicy is ComplaintAdminContentAdmissionPolicy.Bounded && owner.adminStepUp != null)
+            put("adminBatchStatus", buildJsonObject {
+                put("schemaVersion", 1)
+                put("profile", TestRegisteredAdminBatchStatusInputV1.PROFILE)
+                put("perHour", policy.perHour)
+                put("memberLimit", policy.memberLimit)
+                put("pruneBatch", policy.pruneBatch)
+                put("windowNanos", ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS)
+                put("routes", strings(listOf("POST:/api/v1/admin/complaints/batch")))
+                put("action", "STATUS")
+                put("authentication", "QUALIFIED_USER_JWT_CURRENT_DB_ADMIN_AND_ORIGINAL_COMPLAINT_SCOPED_PROOF")
+                put("current", "ORIGINAL_TYPED_INITIAL_OR_EXPLICIT_RECURRENT_CHECKPOINT_NEW_CLAIM_ONLY")
+                put("responseOwner", "ONE_SHARED_OWNER_HISTORY_DETAIL_ADMIN_EIGHT_UNTIL_DELIVERY")
+                put("stepUpOwner", "EXISTING_REGISTERED_ADMIN_CONTENT_COMPLAINT_ISSUER")
+                put("bodyMaximumBytes", ComplaintAdminBatchStatusHttpHandler.MAX_BODY_BYTES)
+                put("targetMinimum", 1)
+                put("targetMaximum", ComplaintAdminBatchStatusInput.MAX_TARGETS)
             })
         }
     }

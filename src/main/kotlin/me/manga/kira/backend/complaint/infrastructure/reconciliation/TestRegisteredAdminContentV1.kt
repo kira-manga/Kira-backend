@@ -11,14 +11,17 @@ import me.manga.kira.backend.complaint.domain.ComplaintAdminReadFailure
 import me.manga.kira.backend.complaint.domain.rejectAdminRead
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminContentOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminStatusMutation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminBatchStatusMutation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminReadIdentity
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminContentStore
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
 import me.manga.kira.backend.security.ComplaintAdmittedAdminContent
 import me.manga.kira.backend.security.ComplaintAdmittedAdminStatus
+import me.manga.kira.backend.security.ComplaintAdmittedAdminBatchStatus
 import me.manga.kira.backend.security.ComplaintAdminContentAdmissionPolicy
 import me.manga.kira.backend.security.ComplaintAdminStatusAdmissionPolicy
+import me.manga.kira.backend.security.ComplaintAdminBatchStatusAdmissionPolicy
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.StepUpUserSnapshot
 import org.springframework.jdbc.core.JdbcTemplate
@@ -36,6 +39,7 @@ internal class TestRegisteredAdminContentV1 private constructor(
     private val consumers = registration.process.consumers
     private val contentPolicy = consumers.adminContentPolicy as ComplaintAdminContentAdmissionPolicy.Bounded
     private val statusPolicy = consumers.adminStatusPolicy as? ComplaintAdminStatusAdmissionPolicy.Bounded
+    private val batchStatusPolicy = consumers.adminBatchStatusPolicy as? ComplaintAdminBatchStatusAdmissionPolicy.Bounded
     private val stepUp = checkNotNull(consumers.adminStepUp)
     // Only a request record varies. The issuer/password/throttle/store/executor graph stays original and fixed.
     private val stepUpAttempt = ThreadLocal<TestRegisteredComplaintStepUpV1>()
@@ -135,6 +139,58 @@ internal class TestRegisteredAdminContentV1 private constructor(
     internal fun lockAndCheck(operation: ComplaintAdminStatusMutation, phase: PersistencePhaseContext) = current.lockAndCheck(operation, phase, this)
     internal fun checkCurrent(operation: ComplaintAdminStatusMutation, phase: PersistencePhaseContext) = current.checkCurrent(operation, phase, this)
 
+    /** Atomic STATUS has its own admission and phase, but never a second current reader or issuer. */
+    internal fun requireBatchStatusResources(originalRegistration: ComplaintTestNamespaceRegistrationV1, originalAssembly: ComplaintTestProcessAssemblyV1,
+        selected: PersistencePhaseOwnership, originalJdbc: JdbcTemplate) {
+        requireBatchStatusEntry(selected)
+        check(registration === originalRegistration && jdbc === originalJdbc)
+        registration.requireActiveIdentityTarget(originalAssembly)
+        registration.requireIdentityAdmissionPhaseResources(selected, originalJdbc)
+    }
+
+    internal fun requireBatchStatusEntry(selected: PersistencePhaseOwnership) {
+        requireEntry(selected)
+        requireBatchStatusPhaseOwner(selected)
+    }
+
+    internal fun requireBatchStatusPhaseOwner(selected: PersistencePhaseOwnership) {
+        requireStatusPhaseOwner(selected)
+        check(batchStatusPolicy != null && consumers.adminBatchStatusPolicy === batchStatusPolicy)
+    }
+
+    internal fun requireBatchStatusIngress() = ComplaintIngressAdmission.requireRegisteredAdminBatchStatusIngressOwner(consumers.ingressAdmission)
+
+    internal fun requireBatchStatusPath(path: PersistencePhasePath) {
+        requireBatchStatusPhaseOwner(ownership)
+        if (path !in BATCH_STATUS_PATHS) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    internal fun requireAdmission(handoff: ComplaintAdmittedAdminBatchStatus) {
+        requireBatchStatusPhaseOwner(ownership)
+        ComplaintIngressAdmission.requireAdminBatchStatusOwner(handoff, consumers.ingressAdmission)
+    }
+
+    internal fun requireBatchStatusAuthentication(phase: PersistencePhaseContext) {
+        requireBatchStatusPhaseOwner(ownership)
+        phase.adminBatchStatus.requireRegisteredOwner(this, jdbc, ownership)
+    }
+
+    internal fun requireOperation(operation: ComplaintAdminBatchStatusMutation, phase: PersistencePhaseContext, path: PersistencePhasePath) {
+        requireBatchStatusPhaseOwner(ownership); requireBatchStatusPath(path)
+        phase.adminBatchStatus.requireOwner(operation, jdbc, ownership)
+        check(operation.registeredWith(this))
+    }
+
+    internal fun requireCurrentOperation(original: TestRegisteredInitialCheckpointCreateV1, operation: ComplaintAdminBatchStatusMutation, phase: PersistencePhaseContext) {
+        check(current === original)
+        requireBatchStatusPhaseOwner(ownership)
+        phase.adminBatchStatus.requireOwner(operation, jdbc, ownership)
+        operation.requireCurrentCheckpointRead(this, phase)
+    }
+
+    internal fun lockAndCheck(operation: ComplaintAdminBatchStatusMutation, phase: PersistencePhaseContext) = current.lockAndCheck(operation, phase, this)
+    internal fun checkCurrent(operation: ComplaintAdminBatchStatusMutation, phase: PersistencePhaseContext) = current.checkCurrent(operation, phase, this)
+
     /** Called only around the concrete issuer, not an arbitrary callback or request-time provider selection. */
     internal fun beginStepUp(identity: ComplaintAdminReadIdentity): TestRegisteredComplaintStepUpV1 {
         requireEntry(ownership); requireIngress(); identity.requireCurrent()
@@ -205,6 +261,8 @@ internal class TestRegisteredAdminContentV1 private constructor(
             PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT, PersistencePhasePath.COMPLAINT_ADMIN_EDIT)
         private val STATUS_PATHS = setOf(PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
             PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT, PersistencePhasePath.COMPLAINT_ADMIN_STATUS)
+        private val BATCH_STATUS_PATHS = setOf(PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
+            PersistencePhasePath.COMPLAINT_ADMIN_BATCH_STATUS_PREFLIGHT, PersistencePhasePath.COMPLAINT_ADMIN_BATCH_STATUS)
 
         internal fun fromRegistered(registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1,
             ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate): TestRegisteredAdminContentV1 {

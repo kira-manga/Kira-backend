@@ -320,6 +320,7 @@ constructor(
     private var registeredInitialCheckpointEdit: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointEditV1? = null
     private var registeredAdminContent: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1? = null
     private var registeredAdminStatus: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1? = null
+    private var registeredAdminBatchStatus: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1? = null
     private var registeredAdminStepUp: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredComplaintStepUpV1? = null
     private var preparingRegisteredAdminStepUp = false
     private var registeredAdminStepUpCurrentReady = false
@@ -1784,6 +1785,7 @@ constructor(
             registeredInitialCheckpointEdit != null -> checkNotNull(registeredInitialCheckpointEdit).requirePhaseOwner(ownership)
             registeredAdminContent != null -> checkNotNull(registeredAdminContent).requirePhaseOwner(ownership)
             registeredAdminStatus != null -> checkNotNull(registeredAdminStatus).requireStatusPhaseOwner(ownership)
+            registeredAdminBatchStatus != null -> checkNotNull(registeredAdminBatchStatus).requireBatchStatusPhaseOwner(ownership)
             registeredAdminStepUp != null -> checkNotNull(registeredAdminStepUp).let { it.owner.requireStepUpGate(it, this, gate) }
             registeredInitialDeletion != null -> checkNotNull(registeredInitialDeletion).requirePhaseOwner(ownership, path)
             testOrdinaryDrain != null -> testOrdinaryDrain.requireMaintenanceGate(ownership, path, gate)
@@ -4476,7 +4478,7 @@ constructor(
 
         override fun bindRegistered(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1) {
             requireCaller()
-            if (stage !== Stage.PREPARED || registeredAdminContent != null || registeredAdminStatus != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            if (stage !== Stage.PREPARED || registeredAdminContent != null || registeredAdminStatus != null || registeredAdminBatchStatus != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             original.requirePhaseOwner(ownership)
             original.requirePath(path)
             original.requireIngress()
@@ -4588,7 +4590,7 @@ constructor(
 
         override fun bindRegistered(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1) {
             requireCaller()
-            if (stage !== Stage.PREPARED || registeredAdminStatus != null || registeredAdminContent != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            if (stage !== Stage.PREPARED || registeredAdminStatus != null || registeredAdminContent != null || registeredAdminBatchStatus != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             original.requireStatusPhaseOwner(ownership)
             original.requireStatusPath(path)
             original.requireStatusIngress()
@@ -4698,6 +4700,16 @@ constructor(
         private var boundsChecked = false
         private val write: Boolean get() = path === PersistencePhasePath.COMPLAINT_ADMIN_BATCH_STATUS
 
+        override fun bindRegistered(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1) {
+            requireCaller()
+            if (stage !== Stage.PREPARED || registeredAdminBatchStatus != null || registeredAdminStatus != null || registeredAdminContent != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            original.requireBatchStatusPhaseOwner(ownership)
+            original.requireBatchStatusPath(path)
+            original.requireBatchStatusIngress()
+            if (write) original.requireAdmission(admission ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED))
+            registeredAdminBatchStatus = original
+        }
+
         override fun bindStatus(handoff: ComplaintAdmittedAdminBatchStatus) {
             requireCaller()
             if (stage !== Stage.PREPARED || !write || admission != null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
@@ -4714,6 +4726,7 @@ constructor(
                 refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
             requireStepUpResource(jdbc, expected)
+            ownership.dataSource.requireTestInitialCheckpointCreate(registeredAdminBatchStatus?.policy)
             if (issued || (write && admission == null)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             issued = true
             installLimits()
@@ -4722,13 +4735,32 @@ constructor(
 
         override fun retain(operation: ComplaintAdminBatchStatusMutation, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
-            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path) ||
+                !operation.registeredWith(registeredAdminBatchStatus)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             retained = operation
         }
 
         override fun requireRetained(operation: ComplaintAdminBatchStatusMutation, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
             if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun requireRegisteredOwner(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1,
+            jdbc: JdbcTemplate, ownership: PersistencePhaseOwnership) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
+            if (registeredAdminBatchStatus !== original || ownership !== this@PersistencePhaseContext.ownership) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            original.requireBatchStatusPath(path)
+            original.requireBatchStatusIngress()
+        }
+
+        override fun requireOwner(operation: ComplaintAdminBatchStatusMutation, jdbc: JdbcTemplate, ownership: PersistencePhaseOwnership) {
+            requireRetained(operation, jdbc)
+            if (ownership !== this@PersistencePhaseContext.ownership) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun connection(operation: ComplaintAdminBatchStatusMutation, jdbc: JdbcTemplate): Connection {
+            requireRetained(operation, jdbc)
+            return connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
 
         override fun claimStatus(operation: ComplaintAdminBatchStatusMutation, jdbc: JdbcTemplate, tuple: ComplaintAdminBatchStatusTuple) {
