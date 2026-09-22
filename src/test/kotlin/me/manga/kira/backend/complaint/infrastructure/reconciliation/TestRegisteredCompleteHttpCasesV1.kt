@@ -1,10 +1,16 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryResponses
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditFingerprint
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminJwtIdentityDecoder
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminReadStore
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.ADMIN
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.mapper
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpFixtureV1.Companion.authorization
@@ -16,9 +22,13 @@ import me.manga.kira.backend.security.ComplaintInstallationRoutes
 import me.manga.kira.backend.user.domain.Role
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.assertThrows
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.security.oauth2.jwt.JwtDecoder
 import java.net.http.HttpResponse
 import java.util.UUID
 
@@ -149,6 +159,35 @@ internal object TestRegisteredCompleteHttpCasesV1 {
         }
         assertEquals(image, f.image()); assertEquals(native, f.raw.counts()); assertNull(f.raw.publisher)
         a.withCurrent {
+            val beforeAuth = f.image(); val counters = f.counters(); val providers = f.raw.counts()
+            val owner = f.web.context.getBean(PersistencePhaseOwnership::class.java)
+            val jdbc = f.web.context.getBean(JdbcTemplate::class.java)
+            assertSame(f.first.process.pools.ordinary, jdbc.dataSource)
+            checkNotNull(f.first.process.initialCheckpointDeletion)
+            val authentication = JdbcComplaintAdminReadStore(jdbc, a.scope)
+            val ingress = f.first.process.consumers.ingressAdmission
+            val bearer = a.admin()
+            val decoder = ComplaintAdminJwtIdentityDecoder(a.scope, f.web.context.getBean("jwtDecoder", JwtDecoder::class.java),
+                checkNotNull(f.first.process.consumers.jwt.boundUserKeyProvider).versionBoundClockSkew)
+            ingress.withIngress(a.stepUpRequest(bearer)) { context ->
+                ingress.requireLiveContext(context)
+                val identity = decoder.decode(bearer)
+                val phase = owner.enterComplaintAdminReadAuthentication()
+                AutoCloseable { phase.finish() }.use {
+                    phase.begin() // Real original AUTH entry must succeed; the shared unbound operation is what must refuse.
+                    for (field in listOf("registeredAdminContent", "registeredAdminStatus", "registeredAdminBatchStatus", "registeredInitialDeletion")) {
+                        assertNull(poolTestField<Any?>(phase, field))
+                    }
+                    assertThrows<PersistencePhaseException> { authentication.authenticateContentIdentity(identity) }
+                    assertFalse(poolTestField<Boolean>(phase.adminRead, "issued"))
+                    assertNull(poolTestField<Any?>(phase.adminRead, "retained"))
+                    assertFalse(phase.adminRead.completed())
+                }
+                assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, phase.databaseOutcome())
+                assertTrue(phase.failureException(PersistencePhaseFailureCode.WORK_FAILED).cleanupProven)
+            }
+            f.assertReleased()
+            assertEquals(beforeAuth, f.image()); assertEquals(counters, f.counters()); assertEquals(providers, f.raw.counts())
             val id = a.report(); val proof = a.proof()
             val response = f.web.post("$ADMIN/batch?dataScopeId=${f.scope}", mapper.writeValueAsBytes(mapOf("action" to "STATUS", "status" to "RESOLVED",
                 "targets" to listOf(mapOf("id" to id.toString(), "actionTag" to "\"complaint-$id-v1\"")))), a.admin(), UUID.randomUUID(), proof.token)
