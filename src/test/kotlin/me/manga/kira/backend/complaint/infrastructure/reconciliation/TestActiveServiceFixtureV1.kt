@@ -17,6 +17,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseP
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePoolLaunchProfile
 import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.actualPool
+import me.manga.kira.backend.common.infrastructure.persistence.ended
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.catalog.ColdIdentityRawProvidersV1
