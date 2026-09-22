@@ -1,0 +1,150 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 18,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpIT",
+      "cohort": "NEW_REGISTERED_OWNER_DELETE_ALL",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineHttpAllVerifyStays503UntilIndependentBThenFreshBodyAuthenticated204WithoutRecharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerDeleteAllHttpIT.kt",
+      "source_head": "01a1d70e872ae06d310907bb544dc7becf46a4e1",
+      "source_sha256": "fcfb0069426da152aac92846b53022b25b6bbc564389aa8030b5d451466ad75d",
+      "xml_names": [
+        "genuineHttpAllVerifyStays503UntilIndependentBThenFreshBodyAuthenticated204WithoutRecharge()"
+      ]
+    },
+    {
+      "annotation_line": 21,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpIT",
+      "cohort": "NEW_REGISTERED_OWNER_DELETE_ALL",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualCurrentCheckpointExpiryRefusesNewAllWithoutAReceiptOrNativeWork",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerDeleteAllHttpIT.kt",
+      "source_head": "01a1d70e872ae06d310907bb544dc7becf46a4e1",
+      "source_sha256": "fcfb0069426da152aac92846b53022b25b6bbc564389aa8030b5d451466ad75d",
+      "xml_names": [
+        "actualCurrentCheckpointExpiryRefusesNewAllWithoutAReceiptOrNativeWork()"
+      ]
+    },
+    {
+      "annotation_line": 24,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpIT",
+      "cohort": "NEW_REGISTERED_OWNER_DELETE_ALL",
+      "expected_invocations_from_annotation": 1,
+      "method": "nativeGetFailureLeavesAuthorizedAllPendingAndActualOwnersCleanUpWithoutRetryOrApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerDeleteAllHttpIT.kt",
+      "source_head": "01a1d70e872ae06d310907bb544dc7becf46a4e1",
+      "source_sha256": "fcfb0069426da152aac92846b53022b25b6bbc564389aa8030b5d451466ad75d",
+      "xml_names": [
+        "nativeGetFailureLeavesAuthorizedAllPendingAndActualOwnersCleanUpWithoutRetryOrApply()"
+      ]
+    },
+    {
+      "annotation_line": 27,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpIT",
+      "cohort": "NEW_REGISTERED_OWNER_DELETE_ALL",
+      "expected_invocations_from_annotation": 1,
+      "method": "shutdownStopsIngressRevokesRegistrationAndRetainsBothPublishersUntilOriginalAllLaneRelease",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerDeleteAllHttpIT.kt",
+      "source_head": "01a1d70e872ae06d310907bb544dc7becf46a4e1",
+      "source_sha256": "fcfb0069426da152aac92846b53022b25b6bbc564389aa8030b5d451466ad75d",
+      "xml_names": [
+        "shutdownStopsIngressRevokesRegistrationAndRetainsBothPublishersUntilOriginalAllLaneRelease()"
+      ]
+    },
+    {
+      "annotation_line": 18,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteHttpIT",
+      "cohort": "CORRECTED_OWNER_STARTUP_ACTUAL69_FAILURE",
+      "expected_invocations_from_annotation": 1,
+      "method": "realHttpAuthorizationAndNativeVerificationStayPendingUntilSeparateQueueCompletionThenReplayExact204",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerDeleteHttpIT.kt",
+      "source_head": "01a1d70e872ae06d310907bb544dc7becf46a4e1",
+      "source_sha256": "44d65fc72820e615fb32ea1b5b3f6c5e9e22b6977c271eec50d65479c0493009",
+      "xml_names": [
+        "realHttpAuthorizationAndNativeVerificationStayPendingUntilSeparateQueueCompletionThenReplayExact204()"
+      ]
+    },
+    {
+      "annotation_line": 21,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteHttpIT",
+      "cohort": "CORRECTED_OWNER_STARTUP_ACTUAL69_FAILURE",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualCheckpointExpiryRefusesNewHttpDeleteWithoutNativeWorkOrReceipt",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerDeleteHttpIT.kt",
+      "source_head": "01a1d70e872ae06d310907bb544dc7becf46a4e1",
+      "source_sha256": "44d65fc72820e615fb32ea1b5b3f6c5e9e22b6977c271eec50d65479c0493009",
+      "xml_names": [
+        "actualCheckpointExpiryRefusesNewHttpDeleteWithoutNativeWorkOrReceipt()"
+      ]
+    },
+    {
+      "annotation_line": 24,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteHttpIT",
+      "cohort": "CORRECTED_OWNER_STARTUP_ACTUAL69_FAILURE",
+      "expected_invocations_from_annotation": 1,
+      "method": "nativeReadbackFailureCannotVerifyEraseOrCompleteAndOriginalCleanupStillRuns",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerDeleteHttpIT.kt",
+      "source_head": "01a1d70e872ae06d310907bb544dc7becf46a4e1",
+      "source_sha256": "44d65fc72820e615fb32ea1b5b3f6c5e9e22b6977c271eec50d65479c0493009",
+      "xml_names": [
+        "nativeReadbackFailureCannotVerifyEraseOrCompleteAndOriginalCleanupStillRuns()"
+      ]
+    },
+    {
+      "annotation_line": 27,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteHttpIT",
+      "cohort": "CORRECTED_OWNER_STARTUP_ACTUAL69_FAILURE",
+      "expected_invocations_from_annotation": 1,
+      "method": "originalShutdownStopsAdmissionAndWaitsForDeletionAndNativeOwnersBeforeDisposingJpa",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerDeleteHttpIT.kt",
+      "source_head": "01a1d70e872ae06d310907bb544dc7becf46a4e1",
+      "source_sha256": "44d65fc72820e615fb32ea1b5b3f6c5e9e22b6977c271eec50d65479c0493009",
+      "xml_names": [
+        "originalShutdownStopsAdmissionAndWaitsForDeletionAndNativeOwnersBeforeDisposingJpa()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 8,
+  "expected_source_paths": 2485,
+  "expected_total": 8,
+  "selection_basis": {
+    "batch": "OWNER_DELETE_FOUR_PLUS_ALL_FOUR",
+    "carryforward": "Carry69 combined-owner PASS, three68 policy PASS and all66/65 passes unchanged. Preserve69 class teardown failure until actual cleanup passes; no package/issue credit.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "CORRECTED_OWNER_STARTUP_ACTUAL69_FAILURE": 4,
+      "NEW_REGISTERED_OWNER_DELETE_ALL": 4
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "expected_source_paths": 2485,
+    "gradle_seconds": 2400,
+    "inventory": "Enumerate every committed path from final reviewed source; match root-pinned complete path count2485 and preserve all348 historical paths. No file subset or fixed2458 exclusion.",
+    "plan": "review/working/app-29-backend-focused-20260922-70/PLAN.md",
+    "prerequisite": "Root sole review of ALL MAIN9/TEST6 completed; startup correction pending exact root review/pins.",
+    "required_source": "01a1d70e872ae06d310907bb544dc7becf46a4e1",
+    "required_tree": "1dc13e25a5770aeee32ba21357c6c4a66cd74a71",
+    "scope": "Four failed69 owner DELETE scenarios plus four new ALL scenarios, after correcting original deletion-pool warmup."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerDeleteAllHttpIT.kt": "fcfb0069426da152aac92846b53022b25b6bbc564389aa8030b5d451466ad75d",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerDeleteHttpIT.kt": "44d65fc72820e615fb32ea1b5b3f6c5e9e22b6977c271eec50d65479c0493009"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpIT": 4,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteHttpIT": 4
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteHttpIT.realHttpAuthorizationAndNativeVerificationStayPendingUntilSeparateQueueCompletionThenReplayExact204",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteHttpIT.actualCheckpointExpiryRefusesNewHttpDeleteWithoutNativeWorkOrReceipt",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteHttpIT.nativeReadbackFailureCannotVerifyEraseOrCompleteAndOriginalCleanupStillRuns",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteHttpIT.originalShutdownStopsAdmissionAndWaitsForDeletionAndNativeOwnersBeforeDisposingJpa",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpIT.genuineHttpAllVerifyStays503UntilIndependentBThenFreshBodyAuthenticated204WithoutRecharge",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpIT.actualCurrentCheckpointExpiryRefusesNewAllWithoutAReceiptOrNativeWork",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpIT.nativeGetFailureLeavesAuthorizedAllPendingAndActualOwnersCleanUpWithoutRetryOrApply",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerDeleteAllHttpIT.shutdownStopsIngressRevokesRegistrationAndRetainsBothPublishersUntilOriginalAllLaneRelease"
+  ]
+}
