@@ -1,0 +1,153 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 246,
+      "class": "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT",
+      "cohort": "SOURCE_ONLY_DEFAULT_GUARD_REGRESSION",
+      "expected_invocations_from_annotation": 1,
+      "method": "ordinary Boot identities and readiness work while all complaint and deletion admission stays closed",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/AdminStepUpIT.kt",
+      "source_head": "4e0afc855fc7306a5bd5ab45fd89946916707744",
+      "source_sha256": "c36c0bf619693363b8867d1c4c7e7944c23df1576e2f1607675043b42707170d",
+      "xml_names": [
+        "ordinary Boot identities and readiness work while all complaint and deletion admission stays closed()"
+      ]
+    },
+    {
+      "annotation_line": 18,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "NEW_SHARED_LOGIN_AUTH_SOURCE_COMPLAINT",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualLoginSharesSourceProofConsumerAndBoundComplaintEditWithoutCrossScopeAuthority",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "4e0afc855fc7306a5bd5ab45fd89946916707744",
+      "source_sha256": "fe33e9d18dfb944d709c8328c583fcc4f7ae9af616e8f95dbec940f8bb425684",
+      "xml_names": [
+        "actualLoginSharesSourceProofConsumerAndBoundComplaintEditWithoutCrossScopeAuthority()"
+      ]
+    },
+    {
+      "annotation_line": 21,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "NEW_ACTUAL_ASYNC_STOP_DRAIN",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualSourcePreviewAsyncResponseAndLateCompletionTailDrainBeforeJpaClose",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "4e0afc855fc7306a5bd5ab45fd89946916707744",
+      "source_sha256": "fe33e9d18dfb944d709c8328c583fcc4f7ae9af616e8f95dbec940f8bb425684",
+      "xml_names": [
+        "actualSourcePreviewAsyncResponseAndLateCompletionTailDrainBeforeJpaClose()"
+      ]
+    },
+    {
+      "annotation_line": 25,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "AFFECTED_COMPLETE_BOOT_CONTEXT",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineSingleAdminHttpVerifyRemains503UntilSeparateBAndFreshCurrentAuthenticated204",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "4e0afc855fc7306a5bd5ab45fd89946916707744",
+      "source_sha256": "fe33e9d18dfb944d709c8328c583fcc4f7ae9af616e8f95dbec940f8bb425684",
+      "xml_names": [
+        "genuineSingleAdminHttpVerifyRemains503UntilSeparateBAndFreshCurrentAuthenticated204()"
+      ]
+    },
+    {
+      "annotation_line": 28,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "AFFECTED_COMPLETE_BOOT_CONTEXT",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineTwoOwnerBatchHttpVerifyRemains503UntilSeparateBAndExactSorted200",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "4e0afc855fc7306a5bd5ab45fd89946916707744",
+      "source_sha256": "fe33e9d18dfb944d709c8328c583fcc4f7ae9af616e8f95dbec940f8bb425684",
+      "xml_names": [
+        "genuineTwoOwnerBatchHttpVerifyRemains503UntilSeparateBAndExactSorted200()"
+      ]
+    },
+    {
+      "annotation_line": 31,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "AFFECTED_COMPLETE_BOOT_CONTEXT",
+      "expected_invocations_from_annotation": 1,
+      "method": "priorOwnerAndAdminFamiliesShareTheSameCompleteListenerAndResponseOwner",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "4e0afc855fc7306a5bd5ab45fd89946916707744",
+      "source_sha256": "fe33e9d18dfb944d709c8328c583fcc4f7ae9af616e8f95dbec940f8bb425684",
+      "xml_names": [
+        "priorOwnerAndAdminFamiliesShareTheSameCompleteListenerAndResponseOwner()"
+      ]
+    },
+    {
+      "annotation_line": 34,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "NARROW_SELECTOR_SHARED_CODEC_REGRESSION",
+      "expected_invocations_from_annotation": 1,
+      "method": "olderStatusOnlySelectionStillRejectsDeleteWithAllColdInputsPresent",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "4e0afc855fc7306a5bd5ab45fd89946916707744",
+      "source_sha256": "fe33e9d18dfb944d709c8328c583fcc4f7ae9af616e8f95dbec940f8bb425684",
+      "xml_names": [
+        "olderStatusOnlySelectionStillRejectsDeleteWithAllColdInputsPresent()"
+      ]
+    },
+    {
+      "annotation_line": 37,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "AFFECTED_COMPLETE_BOOT_CONTEXT",
+      "expected_invocations_from_annotation": 1,
+      "method": "batchOfOneNativeGetFailurePreservesConsumedGrantAndPendingOriginalCleanup",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "4e0afc855fc7306a5bd5ab45fd89946916707744",
+      "source_sha256": "fe33e9d18dfb944d709c8328c583fcc4f7ae9af616e8f95dbec940f8bb425684",
+      "xml_names": [
+        "batchOfOneNativeGetFailurePreservesConsumedGrantAndPendingOriginalCleanup()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 8,
+  "expected_source_paths": 2495,
+  "expected_total": 8,
+  "selection_basis": {
+    "batch": "SHARED_NORMAL_COMPLETE_ENDPOINT",
+    "carryforward": "Carry unchanged service75/76 and earlier passes; existing selected Complete/narrow/source-only checks are affected by actual shared-context source changes.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "AFFECTED_COMPLETE_BOOT_CONTEXT": 4,
+      "NARROW_SELECTOR_SHARED_CODEC_REGRESSION": 1,
+      "NEW_ACTUAL_ASYNC_STOP_DRAIN": 1,
+      "NEW_SHARED_LOGIN_AUTH_SOURCE_COMPLAINT": 1,
+      "SOURCE_ONLY_DEFAULT_GUARD_REGRESSION": 1
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "expected_source_paths": 2495,
+    "gradle_seconds": 2400,
+    "inventory": "Every committed source path and all348 historical paths, root-pin final count, no fixed exclusion.",
+    "plan": "review/working/app-29-backend-focused-20260922-77/PLAN.md",
+    "prerequisite": "Root sole actual-diff reviews of MAIN9 plus TEST4 and audit increment; preserve original controls.",
+    "required_source": "4e0afc855fc7306a5bd5ab45fd89946916707744",
+    "required_tree": "292f74e15553b5a00a030dc295648b5d7a14e9af",
+    "scope": "Two new shared endpoint cases plus materially affected Complete/narrow/source-only construction boundaries."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt": "fe33e9d18dfb944d709c8328c583fcc4f7ae9af616e8f95dbec940f8bb425684",
+    "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/AdminStepUpIT.kt": "c36c0bf619693363b8867d1c4c7e7944c23df1576e2f1607675043b42707170d"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT": 7,
+    "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.actualLoginSharesSourceProofConsumerAndBoundComplaintEditWithoutCrossScopeAuthority",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.actualSourcePreviewAsyncResponseAndLateCompletionTailDrainBeforeJpaClose",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.genuineSingleAdminHttpVerifyRemains503UntilSeparateBAndFreshCurrentAuthenticated204",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.genuineTwoOwnerBatchHttpVerifyRemains503UntilSeparateBAndExactSorted200",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.priorOwnerAndAdminFamiliesShareTheSameCompleteListenerAndResponseOwner",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.olderStatusOnlySelectionStillRejectsDeleteWithAllColdInputsPresent",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.batchOfOneNativeGetFailurePreservesConsumedGrantAndPendingOriginalCleanup",
+    "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT.ordinary Boot identities and readiness work while all complaint and deletion admission stays closed"
+  ]
+}
