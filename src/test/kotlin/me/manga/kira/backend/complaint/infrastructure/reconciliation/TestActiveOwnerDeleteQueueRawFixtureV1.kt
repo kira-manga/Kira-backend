@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.catalog.S3CatalogReply
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealHttpFixtureV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOwnerDeleteQueueInputV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOwnerDeleteQueueStorageV1
+import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
 import me.manga.kira.backend.complaint.journal.JournalPublisherHttpRequest
 import me.manga.kira.backend.complaint.journal.JournalPublisherObject
 import me.manga.kira.backend.complaint.journal.journalPublisherRawAssertSigned
@@ -69,6 +70,8 @@ internal class TestActiveOwnerDeleteQueueHttpInputV1(
  */
 internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
     private var fixture: TestActiveOwnerDeleteQueueFixtureV1? = null
+    private var registeredHttp: RegisteredHttp? = null
+    private val process: VersionBoundTestNamespaceProcessV1 get() = registeredHttp?.process ?: checkNotNull(fixture).process
     private val assertion = AtomicReference<AssertionError?>()
     val sts = AwsJournalKmsFixture()
     val kms = AwsJournalKmsFixture()
@@ -131,7 +134,7 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
             val fields = request.fields()
             assertEquals(historical?.kmsContext ?: originalRecord.kmsContext,
                 fields["EncryptionContext"].fields().asSequence().associate { it.key to it.value.textValue() })
-            val key = checkNotNull(fixture).process.consumers.journalConfiguration.declaration().encryption.keyArn
+            val key = process.consumers.journalConfiguration.declaration().encryption.keyArn
             assertEquals(key, fields["KeyId"].textValue())
             historical?.decrypt(request) ?: originalRecord.decrypt(request)
         } }
@@ -139,13 +142,32 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
     }
 
     fun attach(f: TestActiveOwnerDeleteQueueFixtureV1, record: TestRegisteredInitialDeletionNativeRecordV1) {
-        check(fixture == null); fixture = f
+        check(fixture == null && registeredHttp == null); fixture = f
         originalRecord = record; event = record.event; stored = record.stored
         assertSame(checkNotNull(f.precursor.event), event)
         assertSame(checkNotNull(f.precursor.record).stored, stored)
         primaryBody = notification(); dlqBody = null
     }
     fun detach(f: TestActiveOwnerDeleteQueueFixtureV1) { check(fixture === f); fixture = null }
+
+    /**
+     * Same raw server for an HTTP-created A whose ordinary/deletion owners belong to startup, not
+     * the lower fixture. Callbacks observe real SQL/native boundaries only; none supplies a result,
+     * authority or cleanup verdict to MAIN. B still performs its original GET/decrypt/APPLY/settle.
+     */
+    fun attachRegisteredHttp(process: VersionBoundTestNamespaceProcessV1, record: TestRegisteredInitialDeletionNativeRecordV1,
+        providerBoundary: () -> Unit, sqlBoundary: () -> Unit, ackBoundary: (Boolean) -> Unit): AutoCloseable {
+        check(fixture == null && registeredHttp == null)
+        check(record.event.belongsTo(process.consumers.journalRouting))
+        val selected = RegisteredHttp(process, providerBoundary, sqlBoundary, ackBoundary)
+        registeredHttp = selected
+        originalRecord = record; event = record.event; stored = record.stored
+        primaryBody = notification(); dlqBody = null
+        return AutoCloseable { check(registeredHttp === selected); registeredHttp = null }
+    }
+
+    private class RegisteredHttp(val process: VersionBoundTestNamespaceProcessV1,
+        val providerBoundary: () -> Unit, val sqlBoundary: () -> Unit, val ackBoundary: (Boolean) -> Unit)
     fun resetFaults() { beforeSqs = {}; changeSqs = { _, _ -> }; changeS3 = { _, _ -> }; wrongPrincipal = false; onNativeClose = {} }
 
     /** Reference protocol data only; original AUTH/work/PUT/key mapping and full D stay unchanged. */
@@ -172,7 +194,7 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
 
     fun notification(): String {
         val stored = deliveredStored
-        val d = checkNotNull(fixture).process.consumers.journalConfiguration.declaration()
+        val d = process.consumers.journalConfiguration.declaration()
         return mapper.writeValueAsString(mapOf("Records" to listOf(mapOf(
             "eventVersion" to "2.1", "eventSource" to "aws:s3", "awsRegion" to d.journalLocation.region,
             "eventTime" to stored.lastModified.toString(), "eventName" to "ObjectCreated:Put",
@@ -197,7 +219,7 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
         boundary(); signed(request, "sqs"); beforeSqs(request)
         val action = request.target().removePrefix("AmazonSQS.")
         val fields = request.fields()
-        val d = checkNotNull(fixture).process.consumers.journalConfiguration.declaration()
+        val d = process.consumers.journalConfiguration.declaration()
         val primary = d.recovery.queue; val dlq = d.recovery.deadLetterQueue
         fun url(arn: String) = "https://sqs.${d.journalLocation.region}.amazonaws.com/${arn.split(':')[4]}/${arn.split(':')[5]}"
         val isDlq = if (action == "GetQueueUrl") fields["QueueName"].textValue() == dlq.arn.split(':')[5]
@@ -232,7 +254,7 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
             "DeleteMessage" -> {
                 assertEquals(setOf("QueueUrl", "ReceiptHandle"), fields.fieldNames().asSequence().toSet())
                 assertEquals(url(selected.arn), fields["QueueUrl"].textValue()); assertEquals(handle(isDlq), fields["ReceiptHandle"].textValue())
-                checkNotNull(fixture).assertAckBoundary(isDlq)
+                registeredHttp?.ackBoundary?.invoke(isDlq) ?: checkNotNull(fixture).assertAckBoundary(isDlq)
                 ackRequests.add(handle(isDlq)); emptyMap()
             }
             else -> error("Unexpected queue native request")
@@ -250,7 +272,7 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
         }) { request -> checked {
             boundary(); order.add("GET")
             val stored = deliveredStored
-            val d = checkNotNull(fixture).process.consumers.journalConfiguration.declaration()
+            val d = process.consumers.journalConfiguration.declaration()
             journalPublisherRawAssertSigned(request, d.journalLocation.region, d.journalLocation.accountId, input.credentials)
             assertEquals("GET", request.kind, "The queue graph never LISTs or PUTs.")
             assertEquals("/${d.journalLocation.bucket}/${stored.key}", request.http.encodedPath())
@@ -259,7 +281,7 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
         } }
     }
     private fun signed(request: JournalKmsHttpRequest, service: String) {
-        val d = checkNotNull(fixture).process.consumers.journalConfiguration.declaration()
+        val d = process.consumers.journalConfiguration.declaration()
         val http = request.http
         assertEquals("https", http.protocol()); assertEquals("$service.${d.journalLocation.region}.amazonaws.com", http.host())
         assertEquals(input.credentials.sessionToken(), http.firstMatchingHeader("x-amz-security-token").orElseThrow())
@@ -287,8 +309,8 @@ internal class TestActiveOwnerDeleteQueueRawFixtureV1 {
             override fun clientName(): String = "SyntheticActiveOwnerDeleteQueue$kind"
         }
     }
-    private fun boundary() { requireConnectionFree(); checkNotNull(fixture).assertProviderBoundary() }
-    private fun closeBoundary(kind: String) { requireConnectionFree(); checkNotNull(fixture).assertSqlReleased(); onNativeClose(kind) }
+    private fun boundary() { requireConnectionFree(); registeredHttp?.providerBoundary?.invoke() ?: checkNotNull(fixture).assertProviderBoundary() }
+    private fun closeBoundary(kind: String) { requireConnectionFree(); registeredHttp?.sqlBoundary?.invoke() ?: checkNotNull(fixture).assertSqlReleased(); onNativeClose(kind) }
     private fun <T> checked(action: () -> T): T = try { action() } catch (problem: AssertionError) { assertion.compareAndSet(null, problem); throw problem }
     fun assertNoLostAssertions() { assertion.get()?.let { throw it } }
     fun assertDisposed(returned: Boolean = true) {
