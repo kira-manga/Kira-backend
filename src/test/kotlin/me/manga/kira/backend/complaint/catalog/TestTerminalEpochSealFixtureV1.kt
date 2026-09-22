@@ -153,6 +153,16 @@ internal fun withTerminalEpochSealRun(tls: VersionBoundPersistenceConnectedFixtu
                         }
                         assertEquals(TestRunPurgePublicationResultV1.PURGE_AUTHENTICATED_AND_VERIFIED, purge.publish())
                         purge.authenticatedPurge(); f.assertReleased()
+                        fun assertActiveEnrollments() {
+                            if (!enrolled) return
+                            assertEquals(actors.size.toLong(), f.observer.queryForObject(
+                                "SELECT count(*) FROM complaint_installation_ids i JOIN app_installations a ON a.id = i.id AND a.data_scope_id = i.data_scope_id " +
+                                    "WHERE i.data_scope_id = ? AND i.id = ANY (CAST(? AS uuid[])) AND i.state = 'ACTIVE' AND i.terminal_at IS NULL " +
+                                    "AND a.state = 'ACTIVE' AND a.secret_verifier IS NOT NULL AND a.deleted_at IS NULL",
+                                Long::class.java, f.scope, actors.joinToString(prefix = "{", postfix = "}")),
+                                "The manifest records a RETIRED disposition; before F the actual reservation and credential stay ACTIVE.")
+                        }
+                        assertActiveEnrollments() // Preserve the pre-F proof before any descendant can erase credentials.
                         val inventories = f.inventoryRequests.size
                         val boundary = http.boundary; val native = http.nativeBoundary
                         TestTerminalEpochSealSqlProbeV1(f).use { probe ->
@@ -162,14 +172,18 @@ internal fun withTerminalEpochSealRun(tls: VersionBoundPersistenceConnectedFixtu
                             finally { http.boundary = boundary; http.nativeBoundary = native }
                         }
                         assertEquals(inventories, f.inventoryRequests.size, "The terminal epoch seal does not run either final native inventory.")
-                        if (enrolled) {
-                            assertEquals(actors.size.toLong(), f.observer.queryForObject(
-                                "SELECT count(*) FROM complaint_installation_ids i JOIN app_installations a ON a.id = i.id AND a.data_scope_id = i.data_scope_id " +
-                                    "WHERE i.data_scope_id = ? AND i.id = ANY (CAST(? AS uuid[])) AND i.state = 'ACTIVE' AND i.terminal_at IS NULL " +
-                                    "AND a.state = 'ACTIVE' AND a.secret_verifier IS NOT NULL AND a.deleted_at IS NULL",
-                                Long::class.java, f.scope, actors.joinToString(prefix = "{", postfix = "}")),
-                                "The manifest records a RETIRED disposition; this slice keeps the actual reservation and credential ACTIVE.")
-                        }
+                        if (enrolled && terminalFixtureRunIsPurged(f)) {
+                            assertTrue(f.observer.queryForObject(
+                                "SELECT count(*) = ? AND bool_and((i.test_only AND i.id = ANY (CAST(? AS uuid[])) " +
+                                    "AND i.state = 'RETIRED' AND i.terminal_at IS NOT NULL AND i.terminal_at >= r.purging_at " +
+                                    "AND i.terminal_at <= r.purged_at) IS TRUE) " +
+                                    "FROM complaint_installation_ids i JOIN complaint_test_runs r ON r.data_scope_id = i.data_scope_id " +
+                                    "WHERE i.data_scope_id = ?",
+                                Boolean::class.java, actors.size.toLong(), actors.joinToString(prefix = "{", postfix = "}"), f.scope) == true,
+                                "Completed F retains every original permanent ID with the authenticated RETIRED disposition and terminal time.")
+                            assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM app_installations WHERE data_scope_id = ?",
+                                Long::class.java, f.scope), "Completed F removes every scoped credential, not the permanent IDs.")
+                        } else assertActiveEnrollments()
                         f.assertFinishedPurge()
                     }
                 } finally {
@@ -185,4 +199,18 @@ internal fun withTerminalEpochSealRun(tls: VersionBoundPersistenceConnectedFixtu
             }
         }
     }
+}
+
+/** Durable observation for descendant-aware fixture assertions only; not an erasure result or authority. */
+internal fun terminalFixtureRunIsPurged(f: TestRunPurgeFixtureV1): Boolean {
+    requireConnectionFree()
+    val run = f.observer.query(
+        "SELECT state, (test_only AND purging_at IS NOT NULL AND purged_at IS NOT NULL " +
+            "AND purged_at >= purging_at AND purged_at <= clock_timestamp() " +
+            "AND unused_reserve = array_fill(0::bigint, ARRAY[22])) IS TRUE AS finished " +
+            "FROM complaint_test_runs WHERE data_scope_id = ?",
+        { row, _ -> row.getString("state") to row.getBoolean("finished") }, f.scope).singleOrNull() ?: return false
+    if (run.first != "PURGED") return false
+    assertTrue(run.second, "PURGED fixture postconditions require the durable TEST final timestamp and zero unused reserve.")
+    return true
 }
