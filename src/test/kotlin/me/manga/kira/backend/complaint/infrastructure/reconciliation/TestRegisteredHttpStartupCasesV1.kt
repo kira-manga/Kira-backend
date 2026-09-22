@@ -657,20 +657,21 @@ internal object TestRegisteredHttpStartupCasesV1 {
     }
 
     // CREATE and read-after-CREATE cases need the captured global predecessor. Lifecycle-only cases keep the old prerequisite.
-    private fun withPrepared(tls: VersionBoundPersistenceConnectedFixture, globalScanBeforeActivation: Boolean = false,
+    internal fun withPrepared(tls: VersionBoundPersistenceConnectedFixture, globalScanBeforeActivation: Boolean = false,
         initialCheckpointCreate: TestInitialCheckpointCreateInputV1 = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
+        adminRead: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadInputV1? = null,
         action: (TestActiveFirstCutFixtureV1, TestActiveOrdinaryRawFixtureV1, TestActiveInitialCheckpointRawFixtureV1) -> Unit) {
         val ordinary = TestActiveOrdinaryRawFixtureV1()
         val raw = TestActiveInitialCheckpointRawFixtureV1()
         val factories = ordinary.factories.let { TestActiveOrdinaryRawHttpV1(it.sts, it.kms, it.s3, raw.input,
-            initialCheckpointCreate = initialCheckpointCreate) }
+            initialCheckpointCreate = initialCheckpointCreate, adminRead = adminRead) }
         withTestActiveFirstCut(tls, ordinaryRawHttp = factories, globalScanBeforeActivation = globalScanBeforeActivation) {
             first -> action(first, ordinary, raw)
         }
     }
 
     /** Passive references to the actual product graph; this view owns only its real TCP client. */
-    private class StartedHttpView(val first: TestActiveFirstCutFixtureV1, val startup: ComplaintTestRegisteredHttpStartupV1,
+    internal class StartedHttpView(val first: TestActiveFirstCutFixtureV1, val startup: ComplaintTestRegisteredHttpStartupV1,
         expectedPaths: Set<String> = SUBSET) : AutoCloseable {
         val context = poolTestField<AnnotationConfigServletWebServerApplicationContext>(startup, "context")
         val emf = poolTestField<EntityManagerFactory>(startup, "emf")
@@ -773,7 +774,7 @@ internal object TestRegisteredHttpStartupCasesV1 {
         override fun close() = client.close() // No application, JPA, native-pool or trust teardown in this view.
     }
 
-    private data class IngressSnapshot(val stopped: Boolean, val reservations: Int, val contexts: Int)
+    internal data class IngressSnapshot(val stopped: Boolean, val reservations: Int, val contexts: Int)
     private fun snapshot(ingress: ComplaintIngressAdmission): IngressSnapshot = synchronized(poolTestField<Any>(ingress, "lock")) {
         IngressSnapshot(poolTestField(ingress, "closed"), poolTestField(ingress, "reservations"), poolTestField<Map<*, *>>(ingress, "contexts").size)
     }
