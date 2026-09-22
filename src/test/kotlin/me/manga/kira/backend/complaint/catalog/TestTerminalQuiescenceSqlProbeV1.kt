@@ -14,8 +14,12 @@ import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealSqlV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalQuiescenceV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceStepV1
 import me.manga.kira.backend.security.EpochSealExceptionV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalException
@@ -46,6 +50,7 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
     private val owners = linkedMapOf<PersistencePhaseContext, TestRunTerminalQuiescenceV1>()
     private val assertion = AtomicReference<AssertionError?>()
     private var probePhase = "NOT_ENTERED"
+    private var lastSqlLabel = "NOT_ENTERED"
     private var lastReturned = false
     private var probeFailureObserved = false
     private val executor = f.registration.process.pools.catalogCoordinator.testTerminalQuiescence
@@ -67,6 +72,27 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
 
     private fun <T> observed(sql: String, args: Array<out Any?>, action: () -> T): T = try {
         lastReturned = false; probePhase = "PROBE"
+        // Fixed attempted-call label, retained even if the probe fails before recording a Call.
+        lastSqlLabel = when (sql) {
+            AUTHENTICATE -> "AUTHENTICATE"
+            TestOrdinaryDrainSqlV1.recyclePage -> "recyclePage"
+            TestOrdinaryDrainSqlV1.exactRecycleEntry -> "exactRecycleEntry"
+            TestTerminalQuiescenceSqlV1.deleteEntry -> "deleteEntry"
+            TestOrdinaryDrainSqlV1.scanEntryCount -> "scanEntryCount"
+            TestOrdinaryDrainSqlV1.deleteRun -> "deleteRun"
+            TestOrdinaryDrainSqlV1.spend -> "spend"
+            TestOrdinaryDrainSqlV1.spendAndProgress -> "spendAndProgress"
+            TestRunSealingSqlV1.lockGlobalControl -> "lockGlobalControl"
+            TestRunSealingSqlV1.lockScopeControl -> "lockScopeControl"
+            TestOrdinarySealSqlV1.lease -> "lease"
+            TestTerminalQuiescenceSqlV1.run -> "run"
+            TestTerminalQuiescenceSqlV1.runWithActiveHistory -> "runWithActiveHistory"
+            TestTerminalQuiescenceSqlV1.control -> "control"
+            TestTerminalQuiescenceSqlV1.controlWithActiveHistory -> "controlWithActiveHistory"
+            TestTerminalQuiescenceSqlV1.relation -> "relation"
+            TestTerminalQuiescenceSqlV1.relationWithActiveHistory -> "relationWithActiveHistory"
+            else -> "OTHER"
+        }
         val phase = checkNotNull(PersistencePhaseOwnership.current())
         val owner = ownedCutField(phase, "testTerminalQuiescence") as TestRunTerminalQuiescenceV1
         val path = ownedCutField(phase, "path") as PersistencePhasePath
@@ -123,7 +149,7 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
     fun reportUnexpectedFailure(problem: Throwable, boundary: String = "SQL_PROBE") {
         System.err.println("TERMINAL_QUIESCENCE_UNEXPECTED class=${problem.javaClass.name} " +
             "phase=${original?.step?.name ?: "NOT_ENTERED"} boundary=$boundary probePhase=$probePhase " +
-            "returned=$lastReturned probeFailureObserved=$probeFailureObserved nativeObserved=${f.sealHttp.terminalInventoryRequests.isNotEmpty()} " +
+            "lastSqlLabel=$lastSqlLabel returned=$lastReturned probeFailureObserved=$probeFailureObserved nativeObserved=${f.sealHttp.terminalInventoryRequests.isNotEmpty()} " +
             "observed=${observations.isNotEmpty()} committedObserved=${observations.keys.any { it.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED }} " +
             "leasesQuiescent=${observations.isNotEmpty() && observations.values.all { it.lease.completion.quiescent() }}")
         // Failure-only passive reads. The reader state may already reflect cleanup, not the failing edge.
