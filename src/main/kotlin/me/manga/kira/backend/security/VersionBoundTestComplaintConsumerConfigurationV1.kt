@@ -81,6 +81,7 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
     val adminReadPolicy: ComplaintAdminReadAdmissionPolicy,
     val adminCursorCodec: ComplaintAdminCursorCodec?,
     val adminContentPolicy: ComplaintAdminContentAdmissionPolicy,
+    val adminStatusPolicy: ComplaintAdminStatusAdmissionPolicy,
     val adminStepUp: VersionBoundTestComplaintAdminStepUpV1?,
     val clientIpResolver: ClientIpResolver,
     val ingressAdmission: ComplaintIngressAdmission,
@@ -92,6 +93,8 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
         require((adminReadPolicy is ComplaintAdminReadAdmissionPolicy.Bounded) == (adminCursorCodec != null)) { INVALID_BOUND_TEST_CONSUMERS }
         require((adminContentPolicy is ComplaintAdminContentAdmissionPolicy.Bounded) == (adminStepUp != null) &&
             (adminStepUp == null || adminReadPolicy is ComplaintAdminReadAdmissionPolicy.Bounded)) { INVALID_BOUND_TEST_CONSUMERS }
+        require(adminStatusPolicy !is ComplaintAdminStatusAdmissionPolicy.Bounded ||
+            adminContentPolicy is ComplaintAdminContentAdmissionPolicy.Bounded) { INVALID_BOUND_TEST_CONSUMERS }
     }
 
     val admissionCurrentKeyId: String get() = admissionKeys.currentKeyId
@@ -118,6 +121,7 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
             adminBatchDeletePerHour: Int = 60,
             adminReadPerMinute: Int? = null,
             adminContentPerHour: Int? = null,
+            adminStatusPerHour: Int? = null,
         ): VersionBoundTestComplaintConsumerConfigurationV1 {
             requireConnectionFree()
             val user = requireNotNull(jwt.boundUserKeyProvider) { INVALID_BOUND_TEST_CONSUMERS }
@@ -146,6 +150,9 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
             require(adminContentPerHour == null || adminRead is ComplaintAdminReadAdmissionPolicy.Bounded) { INVALID_BOUND_TEST_CONSUMERS }
             val adminContent = if (adminContentPerHour == null) ComplaintAdminContentAdmissionPolicy.Disabled
                 else ComplaintAdminContentAdmissionPolicy.Bounded(capacityPolicy, create.memberLimit, create.pruneBatch, adminContentPerHour)
+            require(adminStatusPerHour == null || adminContent is ComplaintAdminContentAdmissionPolicy.Bounded) { INVALID_BOUND_TEST_CONSUMERS }
+            val adminStatus = if (adminStatusPerHour == null) ComplaintAdminStatusAdmissionPolicy.Disabled
+                else ComplaintAdminStatusAdmissionPolicy.Bounded(capacityPolicy, create.memberLimit, create.pruneBatch, adminStatusPerHour)
             val stepUp = if (adminContentPerHour == null) null else VersionBoundTestComplaintAdminStepUpV1()
             val resolver = settings.clientIpResolver()
             val copies = ArrayList<ByteArray>(descriptors.size)
@@ -196,12 +203,13 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
                     ownerDeletePolicy = delete,
                     adminReadPolicy = adminRead,
                     adminContentPolicy = adminContent,
+                    adminStatusPolicy = adminStatus,
                     adminDeletePolicy = adminDelete,
                     adminBatchDeletePolicy = adminBatchDelete,
                 )
                 return VersionBoundTestComplaintConsumerConfigurationV1(
                     jwt, capacityPolicy, journal, keys.journalRouting, settings, policy, create, edit, delete, deleteAll, adminDelete, adminBatchDelete,
-                    fixedKeys, codec, adminRead, adminCodec, adminContent, stepUp, resolver, ingress, descriptors,
+                    fixedKeys, codec, adminRead, adminCodec, adminContent, adminStatus, stepUp, resolver, ingress, descriptors,
                 )
             } finally {
                 admissionCopies.forEach { it.destroy() }

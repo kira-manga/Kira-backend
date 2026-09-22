@@ -386,6 +386,27 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
                 RegisteredOwnerReads(registration, assembly, ownership, jdbc, responses), adminReads = admin, adminContent = content)
         }
 
+        /** Explicit status/closure addition, sharing the original content issuer and aggregate-eight response owner. */
+        fun fromRegisteredInitialCheckpointReadCreateAdminReadContentStatus(
+            registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership,
+            jdbc: JdbcTemplate,
+            audit: AuditService,
+            startup: ComplaintTestRegisteredHttpStartupV1,
+            userDecoder: JwtDecoder,
+            passwordEncoder: PasswordEncoder,
+        ): ComplaintTestBootstrapHttpCompositionV1 {
+            registration.requireActiveIdentityTarget(assembly)
+            registration.requireIdentityAdmissionPhaseResources(ownership, jdbc)
+            val responses = ComplaintOwnerHistoryResponses()
+            val admin = ComplaintTestRegisteredAdminReadsV1.fromRegistered(registration, assembly, ownership, jdbc, startup, userDecoder, responses)
+            val content = ComplaintTestRegisteredAdminContentV1.fromRegisteredWithStatus(registration, assembly, ownership, jdbc, audit,
+                startup, userDecoder, passwordEncoder, responses)
+            return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
+                RegisteredOwnerReads(registration, assembly, ownership, jdbc, responses), adminReads = admin, adminContent = content)
+        }
+
         /** Separate concrete reply-capable store/handler selection. All earlier factories retain their narrower routes. */
         fun fromRegisteredInitialCheckpointReadCreateReply(
             registration: ComplaintTestNamespaceRegistrationV1,

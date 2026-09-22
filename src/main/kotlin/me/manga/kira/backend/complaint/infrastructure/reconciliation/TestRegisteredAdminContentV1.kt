@@ -10,12 +10,15 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadFailure
 import me.manga.kira.backend.complaint.domain.rejectAdminRead
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminContentOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminStatusMutation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminReadIdentity
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminContentStore
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
 import me.manga.kira.backend.security.ComplaintAdmittedAdminContent
+import me.manga.kira.backend.security.ComplaintAdmittedAdminStatus
 import me.manga.kira.backend.security.ComplaintAdminContentAdmissionPolicy
+import me.manga.kira.backend.security.ComplaintAdminStatusAdmissionPolicy
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.StepUpUserSnapshot
 import org.springframework.jdbc.core.JdbcTemplate
@@ -32,6 +35,7 @@ internal class TestRegisteredAdminContentV1 private constructor(
     internal val policy = current.policy
     private val consumers = registration.process.consumers
     private val contentPolicy = consumers.adminContentPolicy as ComplaintAdminContentAdmissionPolicy.Bounded
+    private val statusPolicy = consumers.adminStatusPolicy as? ComplaintAdminStatusAdmissionPolicy.Bounded
     private val stepUp = checkNotNull(consumers.adminStepUp)
     // Only a request record varies. The issuer/password/throttle/store/executor graph stays original and fixed.
     private val stepUpAttempt = ThreadLocal<TestRegisteredComplaintStepUpV1>()
@@ -78,6 +82,58 @@ internal class TestRegisteredAdminContentV1 private constructor(
 
     internal fun lockAndCheck(operation: ComplaintAdminContentOperation, phase: PersistencePhaseContext) = current.lockAndCheck(operation, phase, this)
     internal fun checkCurrent(operation: ComplaintAdminContentOperation, phase: PersistencePhaseContext) = current.checkCurrent(operation, phase, this)
+
+    /** Additive status ownership shares this original reader/issuer, never the content path or handoff. */
+    internal fun requireStatusResources(originalRegistration: ComplaintTestNamespaceRegistrationV1, originalAssembly: ComplaintTestProcessAssemblyV1,
+        selected: PersistencePhaseOwnership, originalJdbc: JdbcTemplate) {
+        requireStatusEntry(selected)
+        check(registration === originalRegistration && jdbc === originalJdbc)
+        registration.requireActiveIdentityTarget(originalAssembly)
+        registration.requireIdentityAdmissionPhaseResources(selected, originalJdbc)
+    }
+
+    internal fun requireStatusEntry(selected: PersistencePhaseOwnership) {
+        requireEntry(selected)
+        requireStatusPhaseOwner(selected)
+    }
+
+    internal fun requireStatusPhaseOwner(selected: PersistencePhaseOwnership) {
+        requirePhaseOwner(selected)
+        check(statusPolicy != null && consumers.adminStatusPolicy === statusPolicy)
+    }
+
+    internal fun requireStatusIngress() = ComplaintIngressAdmission.requireRegisteredAdminStatusIngressOwner(consumers.ingressAdmission)
+
+    internal fun requireStatusPath(path: PersistencePhasePath) {
+        requireStatusPhaseOwner(ownership)
+        if (path !in STATUS_PATHS) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    internal fun requireAdmission(handoff: ComplaintAdmittedAdminStatus) {
+        requireStatusPhaseOwner(ownership)
+        ComplaintIngressAdmission.requireAdminStatusOwner(handoff, consumers.ingressAdmission)
+    }
+
+    internal fun requireStatusAuthentication(phase: PersistencePhaseContext) {
+        requireStatusPhaseOwner(ownership)
+        phase.adminStatus.requireRegisteredOwner(this, jdbc, ownership)
+    }
+
+    internal fun requireOperation(operation: ComplaintAdminStatusMutation, phase: PersistencePhaseContext, path: PersistencePhasePath) {
+        requireStatusPhaseOwner(ownership); requireStatusPath(path)
+        phase.adminStatus.requireOwner(operation, jdbc, ownership)
+        check(operation.registeredWith(this))
+    }
+
+    internal fun requireCurrentOperation(original: TestRegisteredInitialCheckpointCreateV1, operation: ComplaintAdminStatusMutation, phase: PersistencePhaseContext) {
+        check(current === original)
+        requireStatusPhaseOwner(ownership)
+        phase.adminStatus.requireOwner(operation, jdbc, ownership)
+        operation.requireCurrentCheckpointRead(this, phase)
+    }
+
+    internal fun lockAndCheck(operation: ComplaintAdminStatusMutation, phase: PersistencePhaseContext) = current.lockAndCheck(operation, phase, this)
+    internal fun checkCurrent(operation: ComplaintAdminStatusMutation, phase: PersistencePhaseContext) = current.checkCurrent(operation, phase, this)
 
     /** Called only around the concrete issuer, not an arbitrary callback or request-time provider selection. */
     internal fun beginStepUp(identity: ComplaintAdminReadIdentity): TestRegisteredComplaintStepUpV1 {
@@ -147,6 +203,8 @@ internal class TestRegisteredAdminContentV1 private constructor(
     companion object {
         private val PATHS = setOf(PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
             PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT, PersistencePhasePath.COMPLAINT_ADMIN_EDIT)
+        private val STATUS_PATHS = setOf(PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
+            PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT, PersistencePhasePath.COMPLAINT_ADMIN_STATUS)
 
         internal fun fromRegistered(registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1,
             ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate): TestRegisteredAdminContentV1 {

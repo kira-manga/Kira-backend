@@ -13,10 +13,13 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcPa
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePoolDescriptor
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.api.ComplaintAdminStepUpHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintAdminStatusHttpHandler
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusOperation
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.security.ComplaintAdmissionPolicy
 import me.manga.kira.backend.security.ComplaintAdminContentAdmissionPolicy
 import me.manga.kira.backend.security.ComplaintAdminReadAdmissionPolicy
+import me.manga.kira.backend.security.ComplaintAdminStatusAdmissionPolicy
 import me.manga.kira.backend.security.SecretMaterialFamily
 import me.manga.kira.backend.security.SecretMaterialPurpose
 import me.manga.kira.backend.security.VersionBoundTestComplaintConsumerConfigurationV1
@@ -234,6 +237,23 @@ internal object ComplaintEffectiveTestConfigurationV1 {
                         put("registrationWindowMillis", throttle.registrationWindow.toMillis())
                     })
                 })
+            })
+        }
+        (owner.adminStatusPolicy as? ComplaintAdminStatusAdmissionPolicy.Bounded)?.let { policy ->
+            check(owner.adminContentPolicy is ComplaintAdminContentAdmissionPolicy.Bounded && owner.adminStepUp != null)
+            put("adminStatus", buildJsonObject {
+                put("schemaVersion", 1)
+                put("profile", TestRegisteredAdminStatusInputV1.PROFILE)
+                put("perHour", policy.perHour)
+                put("memberLimit", policy.memberLimit)
+                put("pruneBatch", policy.pruneBatch)
+                put("windowNanos", ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS)
+                put("routes", strings(ComplaintAdminStatusOperation.entries.map { "PATCH:${it.route}" }))
+                put("authentication", "QUALIFIED_USER_JWT_CURRENT_DB_ADMIN_AND_ORIGINAL_COMPLAINT_SCOPED_PROOF")
+                put("current", "ORIGINAL_TYPED_INITIAL_OR_EXPLICIT_RECURRENT_CHECKPOINT_NEW_CLAIM_ONLY")
+                put("responseOwner", "ONE_SHARED_OWNER_HISTORY_DETAIL_ADMIN_EIGHT_UNTIL_DELIVERY")
+                put("stepUpOwner", "EXISTING_REGISTERED_ADMIN_CONTENT_COMPLAINT_ISSUER")
+                put("bodyMaximumBytes", ComplaintAdminStatusHttpHandler.MAX_BODY_BYTES)
             })
         }
     }

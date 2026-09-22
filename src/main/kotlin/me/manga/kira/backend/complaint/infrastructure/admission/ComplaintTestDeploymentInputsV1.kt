@@ -131,6 +131,9 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     val adminContent = document.adminContent?.also {
         valid(it.schemaVersion == 1 && it.profile == TestRegisteredAdminContentInputV1.PROFILE && it.perHour in 1..60)
     }
+    val adminStatus = document.adminStatus?.also {
+        valid(it.schemaVersion == 1 && it.profile == TestRegisteredAdminStatusInputV1.PROFILE && it.perHour in 1..60)
+    }
     val sealerSessionName = document.sealer.bootstrapSessionName
     val sealerLimits = document.sealer.sdkLimits.let {
         AwsEpochSealStsLimits(it.requestTimeoutMillis, it.connectTimeoutMillis, it.readTimeoutMillis, it.maxResponseBytes, it.clockUncertaintyMillis)
@@ -163,6 +166,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         valid(initialCheckpointCreate == null || initialCheckpoint != null)
         valid(adminRead == null || initialCheckpointCreate != null)
         valid(adminContent == null || adminRead != null && initialCheckpointCreate != null)
+        valid(adminStatus == null || adminContent != null && adminRead != null && initialCheckpointCreate != null)
         valid(activeRecurrent == null || initialCheckpoint != null && activeFirstCut != null && ordinaryPublication != null)
         valid(initialCheckpointDeletion == null || initialCheckpoint != null && ordinaryPublication != null &&
             journal.registeredAdminBatchDelete && journal.ownerDeleteAll)

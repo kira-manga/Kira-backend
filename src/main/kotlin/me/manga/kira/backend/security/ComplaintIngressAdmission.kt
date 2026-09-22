@@ -1736,6 +1736,19 @@ internal class ComplaintIngressAdmission(
             owner.locked { owner.state(context) }
         }
 
+        /** Status/closure's exact handoff, never a content/read/deletion admission. */
+        internal fun requireAdminStatusOwner(handoff: ComplaintAdmittedAdminStatus, owner: ComplaintIngressAdmission) {
+            val selected = handoff as? AdmittedAdminStatus ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            if (selected.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            owner.locked { owner.requireAdminStatusState(selected) }
+        }
+
+        /** The actual current original ingress is required; no absent-context or transferable authority. */
+        internal fun requireRegisteredAdminStatusIngressOwner(owner: ComplaintIngressAdmission) {
+            val context = current.get() ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            owner.locked { owner.state(context) }
+        }
+
         internal fun requireOwnerDeleteOwner(handoff: ComplaintAdmittedOwnerDelete, owner: ComplaintIngressAdmission) {
             val selected = handoff as? AdmittedDelete ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
             if (selected.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
