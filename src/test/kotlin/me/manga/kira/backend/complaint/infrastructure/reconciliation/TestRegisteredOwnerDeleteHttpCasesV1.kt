@@ -274,7 +274,7 @@ internal object TestRegisteredOwnerDeleteHttpCasesV1 {
             assertSame(first.process.pools.deletion, deletionJdbc.dataSource)
             assertSame(first.process.pools.deletion, (deletionOwner.manager as GuardedJdbcTransactionManager).dataSource)
             first.registration.requireInitialDeletionPhaseResources(deletionOwner, deletionJdbc)
-            assertEquals(PersistenceLifecycleObservation.READY, first.process.pools.deletion.prepareDeletion())
+            assertEquals(PersistenceLifecycleObservation.READY, first.process.pools.deletion.observePreparation())
         }
         fun originalResourcesAndOlderSelector() {
             val owner = poolTestField<PersistencePhaseOwnership>(web.startup, "ownership")

@@ -15,6 +15,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.GuardedJdbcTransa
 import me.manga.kira.backend.common.infrastructure.persistence.GuardedJpaTransactionManager
 import me.manga.kira.backend.common.infrastructure.persistence.OrdinaryPersistenceAdmission
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcParticipantRole
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
@@ -203,6 +204,10 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             val service = AuditService(counted, CurrentUser(), Clock.systemUTC()).also { audit = it }
             val composition = if (deletionPolicy != null) {
                 val deletionPool = registration.process.pools.deletion
+                // Prepare the original cold sibling before registration can pin its deletion pair.
+                checkpoint()
+                requireTestDeployment(deletionPool.prepareDeletion() === PersistenceLifecycleObservation.READY, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+                checkpoint()
                 val deletionPermits = DeletionPersistenceAdmission().also { deletionAdmission = it }
                 val deletionOwner = PersistencePhaseOwnership.deletion(deletionPermits, GuardedJdbcTransactionManager(deletionPool)).also { deletionOwnership = it }
                 val deletionTemplate = JdbcTemplate(deletionPool).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }.also { deletionJdbc = it }
