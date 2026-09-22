@@ -130,7 +130,7 @@ internal object TestRegisteredOwnerMeReplyEditHttpCasesV1 {
                                 UUID::class.java, reply.input.id, first.scope))
                             exclusions(web, reply.input.id, token)
                             val createStatus = statusBody("OWNER_CREATE", report.input.key, listOf(report.input.id), ComplaintReportFingerprint.of(report.candidate.request).encoded)
-                            val replyStatus = statusBody("OWNER_REPLY", reply.input.key, listOf(report.input.parentId, reply.input.id), ComplaintReplyFingerprint.of(reply.candidate.request).encoded)
+                            val replyStatus = statusBody("OWNER_REPLY", reply.input.key, listOf(reply.input.parentId, reply.input.id), ComplaintReplyFingerprint.of(reply.candidate.request).encoded)
                             val editStatus = statusBody("OWNER_EDIT", edit.input.key, listOf(edit.input.targetId), ComplaintOwnerEditFingerprint.of(edit.candidate.request).encoded)
                             val deleteStatus = web.post(ComplaintInstallationRoutes.STATUS, statusBody("OWNER_DELETE", report.input.key,
                                 listOf(report.input.id), ComplaintReportFingerprint.of(report.candidate.request).encoded), token)
