@@ -14,6 +14,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainActiveHistorySqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingSqlV1
@@ -91,6 +92,11 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
             TestTerminalQuiescenceSqlV1.controlWithActiveHistory -> "controlWithActiveHistory"
             TestTerminalQuiescenceSqlV1.relation -> "relation"
             TestTerminalQuiescenceSqlV1.relationWithActiveHistory -> "relationWithActiveHistory"
+            TestOrdinaryDrainActiveHistorySqlV1.sourceIdentity -> "activeHistorySourceIdentity"
+            TestOrdinaryDrainActiveHistorySqlV1.archiveIdentity -> "activeHistoryArchiveIdentity"
+            TestRunSealingSqlV1.readActiveHistoryGlobal -> "readActiveHistoryGlobal"
+            TestOrdinaryDrainActiveHistorySqlV1.rows -> "activeHistoryRows"
+            TestOrdinaryDrainActiveHistorySqlV1.currentLast -> "activeHistoryCurrentLast"
             else -> "OTHER"
         }
         val phase = checkNotNull(PersistencePhaseOwnership.current())
@@ -109,10 +115,17 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
         val connection = (TransactionSynchronizationManager.getResource(source) as ConnectionHolder).connection
         assertEquals(setOf(source), TransactionSynchronizationManager.getResourceMap().keys)
         assertEquals(Connection.TRANSACTION_READ_COMMITTED, connection.transactionIsolation)
-        assertTrue(f.p.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
-        assertTrue(f.p.advisory(connection, "complaint-journal-epoch", "ExclusiveLock"), "Every scan, cut and recycle phase owns exclusive E; there is no receiptless path.")
-        assertFalse(f.p.advisory(connection, "complaint-maintenance-v1", "ExclusiveLock"))
-        assertFalse(f.p.advisory(connection, "complaint-journal-epoch", "ShareLock"))
+        // Same four exact lock observations on every call, using one round-trip on this holder.
+        connection.prepareStatement(FENCE_OBSERVATION).use { statement ->
+            statement.executeQuery().use { row ->
+                check(row.next())
+                assertTrue(row.getBoolean("maintenance_shared"))
+                assertTrue(row.getBoolean("epoch_exclusive"), "Every scan, cut and recycle phase owns exclusive E; there is no receiptless path.")
+                assertFalse(row.getBoolean("maintenance_exclusive"))
+                assertFalse(row.getBoolean("epoch_shared"))
+                check(!row.next())
+            }
+        }
         val lease = ownedPoolLease(connection)
         val observation = observations.getOrPut(phase) {
             val identity = connection.createStatement().use { statement ->
@@ -226,6 +239,21 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
     data class Bytes(val size: Int, val sha256: String)
     companion object {
         const val AUTHENTICATE = "SELECT session_user = ? AND current_user = ? AND current_database() = ? AS authenticated"
+        private val FENCE_OBSERVATION = """
+            SELECT
+                EXISTS (SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND mode = 'ShareLock' AND granted
+                    AND classid::bigint = (hashtextextended('complaint-maintenance-v1', 0) >> 32 & 4294967295)
+                    AND objid::bigint = (hashtextextended('complaint-maintenance-v1', 0) & 4294967295)) AS maintenance_shared,
+                EXISTS (SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND mode = 'ExclusiveLock' AND granted
+                    AND classid::bigint = (hashtextextended('complaint-journal-epoch', 0) >> 32 & 4294967295)
+                    AND objid::bigint = (hashtextextended('complaint-journal-epoch', 0) & 4294967295)) AS epoch_exclusive,
+                EXISTS (SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND mode = 'ExclusiveLock' AND granted
+                    AND classid::bigint = (hashtextextended('complaint-maintenance-v1', 0) >> 32 & 4294967295)
+                    AND objid::bigint = (hashtextextended('complaint-maintenance-v1', 0) & 4294967295)) AS maintenance_exclusive,
+                EXISTS (SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND mode = 'ShareLock' AND granted
+                    AND classid::bigint = (hashtextextended('complaint-journal-epoch', 0) >> 32 & 4294967295)
+                    AND objid::bigint = (hashtextextended('complaint-journal-epoch', 0) & 4294967295)) AS epoch_shared
+        """.trimIndent()
         private fun timeoutMillis(value: String): Long = when {
             value.endsWith("ms") -> value.removeSuffix("ms").toLong()
             value.endsWith("s") -> value.removeSuffix("s").toLong() * 1_000
