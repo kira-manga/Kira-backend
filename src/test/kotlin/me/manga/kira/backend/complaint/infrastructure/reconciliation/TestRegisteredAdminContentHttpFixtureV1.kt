@@ -258,37 +258,43 @@ internal fun withRegisteredAdminContentHttpV1(tls: VersionBoundPersistenceConnec
                 "/api/v1/admin/complaints/{id}/status", "/api/v1/admin/complaints/{id}/closure") else emptySet()) +
                 (if (selectAdminBatchStatus) setOf("/api/v1/admin/complaints/batch") else emptySet())
             StartedHttpView(first, startup, paths).use { web ->
-                val users = mutableListOf<User>()
-                try {
-                    repeat(2) {
-                        val id = UUID.randomUUID(); val now = Instant.now().truncatedTo(ChronoUnit.MICROS)
-                        val hash = web.context.getBean(PasswordEncoder::class.java).encode(TestRegisteredAdminContentHttpFixtureV1.PASSWORD)
-                        val user = User(id, "registered-content-$id@example.invalid", hash, Role.ADMIN, true, now, now)
-                        assertEquals(1, first.observer.update("INSERT INTO users (id,email,password_hash,role,enabled,created_at,updated_at) VALUES (?,?,?,?,true,?,?)",
-                            id, user.email, hash, user.role.name, Timestamp.from(now), Timestamp.from(now)))
-                        users += user
-                    }
-                    val keys = web.context.getBean(JwtKeyProvider::class.java)
-                    assertSame(first.process.consumers.jwt.boundUserKeyProvider, keys)
-                    val signer = JwtService(keys, web.context.getBean(KiraSecurityProperties::class.java), Clock.systemUTC())
-                    action(TestRegisteredAdminContentHttpFixtureV1(first, ordinary, raw, web, users, signer))
-                    web.assertRequestsReleased()
-                } finally {
-                    web.assertRequestsReleased()
-                    // Existing disposable TEST teardown only: no fabricated grant, ACTIVE row, current proof or product refund.
-                    first.observer.update("DELETE FROM complaints WHERE data_scope_id = ?", first.scope)
-                    first.observer.update("DELETE FROM complaint_resource_ids WHERE data_scope_id = ?", first.scope)
-                    first.observer.update("DELETE FROM complaint_idempotency_receipts WHERE data_scope_id = ?", first.scope)
-                    first.observer.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND action IN ('COMPLAINT_CREATED','COMPLAINT_CONTENT_EDITED')", first.scope)
-                    for (user in users) {
-                        first.observer.update("DELETE FROM admin_step_up_grants WHERE user_id = ?", user.id)
-                        first.observer.update("DELETE FROM audit_log WHERE actor_user_id = ?", user.id)
-                        assertEquals(1, first.observer.update("DELETE FROM users WHERE id = ?", user.id))
-                    }
-                }
+                withRegisteredAdminContentFixtureV1(first, ordinary, raw, web, action)
                 startup.close(); web.assertDisposed(nativeStillActive = true)
             }
             startup.requireCleanupProven()
+        }
+    }
+}
+
+/** Same real users/passwords/JWT and exact teardown, also usable by another explicitly selected listener. */
+internal fun withRegisteredAdminContentFixtureV1(first: TestActiveFirstCutFixtureV1, ordinary: TestActiveOrdinaryRawFixtureV1,
+    raw: TestActiveInitialCheckpointRawFixtureV1, web: StartedHttpView, action: (TestRegisteredAdminContentHttpFixtureV1) -> Unit) {
+    val users = mutableListOf<User>()
+    try {
+        repeat(2) {
+            val id = UUID.randomUUID(); val now = Instant.now().truncatedTo(ChronoUnit.MICROS)
+            val hash = web.context.getBean(PasswordEncoder::class.java).encode(TestRegisteredAdminContentHttpFixtureV1.PASSWORD)
+            val user = User(id, "registered-content-$id@example.invalid", hash, Role.ADMIN, true, now, now)
+            assertEquals(1, first.observer.update("INSERT INTO users (id,email,password_hash,role,enabled,created_at,updated_at) VALUES (?,?,?,?,true,?,?)",
+                id, user.email, hash, user.role.name, Timestamp.from(now), Timestamp.from(now)))
+            users += user
+        }
+        val keys = web.context.getBean(JwtKeyProvider::class.java)
+        assertSame(first.process.consumers.jwt.boundUserKeyProvider, keys)
+        val signer = JwtService(keys, web.context.getBean(KiraSecurityProperties::class.java), Clock.systemUTC())
+        action(TestRegisteredAdminContentHttpFixtureV1(first, ordinary, raw, web, users, signer))
+        web.assertRequestsReleased()
+    } finally {
+        web.assertRequestsReleased()
+        // Existing disposable TEST teardown only: no fabricated grant, ACTIVE row, current proof or product refund.
+        first.observer.update("DELETE FROM complaints WHERE data_scope_id = ?", first.scope)
+        first.observer.update("DELETE FROM complaint_resource_ids WHERE data_scope_id = ?", first.scope)
+        first.observer.update("DELETE FROM complaint_idempotency_receipts WHERE data_scope_id = ?", first.scope)
+        first.observer.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND action IN ('COMPLAINT_CREATED','COMPLAINT_CONTENT_EDITED')", first.scope)
+        for (user in users) {
+            first.observer.update("DELETE FROM admin_step_up_grants WHERE user_id = ?", user.id)
+            first.observer.update("DELETE FROM audit_log WHERE actor_user_id = ?", user.id)
+            assertEquals(1, first.observer.update("DELETE FROM users WHERE id = ?", user.id))
         }
     }
 }
