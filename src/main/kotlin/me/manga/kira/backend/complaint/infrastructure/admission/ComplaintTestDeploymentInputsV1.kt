@@ -68,7 +68,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         ComplaintCapacityVector.of(document.capacity.hardLimits.toLongArray()),
         ComplaintCapacityVector.of(document.capacity.creationLimits.toLongArray()),
         document.capacity.dailyEnrollmentLimit,
-    )
+    ).also { it.requireCleanStart() }
     val jwtSettings = KiraSecurityProperties(
         issuer = document.jwt.issuer, audience = document.jwt.audience,
         accessTokenTtl = Duration.ofSeconds(document.jwt.accessTokenTtlSeconds), clockSkew = Duration.ofSeconds(document.jwt.clockSkewSeconds),

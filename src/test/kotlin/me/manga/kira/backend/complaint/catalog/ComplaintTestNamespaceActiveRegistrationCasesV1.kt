@@ -6,6 +6,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseO
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationCurrentStateAssessment
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentDisposition
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestInitialAdmissionV1
@@ -151,6 +152,29 @@ internal object ComplaintTestNamespaceActiveRegistrationCasesV1 {
             assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> { cold.register(original) }
             original.requireActualCleanup()
             assertEquals(before, cold.image()); assertTrue(cold.raw.requests.isEmpty())
+            assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> { ComplaintTestNamespaceRegistrationV1.issuedByActiveRegistration(original) }
+        }
+    }
+
+    fun retiredCapacityCannotActivateOrRepair(tls: VersionBoundPersistenceConnectedFixture) = withInitialAdmission(tls) { f ->
+        f.release()
+        withColdActiveRoot(f) { cold ->
+            val retired = ComplaintCapacityCounter.IMPORT_ARTIFACTS
+            val policy = cold.assembly.target.consumers.capacityPolicy
+            assertEquals(0L, policy.hardLimit[retired])
+            assertEquals(0L, policy.creationLimit[retired])
+            // V14-equation-valid historical limits are representable, but cannot activate against zero-retired P.
+            assertEquals(1, f.observer.update(
+                "UPDATE complaint_capacity_counters SET hard_limit = 1, free_units = 1 WHERE name = ? " +
+                    "AND hard_limit = 0 AND creation_limit = 0 AND free_units = 0 AND actual_units = 0 " +
+                    "AND recovery_reserved_units = 0 AND test_reserved_units = 0", retired.storedName,
+            ))
+            val before = cold.image()
+            val original = cold.begin()
+            assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> { cold.register(original) }
+            original.requireActualCleanup()
+            assertEquals(before, cold.image(), "Registration must not repair historical limits or mutate any counter/state.")
+            assertTrue(cold.raw.requests.isEmpty())
             assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> { ComplaintTestNamespaceRegistrationV1.issuedByActiveRegistration(original) }
         }
     }
