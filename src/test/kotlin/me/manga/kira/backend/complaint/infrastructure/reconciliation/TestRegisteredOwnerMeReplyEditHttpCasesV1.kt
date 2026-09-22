@@ -112,7 +112,8 @@ internal object TestRegisteredOwnerMeReplyEditHttpCasesV1 {
                             val replied = web.post(replyPath(reply), replyBody(reply), token, reply.input.key)
                             applied(replied, reply.input.id, 1, 201); charge(before, first.counters(), ComplaintCapacityCharges.OWNER_CREATE)
                             // One report + one reply spend the unchanged shared createGlobal2; EDIT has its existing separate family.
-                            val edit = registeredEditAttempt(actor, reply.input.id, subject = null)
+                            // Report-rooted replies retain a subject; only notice threads use the body-only edit shape.
+                            val edit = registeredEditAttempt(actor, reply.input.id, subject = report.candidate.request.subject)
                             before = first.counters()
                             val edited = web.patch(edit, token)
                             applied(edited, reply.input.id, 2, 200); charge(before, first.counters(), ComplaintCapacityCharges.OWNER_EDIT)
@@ -144,7 +145,7 @@ internal object TestRegisteredOwnerMeReplyEditHttpCasesV1 {
                             replay(replied, web.post(replyPath(reply), replyBody(reply), token, reply.input.key)) // Historical version1, not current version2.
                             replay(edited, web.patch(edit, token)) // Original If-Match v1 still replays its exact v2 receipt.
                             status(web, token, createStatus, created); status(web, token, replyStatus, replied); status(web, token, editStatus, edited)
-                            checked(web.patch(registeredEditAttempt(actor, reply.input.id, version = 2, subject = null, body = "Closed new edit"), token), 503)
+                            checked(web.patch(registeredEditAttempt(actor, reply.input.id, version = 2, subject = report.candidate.request.subject, body = "Closed new edit"), token), 503)
                             first.registration.close() // No receipt or retained listener can revive the original registration.
                             checked(web.get(location, token), 503)
                             checked(web.post(ComplaintInstallationRoutes.STATUS, editStatus, token), 503)
