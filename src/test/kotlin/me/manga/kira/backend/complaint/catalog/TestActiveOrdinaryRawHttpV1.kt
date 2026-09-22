@@ -27,6 +27,8 @@ internal class TestActiveOrdinaryRawHttpV1(
     val activeRecurrent: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentInputV1? = null,
     // Cold TEST construction input; only claimant races opt in to a second P-1 ordinary owner.
     val ordinaryPoolSize: Int = 2,
+    // Optional born-with Admin read declaration; absence preserves every existing fixture's full D.
+    val adminRead: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadInputV1? = null,
 ) {
     init { require(ordinaryPoolSize == 2 || ordinaryPoolSize == 3 && initialCheckpointCreate != null) }
 }

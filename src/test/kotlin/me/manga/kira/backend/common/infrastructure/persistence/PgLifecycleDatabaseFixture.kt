@@ -372,6 +372,7 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointIT",
                     "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
                     "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+                    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminReadHttpIT",
                     "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
                     PgLifecycleDatabaseTls.CLASS_NAME,
                 ),
