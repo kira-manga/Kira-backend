@@ -1,0 +1,49 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 90,
+      "class": "me.manga.kira.backend.database.complaint.ComplaintCleanStartMigrationIT",
+      "cohort": "FAILED80_MIGRATION_ORACLE_AND_ALL17_ATOMIC_REFUSALS",
+      "expected_invocations_from_annotation": 1,
+      "method": "legacy content imports tags and each retired usage balance refuse atomically without data loss",
+      "path": "src/test/kotlin/me/manga/kira/backend/database/complaint/ComplaintCleanStartMigrationIT.kt",
+      "source_head": "316ece33ae73dd500e609b45786f9e6ccf1d2e43",
+      "source_sha256": "3144e1463046c5834464cef7214946875333646e459d21c22706cd8c43a32fa0",
+      "xml_names": [
+        "legacy content imports tags and each retired usage balance refuse atomically without data loss()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 1,
+  "expected_source_paths": 2498,
+  "expected_total": 1,
+  "selection_basis": {
+    "batch": "CLEAN_START_COMPATIBILITY_RETIREMENT",
+    "carryforward": "Carry146 focused80 passes and native09 unchanged. Only grouped refusal method changed after actual81 failure; same17 cases aggregated sequentially.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "FAILED80_MIGRATION_ORACLE_AND_ALL17_ATOMIC_REFUSALS": 1
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "expected_source_paths": 2498,
+    "gradle_seconds": 2400,
+    "inventory": "Every committed source path and all348 historical paths, root-pin final count, no fixed exclusion.",
+    "plan": "review/working/app-29-backend-focused-20260922-82/PLAN.md",
+    "prerequisite": "Root sole actual-diff reviews of clean-start DOMAIN/POLICY/SCHEMA; preserve original controls.",
+    "required_source": "316ece33ae73dd500e609b45786f9e6ccf1d2e43",
+    "required_tree": "4900c2787d73a16efa1608b4ec33d8cfccf55933",
+    "scope": "Changed clean-start boundaries, historical encoding and actual latest database preservation/refusal plus minimal affected operational representative."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/database/complaint/ComplaintCleanStartMigrationIT.kt": "3144e1463046c5834464cef7214946875333646e459d21c22706cd8c43a32fa0"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.database.complaint.ComplaintCleanStartMigrationIT": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.database.complaint.ComplaintCleanStartMigrationIT.legacy content imports tags and each retired usage balance refuse atomically without data loss"
+  ]
+}
