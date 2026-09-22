@@ -1,0 +1,186 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 18,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminReadHttpIT",
+      "cohort": "NEW_ADMIN_READ_BOUNDARY",
+      "expected_invocations_from_annotation": 1,
+      "method": "explicitRegisteredAdminSearchDetailStatsReadBothCreatedOwnersWithBoundCursorAndNoWrites",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredAdminReadHttpIT.kt",
+      "source_head": "53ca889b1b5f44d098e35c1fe4d761252ed58377",
+      "source_sha256": "17e36d667ab9553d5eadf328d401a68b356b106c192e9e77fd98ab32f32c5ea5",
+      "xml_names": [
+        "explicitRegisteredAdminSearchDetailStatsReadBothCreatedOwnersWithBoundCursorAndNoWrites()"
+      ]
+    },
+    {
+      "annotation_line": 21,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminReadHttpIT",
+      "cohort": "NEW_ADMIN_READ_BOUNDARY",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredAdminReadsUseConfiguredJwtAndCurrentDatabaseRoleNotDiagnosticClaim",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredAdminReadHttpIT.kt",
+      "source_head": "53ca889b1b5f44d098e35c1fe4d761252ed58377",
+      "source_sha256": "17e36d667ab9553d5eadf328d401a68b356b106c192e9e77fd98ab32f32c5ea5",
+      "xml_names": [
+        "registeredAdminReadsUseConfiguredJwtAndCurrentDatabaseRoleNotDiagnosticClaim()"
+      ]
+    },
+    {
+      "annotation_line": 24,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminReadHttpIT",
+      "cohort": "NEW_ADMIN_READ_BOUNDARY",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredAdminReadSelectionPreservesOldSubsetsAndRejectsForeignPairAndClosedAuthentication",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredAdminReadHttpIT.kt",
+      "source_head": "53ca889b1b5f44d098e35c1fe4d761252ed58377",
+      "source_sha256": "17e36d667ab9553d5eadf328d401a68b356b106c192e9e77fd98ab32f32c5ea5",
+      "xml_names": [
+        "registeredAdminReadSelectionPreservesOldSubsetsAndRejectsForeignPairAndClosedAuthentication()"
+      ]
+    },
+    {
+      "annotation_line": 27,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminReadHttpIT",
+      "cohort": "NEW_ADMIN_READ_BOUNDARY",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredAdminAndOwnerReadsShareEightResponseSlotsOneReadQuotaAndOriginalCleanup",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredAdminReadHttpIT.kt",
+      "source_head": "53ca889b1b5f44d098e35c1fe4d761252ed58377",
+      "source_sha256": "17e36d667ab9553d5eadf328d401a68b356b106c192e9e77fd98ab32f32c5ea5",
+      "xml_names": [
+        "registeredAdminAndOwnerReadsShareEightResponseSlotsOneReadQuotaAndOriginalCleanup()"
+      ]
+    },
+    {
+      "annotation_line": 41,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadColdInputsV1Test",
+      "cohort": "NEW_ADMIN_READ_BOUNDARY",
+      "expected_invocations_from_annotation": 1,
+      "method": "optionalAdminReadBindsOnlyItsDeclaredPolicyCursorAndFullDMemberWhileAbsenceStaysDisabled",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestRegisteredAdminReadColdInputsV1Test.kt",
+      "source_head": "53ca889b1b5f44d098e35c1fe4d761252ed58377",
+      "source_sha256": "cc50a6a15ef3637244b4d3b8095c45e74177c0f39b476e2924eef8c17149c520",
+      "xml_names": [
+        "optionalAdminReadBindsOnlyItsDeclaredPolicyCursorAndFullDMemberWhileAbsenceStaysDisabled()"
+      ]
+    },
+    {
+      "annotation_line": 84,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadColdInputsV1Test",
+      "cohort": "NEW_ADMIN_READ_BOUNDARY",
+      "expected_invocations_from_annotation": 1,
+      "method": "invalidOrIncompleteAdminReadDeclarationRefusesBeforeAnySecretOrNativeResourceAcquisition",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestRegisteredAdminReadColdInputsV1Test.kt",
+      "source_head": "53ca889b1b5f44d098e35c1fe4d761252ed58377",
+      "source_sha256": "cc50a6a15ef3637244b4d3b8095c45e74177c0f39b476e2924eef8c17149c520",
+      "xml_names": [
+        "invalidOrIncompleteAdminReadDeclarationRefusesBeforeAnySecretOrNativeResourceAcquisition()"
+      ]
+    },
+    {
+      "annotation_line": 97,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "FAILED60_POST_RECYCLE_HISTORY_READ",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "53ca889b1b5f44d098e35c1fe4d761252ed58377",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax()"
+      ]
+    },
+    {
+      "annotation_line": 68,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT",
+      "cohort": "FAILED60_POST_CALLBACK_FIXTURE",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecoveryIT.kt",
+      "source_head": "53ca889b1b5f44d098e35c1fe4d761252ed58377",
+      "source_sha256": "8188de32bf8c6f3e7e12ce373e137698e1c0f673677eaac24a009572ead5a932",
+      "xml_names": [
+        "actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund()"
+      ]
+    },
+    {
+      "annotation_line": 127,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT",
+      "cohort": "FAILED60_POST_CALLBACK_FIXTURE",
+      "expected_invocations_from_annotation": 1,
+      "method": "purgedTwoSealHistoryFreshlyReadsBothNativePairsWithoutRecreatingControlSidecarsOrAudit",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecoveryIT.kt",
+      "source_head": "53ca889b1b5f44d098e35c1fe4d761252ed58377",
+      "source_sha256": "8188de32bf8c6f3e7e12ce373e137698e1c0f673677eaac24a009572ead5a932",
+      "xml_names": [
+        "purgedTwoSealHistoryFreshlyReadsBothNativePairsWithoutRecreatingControlSidecarsOrAudit()"
+      ]
+    },
+    {
+      "annotation_line": 164,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT",
+      "cohort": "PRIOR_HELD_DISTINCT_CUSTODY_REQUIREMENT",
+      "expected_invocations_from_annotation": 1,
+      "method": "sameValueSourceAndArchiveRewritesCannotSupplyOriginalPhysicalCustody",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecurrentIT.kt",
+      "source_head": "53ca889b1b5f44d098e35c1fe4d761252ed58377",
+      "source_sha256": "a9ad52f32c020490d1720c9c86b77f55cd661d917d88c2313d719d3fa1f82dc0",
+      "xml_names": [
+        "sameValueSourceAndArchiveRewritesCannotSupplyOriginalPhysicalCustody()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 10,
+  "expected_source_paths": 2464,
+  "expected_total": 10,
+  "selection_basis": {
+    "batch": "ADMIN_READ_SIX_AND_REMAINING_F_FOUR",
+    "carryforward": "Unchanged capacity57 twoPASS and60 fourPASS carried. All24 earlier F requirements remain; none silently waived. No package or issue credit.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "FAILED60_POST_CALLBACK_FIXTURE": 2,
+      "FAILED60_POST_RECYCLE_HISTORY_READ": 1,
+      "NEW_ADMIN_READ_BOUNDARY": 6,
+      "PRIOR_HELD_DISTINCT_CUSTODY_REQUIREMENT": 1
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "expected_source_paths": 2464,
+    "gradle_seconds": 2400,
+    "inventory": "Enumerate every committed path from final reviewed source; match root-pinned complete path count and preserve all348 historical paths. New-file count is pending; no file subset or fixed2458 exclusion.",
+    "plan": "review/working/app-29-backend-focused-20260922-61/PLAN.md",
+    "prerequisite": "Final reviewed source and exact pins required before dispatch.",
+    "required_source": "53ca889b1b5f44d098e35c1fe4d761252ed58377",
+    "required_tree": "1045bda4657921a56e052ff4e82c9165190a439e",
+    "scope": "Ten methods: six new registered Admin read declarations, three60 failures, one previously held dual-rewrite F method. All24 olderF requirements remain open."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecoveryIT.kt": "8188de32bf8c6f3e7e12ce373e137698e1c0f673677eaac24a009572ead5a932",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecurrentIT.kt": "a9ad52f32c020490d1720c9c86b77f55cd661d917d88c2313d719d3fa1f82dc0",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestRegisteredAdminReadColdInputsV1Test.kt": "cc50a6a15ef3637244b4d3b8095c45e74177c0f39b476e2924eef8c17149c520",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredAdminReadHttpIT.kt": "17e36d667ab9553d5eadf328d401a68b356b106c192e9e77fd98ab32f32c5ea5"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT": 2,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadColdInputsV1Test": 2,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminReadHttpIT": 4
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT.actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT.purgedTwoSealHistoryFreshlyReadsBothNativePairsWithoutRecreatingControlSidecarsOrAudit",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT.sameValueSourceAndArchiveRewritesCannotSupplyOriginalPhysicalCustody",
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadColdInputsV1Test.optionalAdminReadBindsOnlyItsDeclaredPolicyCursorAndFullDMemberWhileAbsenceStaysDisabled",
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadColdInputsV1Test.invalidOrIncompleteAdminReadDeclarationRefusesBeforeAnySecretOrNativeResourceAcquisition",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminReadHttpIT.explicitRegisteredAdminSearchDetailStatsReadBothCreatedOwnersWithBoundCursorAndNoWrites",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminReadHttpIT.registeredAdminReadsUseConfiguredJwtAndCurrentDatabaseRoleNotDiagnosticClaim",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminReadHttpIT.registeredAdminReadSelectionPreservesOldSubsetsAndRejectsForeignPairAndClosedAuthentication",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminReadHttpIT.registeredAdminAndOwnerReadsShareEightResponseSlotsOneReadQuotaAndOriginalCleanup"
+  ]
+}
