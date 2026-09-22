@@ -35,6 +35,12 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
+/** Expected fixture state only; the contradictory specimen never supplies an F result or authority. */
+internal enum class TerminalEnrollmentFixturePostconditionV1 {
+    ACTIVE_OR_PURGED,
+    PURGING_WITH_CONFLICTING_DELETED_PAIR,
+}
+
 /**
  * No fabricated successful predecessor: real PROJECT/registration, empty ordinary scan/seal,
  * manifest publication and purge. The enrolled case first uses protected initial identity
@@ -49,8 +55,11 @@ internal fun withTerminalEpochSealRun(tls: VersionBoundPersistenceConnectedFixtu
     shortHorizon: Boolean = false, checkUnstartedPurge: Boolean = false,
     terminalQuiescence: TestTerminalQuiescenceFixtureInputsV1? = null,
     additionalRawEnrolled: Int = 0,
+    enrollmentPostcondition: TerminalEnrollmentFixturePostconditionV1 = TerminalEnrollmentFixturePostconditionV1.ACTIVE_OR_PURGED,
     action: (TestRunPurgeFixtureV1, TestRunPurgePublicationV1, TestTerminalEpochSealSqlProbeV1) -> Unit) {
     require(additionalRawEnrolled == 0 || enrolled && additionalRawEnrolled == 500)
+    require(enrollmentPostcondition !== TerminalEnrollmentFixturePostconditionV1.PURGING_WITH_CONFLICTING_DELETED_PAIR ||
+        enrolled && additionalRawEnrolled == 0 && terminalQuiescence != null)
     val enrollmentCount = if (enrolled) 1 + additionalRawEnrolled else 0
     val chunkSizes = if (additionalRawEnrolled == 500) listOf(500, 1) else if (enrolled) listOf(1) else emptyList()
     val inputs = TestOrdinaryDrainFixtureInputsV1(scanMillis = if (shortHorizon) 30_000 else null, terminalQuiescence = terminalQuiescence)
@@ -172,7 +181,19 @@ internal fun withTerminalEpochSealRun(tls: VersionBoundPersistenceConnectedFixtu
                             finally { http.boundary = boundary; http.nativeBoundary = native }
                         }
                         assertEquals(inventories, f.inventoryRequests.size, "The terminal epoch seal does not run either final native inventory.")
-                        if (enrolled && terminalFixtureRunIsPurged(f)) {
+                        if (enrollmentPostcondition === TerminalEnrollmentFixturePostconditionV1.PURGING_WITH_CONFLICTING_DELETED_PAIR) {
+                            assertTrue(f.observer.queryForObject(
+                                "SELECT count(*) = ? AND bool_and((i.test_only AND i.id = ANY (CAST(? AS uuid[])) " +
+                                    "AND i.state = 'DELETED' AND i.terminal_at IS NOT NULL AND i.terminal_at >= r.purging_at " +
+                                    "AND i.terminal_at <= clock_timestamp() AND r.test_only AND r.state = 'PURGING' " +
+                                    "AND r.purging_at IS NOT NULL AND r.purged_at IS NULL) IS TRUE) " +
+                                    "FROM complaint_installation_ids i JOIN complaint_test_runs r ON r.data_scope_id = i.data_scope_id " +
+                                    "WHERE i.data_scope_id = ?",
+                                Boolean::class.java, actors.size.toLong(), actors.joinToString(prefix = "{", postfix = "}"), f.scope) == true,
+                                "Refused F keeps the original enrolled IDs DELETED against the RETIRED manifest; the run must remain PURGING.")
+                            assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM app_installations WHERE data_scope_id = ?",
+                                Long::class.java, f.scope), "The conflicting negative pair stays credential-free; refusal must not repair it.")
+                        } else if (enrolled && terminalFixtureRunIsPurged(f)) {
                             assertTrue(f.observer.queryForObject(
                                 "SELECT count(*) = ? AND bool_and((i.test_only AND i.id = ANY (CAST(? AS uuid[])) " +
                                     "AND i.state = 'RETIRED' AND i.terminal_at IS NOT NULL AND i.terminal_at >= r.purging_at " +

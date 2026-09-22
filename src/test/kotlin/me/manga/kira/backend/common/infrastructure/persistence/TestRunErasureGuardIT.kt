@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.catalog.TerminalEnrollmentFixturePostconditionV1
 import me.manga.kira.backend.complaint.catalog.withActiveHistoryTerminalCatalogRun
 import me.manga.kira.backend.complaint.catalog.withNonemptyActiveHistoryTerminalCatalogRun
 import me.manga.kira.backend.complaint.catalog.withTerminalCatalogRun
@@ -117,7 +118,8 @@ class TestRunErasureGuardIT {
     }
 
     @Test fun currentManifestConflictRefusesEvenAValidDeletedPairInsteadOfRepairingItToRetired() = withFixture { tls ->
-        withTerminalCatalogRun(tls, enrolled = true) { f -> TestRunErasureFixtureV1(f).use { h ->
+        withTerminalCatalogRun(tls, enrolled = true,
+            enrollmentPostcondition = TerminalEnrollmentFixturePostconditionV1.PURGING_WITH_CONFLICTING_DELETED_PAIR) { f -> TestRunErasureFixtureV1(f).use { h ->
             val e = h.projectE()
             // Corruption specimen AFTER real E. The terminal manifest says RETIRED. Removing
             // this credential and choosing the opposite valid terminal pair never grants success.
@@ -133,8 +135,24 @@ class TestRunErasureGuardIT {
         assertEquals(1, h.observer.update("UPDATE complaint_journal_publications SET state = 'VERIFIED', applied_at = NULL WHERE data_scope_id = ? AND event_kind = 'OWNER_DELETE'", h.scope))
     }
 
-    @Test fun unresolvedDeletionPendingResourceAfterERefusesBeforeNativeOrAnyErasurePayment() = nonemptySqlNegative(beforeNative = true) { h ->
-        assertEquals(1, h.observer.update("UPDATE complaint_resource_ids SET state = 'DELETION_PENDING', deleted_at = NULL WHERE data_scope_id = ?", h.scope))
+    @Test fun unresolvedDeletionPendingResourceAfterERefusesBeforeNativeOrAnyErasurePayment() = withFixture { tls ->
+        withNonemptyActiveHistoryTerminalCatalogRun(tls) { active -> TestRunErasureFixtureV1(active.catalog).use { h ->
+            val primary = checkNotNull(active.deletion)
+            val target = primary.reports.single().input.id
+            assertEquals(listOf(target), checkNotNull(primary.record).event.complaintIds())
+            val e = h.projectE()
+            fun otherResources() = h.observer.queryForList(
+                "SELECT encode(sha256(convert_to(jsonb_build_array(to_jsonb(r),r.xmin::text)::text,'UTF8')),'hex') " +
+                    "FROM complaint_resource_ids r WHERE data_scope_id = ? AND id <> ? ORDER BY id",
+                String::class.java, h.scope, target)
+            val untouched = otherResources(); assertEquals(2, untouched.size, "The two original activation NOTICE resources are not the A target.")
+            assertEquals(1, h.observer.update("UPDATE complaint_resource_ids SET state = 'DELETION_PENDING', deleted_at = NULL " +
+                "WHERE data_scope_id = ? AND id = ? AND test_only AND state = 'DELETED' AND deleted_at IS NOT NULL", h.scope, target))
+            assertEquals(untouched, otherResources(), "The negative specimen changes only the actual registered CREATE/A target, not other rows or xmin.")
+            val before = h.image(); val native = h.nativeImage()
+            assertThrows<TestRunErasureExceptionV1> { h.child(e).erase(h.request()) }
+            h.assertReleased(false); assertNoErasureWrites(h); assertEquals(before, h.image()); assertEquals(native, h.nativeImage())
+        } }
     }
 
     @Test fun remainingAppliedBeforePrimaryVerificationIsNotAcceptedMerelyBecauseItsNativeObjectExists() = nonemptySqlNegative { h ->

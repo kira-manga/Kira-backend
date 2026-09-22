@@ -53,9 +53,11 @@ import java.util.UUID
  * remain synthetic. An unused or one-enrollment run does NOT qualify ACTIVE/V26, B/V29 or erasure.
  */
 internal fun withTerminalCatalogRun(tls: VersionBoundPersistenceConnectedFixture, enrolled: Boolean = false,
+    enrollmentPostcondition: TerminalEnrollmentFixturePostconditionV1 = TerminalEnrollmentFixturePostconditionV1.ACTIVE_OR_PURGED,
     action: (CatalogTestRunTerminalFixtureV1) -> Unit) {
     val inputs = TestTerminalQuiescenceFixtureInputsV1()
-    withTerminalEpochSealRun(tls, enrolled = enrolled, terminalQuiescence = inputs) { f, purge, epochProbe ->
+    withTerminalEpochSealRun(tls, enrolled = enrolled, terminalQuiescence = inputs,
+        enrollmentPostcondition = enrollmentPostcondition) { f, purge, epochProbe ->
         val seal = purge.beginTerminalEpochSeal().also { epochProbe.original = it }
         assertEquals(TestRunTerminalEpochSealResultV1.TERMINAL_EPOCH_AUTHENTICATED_AND_SEALED, seal.seal())
         epochProbe.assertReleased(); f.assertReleased()
