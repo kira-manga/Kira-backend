@@ -118,9 +118,10 @@ internal class ComplaintAdminDeletePhaseExecutor(
     fun recover(readback: TestOwnerDeleteJournalReadbackV1) = executeApply(checkNotNull(apply).captureRecovery(readback)).requireRecovered()
     @Suppress("TooGenericExceptionCaught")
     private fun executeApply(input: TestAdminDeleteApplyInputV1): ComplaintAdminDeleteApplyOperation {
+        val original = checkNotNull(apply)
         val phase = ownership.enterComplaintAdminDeleteApply()
         var operation: ComplaintAdminDeleteApplyOperation? = null
-        try { phase.begin(); operation = apply.apply(input); phase.commit() }
+        try { phase.begin(); operation = original.apply(input); phase.commit() }
         catch (problem: Throwable) { phase.recordFailure(problem) }
         finally { phase.finish() }
         return operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)
