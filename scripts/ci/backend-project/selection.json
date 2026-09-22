@@ -1,0 +1,140 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 97,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "FAILED59_RECYCLE_LOCALIZATION",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "87af5e452d1f52e200e47a035479caf5ef7b295b",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax()"
+      ]
+    },
+    {
+      "annotation_line": 68,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT",
+      "cohort": "FAILED59_OR_PREVIOUSLY_PRIMARY_BLOCKED_F",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecoveryIT.kt",
+      "source_head": "87af5e452d1f52e200e47a035479caf5ef7b295b",
+      "source_sha256": "8188de32bf8c6f3e7e12ce373e137698e1c0f673677eaac24a009572ead5a932",
+      "xml_names": [
+        "actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund()"
+      ]
+    },
+    {
+      "annotation_line": 127,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT",
+      "cohort": "FAILED59_OR_PREVIOUSLY_PRIMARY_BLOCKED_F",
+      "expected_invocations_from_annotation": 1,
+      "method": "purgedTwoSealHistoryFreshlyReadsBothNativePairsWithoutRecreatingControlSidecarsOrAudit",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecoveryIT.kt",
+      "source_head": "87af5e452d1f52e200e47a035479caf5ef7b295b",
+      "source_sha256": "8188de32bf8c6f3e7e12ce373e137698e1c0f673677eaac24a009572ead5a932",
+      "xml_names": [
+        "purgedTwoSealHistoryFreshlyReadsBothNativePairsWithoutRecreatingControlSidecarsOrAudit()"
+      ]
+    },
+    {
+      "annotation_line": 93,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT",
+      "cohort": "FAILED59_OR_PREVIOUSLY_PRIMARY_BLOCKED_F",
+      "expected_invocations_from_annotation": 1,
+      "method": "v30RefusesMissingTerminalProjectionAtActualOtherwiseCompleteFinalPrefix",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt",
+      "source_head": "87af5e452d1f52e200e47a035479caf5ef7b295b",
+      "source_sha256": "53c541675c980ba5262c3822875a1d5a7ece8ee967941713e6fd517c592691b8",
+      "xml_names": [
+        "v30RefusesMissingTerminalProjectionAtActualOtherwiseCompleteFinalPrefix()"
+      ]
+    },
+    {
+      "annotation_line": 35,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT",
+      "cohort": "FAILED59_OR_PREVIOUSLY_PRIMARY_BLOCKED_F",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineN2HistoryPurgesInFkOrderRefundsEveryPhysicalRowOnceAndReplaysReadOnly",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecurrentIT.kt",
+      "source_head": "87af5e452d1f52e200e47a035479caf5ef7b295b",
+      "source_sha256": "a9ad52f32c020490d1720c9c86b77f55cd661d917d88c2313d719d3fa1f82dc0",
+      "xml_names": [
+        "genuineN2HistoryPurgesInFkOrderRefundsEveryPhysicalRowOnceAndReplaysReadOnly()"
+      ]
+    },
+    {
+      "annotation_line": 112,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT",
+      "cohort": "FAILED59_OR_PREVIOUSLY_PRIMARY_BLOCKED_F",
+      "expected_invocations_from_annotation": 1,
+      "method": "expiredLeaseAfterRealRecurrentRemovalRollsBackFinalBeforeFreshExactContinuation",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecurrentIT.kt",
+      "source_head": "87af5e452d1f52e200e47a035479caf5ef7b295b",
+      "source_sha256": "a9ad52f32c020490d1720c9c86b77f55cd661d917d88c2313d719d3fa1f82dc0",
+      "xml_names": [
+        "expiredLeaseAfterRealRecurrentRemovalRollsBackFinalBeforeFreshExactContinuation()"
+      ]
+    },
+    {
+      "annotation_line": 209,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT",
+      "cohort": "FAILED59_OR_PREVIOUSLY_PRIMARY_BLOCKED_F",
+      "expected_invocations_from_annotation": 1,
+      "method": "missingLatestArchiveCannotBeInventedFromRetainedNativeHistory",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecurrentIT.kt",
+      "source_head": "87af5e452d1f52e200e47a035479caf5ef7b295b",
+      "source_sha256": "a9ad52f32c020490d1720c9c86b77f55cd661d917d88c2313d719d3fa1f82dc0",
+      "xml_names": [
+        "missingLatestArchiveCannotBeInventedFromRetainedNativeHistory()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 7,
+  "expected_source_paths": 2460,
+  "expected_total": 7,
+  "selection_basis": {
+    "batch": "FAILED59_F_CORRECTIONS_AND_RECYCLE_DIAGNOSTIC_SEVEN",
+    "carryforward": "Unchanged capacity57 passes retained; one held58 dual-rewrite case plus all24 earlier F requirements remain. No package or issue credit.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "FAILED59_OR_PREVIOUSLY_PRIMARY_BLOCKED_F": 6,
+      "FAILED59_RECYCLE_LOCALIZATION": 1
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "expected_source_paths": 2460,
+    "gradle_seconds": 2400,
+    "inventory": "Enumerate every committed path from final reviewed source; match root-pinned complete path count and preserve all348 historical paths. New-file count is pending; no file subset or fixed2458 exclusion.",
+    "plan": "review/working/app-29-backend-focused-20260922-60/PLAN.md",
+    "prerequisite": "Final reviewed source and exact pins required before dispatch.",
+    "required_source": "87af5e452d1f52e200e47a035479caf5ef7b295b",
+    "required_tree": "5de1670b249c4c4d4410ddaeff822af77748ddf1",
+    "scope": "Seven selected methods: four59 failures plus three58 cases formerly blocked by the same first failure. One58 dual rewrite method and24 olderF requirements remain open."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt": "53c541675c980ba5262c3822875a1d5a7ece8ee967941713e6fd517c592691b8",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecoveryIT.kt": "8188de32bf8c6f3e7e12ce373e137698e1c0f673677eaac24a009572ead5a932",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecurrentIT.kt": "a9ad52f32c020490d1720c9c86b77f55cd661d917d88c2313d719d3fa1f82dc0"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT": 2,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT": 3
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT.purgedTwoSealHistoryFreshlyReadsBothNativePairsWithoutRecreatingControlSidecarsOrAudit",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT.actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT.v30RefusesMissingTerminalProjectionAtActualOtherwiseCompleteFinalPrefix",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT.genuineN2HistoryPurgesInFkOrderRefundsEveryPhysicalRowOnceAndReplaysReadOnly",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT.expiredLeaseAfterRealRecurrentRemovalRollsBackFinalBeforeFreshExactContinuation",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT.missingLatestArchiveCannotBeInventedFromRetainedNativeHistory",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax"
+  ]
+}
