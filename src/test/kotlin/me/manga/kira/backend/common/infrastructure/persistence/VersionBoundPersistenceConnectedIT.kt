@@ -1382,6 +1382,11 @@ class VersionBoundPersistenceConnectedIT {
     }
 
     @Test
+    fun testColdActiveRegistrationRetiredCapacityCannotActivateOrRepair() = withFixture(testActivation = true) {
+        ComplaintTestNamespaceActiveRegistrationCasesV1.retiredCapacityCannotActivateOrRepair(it)
+    }
+
+    @Test
     fun testColdActiveRegistrationBothRawCopiesRemainRequired() = withFixture(testActivation = true) {
         ComplaintTestNamespaceActiveRegistrationCasesV1.bothRawCopiesRemainRequired(it)
     }

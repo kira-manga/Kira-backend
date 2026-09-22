@@ -31,6 +31,19 @@ internal class ComplaintCapacityPolicyV1 private constructor(
 
     fun digestBytes(): ByteArray = HexFormat.of().parseHex(sha256)
 
+    /** Admission rule only; historical v1 policies and their canonical bytes remain readable. */
+    fun requireCleanStart() {
+        val retired = listOf(
+            ComplaintCapacityCounter.IMPORT_ARTIFACTS,
+            ComplaintCapacityCounter.IMPORT_RUNS,
+            ComplaintCapacityCounter.IMPORT_STAGING,
+            ComplaintCapacityCounter.LEGACY_RECORDS,
+        )
+        if (retired.any { hardLimit[it] != 0L || creationLimit[it] != 0L }) {
+            rejectCapacity(ComplaintCapacityFailureCode.INVALID_CONFIGURATION)
+        }
+    }
+
     override fun toString(): String = "ComplaintCapacityPolicyV1(redacted)"
 
     companion object {

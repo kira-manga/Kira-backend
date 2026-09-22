@@ -8,6 +8,8 @@ import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationD7Inputs
 import me.manga.kira.backend.complaint.catalog.FullTestCatalogInputs
 import me.manga.kira.backend.complaint.catalog.OfflineTrustBundleFixture
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealHttpFixtureV1
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.security.BoundTestComplaintConsumerFixture
 import me.manga.kira.backend.security.fullTestJournal
@@ -156,6 +158,59 @@ internal class ComplaintTestDeploymentInputsV1Test {
         } }
         assertEquals(0, http.createdClients)
         assertTrue(http.requests.isEmpty())
+    }
+
+    @Test
+    fun `TEST input refuses every retired hard and creation slot before secret client creation`() {
+        val original = TestDeploymentInputFixture.document()
+        val http = AwsSecretVersionFixture()
+        for (ordinal in listOf(5, 6, 7, 14)) {
+            for ((hard, creation) in listOf(1L to 0L, 1L to 1L, 0L to 1L)) {
+                val capacity = original.capacity.copy(
+                    hardLimits = original.capacity.hardLimits.toMutableList().also { it[ordinal - 1] = hard },
+                    creationLimits = original.capacity.creationLimits.toMutableList().also { it[ordinal - 1] = creation },
+                )
+                TestDeploymentInputFixture.withManifest(TestDeploymentInputFixture.bytes(original.copy(capacity = capacity))) { path ->
+                    val assembly = ComplaintTestProcessAssemblyV1.withHttpFixture(http::httpClient)
+                    try {
+                        val failure = assertThrows<ComplaintTestDeploymentExceptionV1> {
+                            assembly.assemble(path, AwsSecretVersionFixture.CREDENTIALS, AwsSecretVersionFixture.CREDENTIALS)
+                        }
+                        assertEquals(ComplaintTestDeploymentFailureV1.INPUT_REFUSED, failure.code)
+                        assertNull(failure.cause)
+                        assertThrows<ComplaintTestDeploymentExceptionV1> { assembly.target }
+                    } finally {
+                        assembly.close()
+                    }
+                }
+                assertEquals(0, http.createdClients)
+                assertTrue(http.requests.isEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun `TEST zero retired limits preserve the supplied full22 policy bytes and digest`() {
+        val document = TestDeploymentInputFixture.document()
+        val supplied = ComplaintCapacityPolicyV1.of(
+            ComplaintCapacityVector.of(document.capacity.hardLimits.toLongArray()),
+            ComplaintCapacityVector.of(document.capacity.creationLimits.toLongArray()),
+            document.capacity.dailyEnrollmentLimit,
+        )
+        val canonical = supplied.canonicalBytes()
+        val digest = supplied.digestBytes()
+        supplied.requireCleanStart()
+        val inputs = ComplaintTestDeploymentJsonV1.parse(TestDeploymentInputFixture.bytes(document))
+        assertArrayEquals(canonical, supplied.canonicalBytes())
+        assertArrayEquals(canonical, inputs.capacity.canonicalBytes())
+        assertArrayEquals(digest, inputs.capacity.digestBytes())
+        assertEquals(22, inputs.capacity.hardLimit.toLongArray().size)
+        assertEquals(document.capacity.hardLimits, inputs.capacity.hardLimit.toLongArray().toList())
+        assertEquals(document.capacity.creationLimits, inputs.capacity.creationLimit.toLongArray().toList())
+        for (ordinal in listOf(5, 6, 7, 14)) {
+            assertEquals(0L, document.capacity.hardLimits[ordinal - 1])
+            assertEquals(0L, document.capacity.creationLimits[ordinal - 1])
+        }
     }
 
     private fun refused(bytes: ByteArray) {

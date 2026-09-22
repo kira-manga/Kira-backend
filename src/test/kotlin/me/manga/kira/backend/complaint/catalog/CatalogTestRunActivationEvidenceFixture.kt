@@ -40,6 +40,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestPro
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCapacityInputV1
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCatalogChainLimitsV1
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCatalogSigningKeyInputV1
+import me.manga.kira.backend.complaint.infrastructure.admission.DesiredInstallationInputFixture
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredSecretReferenceV1
 import me.manga.kira.backend.complaint.infrastructure.admission.TestDeploymentInputFixture
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
@@ -77,12 +78,12 @@ private const val RECURRENT_CONSUMER_CREATION_MEMBERS = 3
 
 /** Same synthetic fixture P selected before either LIVE first-D or TEST intake; never a counter rewrite after capture. */
 internal fun testActivationCapacityPolicy(original: ComplaintCapacityPolicyV1, manifestPublication: Boolean): ComplaintCapacityPolicyV1 =
-    ComplaintCapacityPolicyV1.of(
+    DesiredInstallationInputFixture.cleanStartCapacity(ComplaintCapacityPolicyV1.of(
         original.hardLimit.with(ComplaintCapacityCounter.STORAGE_BYTES, 2_000_000_000),
         original.creationLimit.with(ComplaintCapacityCounter.STORAGE_BYTES, 1_800_000_000),
         // The opt-in two-chunk history uses the real lower-core enrollment producer501 times.
         if (manifestPublication) 1_000 else original.dailyEnrollmentLimit,
-    )
+    ))
 
 /** Existing cold pools/consumers/lanes only. No new provider, JDBC, process or concurrency harness. */
 internal fun withActivationEvidence(

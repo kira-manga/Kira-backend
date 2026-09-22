@@ -4,6 +4,9 @@ import kotlinx.serialization.json.Json
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConfiguration
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceTestInputs
 import me.manga.kira.backend.complaint.catalog.VersionBoundCatalogReadbackTestFixture
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.catalog.InitialPolicyReferenceV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackLimits
 import me.manga.kira.backend.complaint.journal.liveJournalPolicy
@@ -164,6 +167,54 @@ class ComplaintDesiredDeploymentInputsV1Test {
         candidates.forEach { refused(bytes(it)) }
     }
 
+    @Test
+    fun `desired input refuses every retired hard and creation slot before secret resolution`() {
+        val original = DesiredInstallationInputFixture.document("D1")
+        var resolutions = 0
+        for (ordinal in listOf(5, 6, 7, 14)) {
+            for ((hard, creation) in listOf(1L to 0L, 1L to 1L, 0L to 1L)) {
+                val capacity = original.capacity.copy(
+                    hardLimits = original.capacity.hardLimits.toMutableList().also { it[ordinal - 1] = hard },
+                    creationLimits = original.capacity.creationLimits.toMutableList().also { it[ordinal - 1] = creation },
+                )
+                val failure = assertThrows<ComplaintDesiredInstallationExceptionV1> {
+                    val inputs = ComplaintDesiredDeploymentJsonV1.parse(bytes(original.copy(capacity = capacity)))
+                    AcquiredVersionedSecret.acquire(inputs.runtimePassword) {
+                        resolutions++
+                        error("Retired-capacity input reached secret resolution.")
+                    }.close()
+                }
+                assertEquals(ComplaintDesiredInstallationFailureV1.INPUT_REFUSED, failure.code)
+                assertNull(failure.cause)
+                assertEquals(0, resolutions)
+            }
+        }
+    }
+
+    @Test
+    fun `desired zero retired limits preserve the supplied full22 policy bytes and digest`() {
+        val document = DesiredInstallationInputFixture.document("D1")
+        val supplied = ComplaintCapacityPolicyV1.of(
+            ComplaintCapacityVector.of(document.capacity.hardLimits.toLongArray()),
+            ComplaintCapacityVector.of(document.capacity.creationLimits.toLongArray()),
+            document.capacity.dailyEnrollmentLimit,
+        )
+        val canonical = supplied.canonicalBytes()
+        val digest = supplied.digestBytes()
+        supplied.requireCleanStart()
+        val inputs = ComplaintDesiredDeploymentJsonV1.parse(bytes(document))
+        assertArrayEquals(canonical, supplied.canonicalBytes())
+        assertArrayEquals(canonical, inputs.capacity.canonicalBytes())
+        assertArrayEquals(digest, inputs.capacity.digestBytes())
+        assertEquals(22, inputs.capacity.hardLimit.toLongArray().size)
+        assertEquals(document.capacity.hardLimits, inputs.capacity.hardLimit.toLongArray().toList())
+        assertEquals(document.capacity.creationLimits, inputs.capacity.creationLimit.toLongArray().toList())
+        for (ordinal in listOf(5, 6, 7, 14)) {
+            assertEquals(0L, document.capacity.hardLimits[ordinal - 1])
+            assertEquals(0L, document.capacity.creationLimits[ordinal - 1])
+        }
+    }
+
     private fun bytes(document: ComplaintDesiredDeploymentDocumentV1): ByteArray =
         Json.encodeToString(ComplaintDesiredDeploymentDocumentV1.serializer(), document).toByteArray(Charsets.UTF_8)
 
@@ -181,6 +232,7 @@ class ComplaintDesiredDeploymentInputsV1Test {
 internal object DesiredInstallationInputFixture {
     fun document(profile: String = "D2", generation: Long = 1): ComplaintDesiredDeploymentDocumentV1 {
         val fixture = BoundComplaintConsumerFixture()
+        val capacity = cleanStartCapacity(fixture.capacity)
         val journal = fixture.journal.declaration()
         val jwt = KiraSecurityProperties()
         return ComplaintDesiredDeploymentDocumentV1(
@@ -209,9 +261,9 @@ internal object DesiredInstallationInputFixture {
                 fixture.installationSecrets.map { reference(it.descriptor) },
             ),
             capacity = DesiredCapacityInputV1(
-                fixture.capacity.hardLimit.toLongArray().toList(),
-                fixture.capacity.creationLimit.toLongArray().toList(),
-                fixture.capacity.dailyEnrollmentLimit,
+                capacity.hardLimit.toLongArray().toList(),
+                capacity.creationLimit.toLongArray().toList(),
+                capacity.dailyEnrollmentLimit,
             ),
             admission = admission(fixture),
             journal = DesiredJournalInputV1(
@@ -232,6 +284,21 @@ internal object DesiredInstallationInputFixture {
             epochRotation = profile in setOf("D3", "D4", "D6"),
             sealer = if (profile in setOf("D4", "D6")) sealer() else null,
             livePolicy = if (profile == "D6") livePolicy(fixture) else null,
+        )
+    }
+
+    /** Select synthetic clean-start P before input/consumers/D; never rewrite a frozen policy. */
+    fun cleanStartCapacity(original: ComplaintCapacityPolicyV1): ComplaintCapacityPolicyV1 {
+        val retired = listOf(
+            ComplaintCapacityCounter.IMPORT_ARTIFACTS,
+            ComplaintCapacityCounter.IMPORT_RUNS,
+            ComplaintCapacityCounter.IMPORT_STAGING,
+            ComplaintCapacityCounter.LEGACY_RECORDS,
+        )
+        return ComplaintCapacityPolicyV1.of(
+            retired.fold(original.hardLimit) { values, counter -> values.with(counter, 0) },
+            retired.fold(original.creationLimit) { values, counter -> values.with(counter, 0) },
+            original.dailyEnrollmentLimit,
         )
     }
 

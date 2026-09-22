@@ -67,7 +67,7 @@ internal class ComplaintDesiredDeploymentInputsV1 private constructor(document: 
         ComplaintCapacityVector.of(document.capacity.hardLimits.toLongArray()),
         ComplaintCapacityVector.of(document.capacity.creationLimits.toLongArray()),
         document.capacity.dailyEnrollmentLimit,
-    )
+    ).also { it.requireCleanStart() }
     val jwtSettings = KiraSecurityProperties(
         issuer = document.jwt.issuer,
         audience = document.jwt.audience,
