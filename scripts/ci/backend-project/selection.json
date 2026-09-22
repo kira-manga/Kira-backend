@@ -1,0 +1,81 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 85,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveServiceIT",
+      "cohort": "CHANGED_NATURAL_SECOND_RECURRENCE",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldServiceOwnsMissingPrimaryRecurrentApplyThenDrainsTheHeldQueueBeforeStopping",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveServiceIT.kt",
+      "source_head": "2d34386ab68a59424a3f4c7581aa79491f8df6c5",
+      "source_sha256": "ec0e10e6a8e4d0e0dee68bd59cb151a4fd80f7e8a7d128c78830ed125f0e7054",
+      "xml_names": [
+        "coldServiceOwnsMissingPrimaryRecurrentApplyThenDrainsTheHeldQueueBeforeStopping()"
+      ]
+    },
+    {
+      "annotation_line": 18,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "FAILED74_ADMIN_SINGLE_CLOSED_CODEC",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineSingleAdminHttpVerifyRemains503UntilSeparateBAndFreshCurrentAuthenticated204",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "2d34386ab68a59424a3f4c7581aa79491f8df6c5",
+      "source_sha256": "24fd294a7012364ce7a07bc73b3a76d554d12613b2a74550b8ba048e7b4d9161",
+      "xml_names": [
+        "genuineSingleAdminHttpVerifyRemains503UntilSeparateBAndFreshCurrentAuthenticated204()"
+      ]
+    },
+    {
+      "annotation_line": 21,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT",
+      "cohort": "FAILED74_ADMIN_BATCH_CLOSED_CODEC",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineTwoOwnerBatchHttpVerifyRemains503UntilSeparateBAndExactSorted200",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt",
+      "source_head": "2d34386ab68a59424a3f4c7581aa79491f8df6c5",
+      "source_sha256": "24fd294a7012364ce7a07bc73b3a76d554d12613b2a74550b8ba048e7b4d9161",
+      "xml_names": [
+        "genuineTwoOwnerBatchHttpVerifyRemains503UntilSeparateBAndExactSorted200()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 3,
+  "expected_source_paths": 2494,
+  "expected_total": 3,
+  "selection_basis": {
+    "batch": "NATURAL_SECOND_RECURRENCE_PLUS_ADMIN_SINGLE_BATCH",
+    "carryforward": "Carry unchanged74 three service negatives and OWNER positive, all six passing72 and prior70/69/68/66/65. Changed service positive needs this gate; three other failed74 Complete methods explicitly pending. Connected poison/general fairness/operational requirements remain.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "CHANGED_NATURAL_SECOND_RECURRENCE": 1,
+      "FAILED74_ADMIN_BATCH_CLOSED_CODEC": 1,
+      "FAILED74_ADMIN_SINGLE_CLOSED_CODEC": 1
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "expected_source_paths": 2494,
+    "gradle_seconds": 2400,
+    "inventory": "Enumerate every committed path from final reviewed source; match root-pinned complete path count2494 and preserve all348 historical paths. No file subset or fixed2458 exclusion.",
+    "plan": "review/working/app-29-backend-focused-20260922-75/PLAN.md",
+    "prerequisite": "Root reviewed natural second-recurrence TEST2 and Admin erasure closed-parser TEST1 correction. Baseline74 service4 and OWNER pass; same unbound guard remains source-reviewed/unexecuted.",
+    "required_source": "2d34386ab68a59424a3f4c7581aa79491f8df6c5",
+    "required_tree": "e00d2c6ce5ddb1f4124e3fa1cd60498a6bf578e2",
+    "scope": "Changed natural15-minute service recurrence plus failed74 genuine Admin single and two-owner batch, after source-definite closed parser correction. Original2400s budget excludes the other three failed74 methods from this gate; they remain required for the next shared gate."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveServiceIT.kt": "ec0e10e6a8e4d0e0dee68bd59cb151a4fd80f7e8a7d128c78830ed125f0e7054",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredCompleteHttpIT.kt": "24fd294a7012364ce7a07bc73b3a76d554d12613b2a74550b8ba048e7b4d9161"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveServiceIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT": 2
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveServiceIT.coldServiceOwnsMissingPrimaryRecurrentApplyThenDrainsTheHeldQueueBeforeStopping",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.genuineSingleAdminHttpVerifyRemains503UntilSeparateBAndFreshCurrentAuthenticated204",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpIT.genuineTwoOwnerBatchHttpVerifyRemains503UntilSeparateBAndExactSorted200"
+  ]
+}
