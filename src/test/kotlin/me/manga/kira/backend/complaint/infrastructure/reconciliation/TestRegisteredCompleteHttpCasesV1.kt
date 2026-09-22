@@ -4,6 +4,8 @@ import jakarta.servlet.AsyncEvent
 import jakarta.servlet.AsyncListener
 import jakarta.servlet.DispatcherType
 import jakarta.servlet.http.HttpServletRequest
+import me.manga.kira.backend.audit.application.AuditService
+import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestGate
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
@@ -20,6 +22,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditFingerprint
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminJwtIdentityDecoder
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminReadStore
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.ADMIN
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.PASSWORD
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpFixtureV1.Companion.mapper
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpFixtureV1.Companion.PREVIEW
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredCompleteHttpFixtureV1.Companion.authorization
@@ -55,6 +58,18 @@ internal object TestRegisteredCompleteHttpCasesV1 {
     fun sharedLoginSourceAndBoundComplaint(tls: VersionBoundPersistenceConnectedFixture) = withRegisteredCompleteHttp(tls) { f ->
         val a = f.admin
         a.withCurrent {
+            // The ordinary failed login must persist its anonymous audit before the generic 401.
+            val failedIdentifier = "email-sha256-v1:${Sha256.hexUtf8(a.users[0].email.trim().lowercase())}"
+            val loginCounters = f.counters(); val loginNative = f.raw.counts()
+            val audits = checkNotNull(f.jdbc.queryForObject("SELECT count(*) FROM audit_log", Long::class.java))
+            val failed = f.web.post("/api/v1/auth/login", mapper.writeValueAsBytes(mapOf(
+                "email" to a.users[0].email, "password" to "$PASSWORD-wrong")))
+            f.ordinaryProblem(failed, 401, "INVALID_CREDENTIALS"); f.assertReleased()
+            assertEquals(audits + 1, f.jdbc.queryForObject("SELECT count(*) FROM audit_log", Long::class.java))
+            assertEquals(true, f.jdbc.queryForObject("SELECT count(*) = 1 AND bool_and(action = 'LOGIN_FAILED' AND actor_user_id IS NULL " +
+                "AND complaint_data_scope_id IS NULL AND complaint_actor_kind IS NULL AND detail = '{}'::jsonb) FROM audit_log " +
+                "WHERE entity_type = ? AND entity_id = ?", Boolean::class.java, AuditService.ENTITY_LOGIN_IDENTIFIER, failedIdentifier))
+            assertEquals(loginCounters, f.counters()); assertEquals(loginNative, f.raw.counts())
             val bearer = f.login()
             val me = f.web.get("/api/v1/auth/me", bearer); f.ordinary(me, 200)
             assertEquals(a.users[0].id.toString(), a.json(me)["id"].textValue())
