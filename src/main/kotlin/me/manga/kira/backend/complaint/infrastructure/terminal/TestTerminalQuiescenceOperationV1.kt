@@ -244,9 +244,14 @@ internal class TestTerminalQuiescenceOperationV1 private constructor(
     private fun roots() = TestTerminalRootsV1(original.routing.journalConfiguration, run.installationLimit, run.plan.manifestChunkCount.toInt())
 
     private fun requireAllSidecars() {
-        original.targets.forEach { target -> loadSidecar(target).use { /* Comparison rows close here, never predecessor-owned buffers. */ } }
+        // One complete fresh history for this call only; every target still passes the same exact checks.
+        val historyRows = original.control.initialHistory?.frozenRows(jdbc, original.drain) ?: emptyList()
+        try {
+            requireQuiescence(historyRows.size == original.targets.count { it.source !== TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT })
+            original.targets.forEach { target -> loadSidecar(target, historyRows).use { /* Own comparison rows, never predecessor-owned buffers. */ } }
+        } finally { historyRows.forEach { it.close() } }
     }
-    private fun loadSidecar(target: TestTerminalQuiescenceTargetV1): TestTerminalDurableRowV1 {
+    private fun loadSidecar(target: TestTerminalQuiescenceTargetV1, historyRows: List<TestTerminalDurableRowV1>? = null): TestTerminalDurableRowV1 {
         val at = now()
         requireQuiescence(original.targets.any { it === target })
         val loaded = if (target.source !== TestTerminalQuiescenceSourceV1.V21_TERMINAL_INTENT) {
@@ -256,7 +261,8 @@ internal class TestTerminalQuiescenceOperationV1 private constructor(
                 (target.source === TestTerminalQuiescenceSourceV1.V26_ACTIVE_SEAL) == (record.binding.objectOrdinal == 0) &&
                 target.objectRef == record.reference.objectRef && target.startEpoch == record.reference.epochStartInclusive && target.endEpoch == record.reference.epochEndInclusive)
             // Each A source remains ordinary-paid. No fallback to or alias of a V21 ordinal.
-            history.frozen(jdbc, original.drain, record)
+            if (historyRows == null) history.frozen(jdbc, original.drain, record) // Standalone EXPECTED retains its own fresh complete read.
+            else historyRows.single { it.binding == record.binding }
         } else when (target.kind) {
             TestTerminalCodecKindV1.INSTALLATION_MANIFEST -> oneSidecar(TestInstallationManifestSqlV1.sidecar, { value ->
                 TestInstallationManifestPublicationRowsV1.manifest(value, original.manifest, run.sealedAt, at, target.ordinal)
