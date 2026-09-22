@@ -167,6 +167,7 @@ internal object TestRunErasureSqlV1 {
         AND (?::text IS NULL OR p.object_key COLLATE "C" > ?::text COLLATE "C") ORDER BY p.object_key COLLATE "C" LIMIT $PAGE"""
     val recovery = """SELECT data_scope_id, test_only, accounting_version, created_at, converted_at,
         ${capped(listOf("l.event_id" to 43, "l.publication_ref" to 43, "l.state" to 16))},
+        l.converted_amounts IS NULL AS conversion_absent,
         CASE WHEN complaint_vector_valid(reserved_amounts) THEN reserved_amounts END AS reserved_amounts,
         CASE WHEN complaint_vector_valid(converted_amounts) THEN converted_amounts END AS converted_amounts,
         complaint_finite_times(created_at, converted_at) AS finite, ${physical("l", 16384)} AS physical_hash

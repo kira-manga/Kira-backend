@@ -391,7 +391,8 @@ internal object TestRunErasureRowsV1 {
         val id = text(row, "event_id", 43)
         val physicalHash = hash(row, "physical_hash")
         val promise = vector(row, "reserved_amounts")
-        val used: ComplaintCapacityVector? = if (row.getObject("converted_amounts") == null) null else vector(row, "converted_amounts")
+        // Probe raw SQL nullness without allocating a second JDBC Array.
+        val used: ComplaintCapacityVector? = if (boolean(row, "conversion_absent")) null else vector(row, "converted_amounts")
         val convertedAt: Instant? = row.getTimestamp("converted_at")?.toInstant()
         private val createdAt = time(row, "created_at")
         init {
@@ -402,7 +403,8 @@ internal object TestRunErasureRowsV1 {
                 requireErasure(row.getString("state") == "RESERVED" && used == null && convertedAt == null && promise == expected && createdAt == p.createdAt)
             } else {
                 val actual = checkNotNull(used)
-                requireErasure(row.getString("state") == "CONVERTED" && convertedAt != null && convertedAt >= maxOf(p.verifiedAt, checkNotNull(p.appliedAt), createdAt) && convertedAt <= at &&
+                // P can complete after L's progress write; each keeps its own verification/current-time bounds.
+                requireErasure(row.getString("state") == "CONVERTED" && convertedAt != null && convertedAt >= maxOf(p.verifiedAt, createdAt) && convertedAt <= at &&
                     promise == native.recoveryPromise && actual.fitsWithin(promise) && !actual.isZero())
                 val installs = actual[ComplaintCapacityCounter.INSTALLATION_IDS]; val resources = actual[ComplaintCapacityCounter.RESOURCE_IDS]
                 val audits = actual[ComplaintCapacityCounter.AUDIT_ROWS]; val applied = actual[ComplaintCapacityCounter.JOURNAL_APPLIED]
