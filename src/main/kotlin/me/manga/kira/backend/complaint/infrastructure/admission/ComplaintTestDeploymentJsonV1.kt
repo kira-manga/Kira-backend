@@ -44,15 +44,25 @@ internal object ComplaintTestDeploymentJsonV1 {
                 var tokens = 1
                 var depth = 1
                 var adminReadObject = false
+                var adminContentObject = false
                 while (depth > 0) {
                     val token = parser.nextToken()
                     requireTestDeployment(token != null && ++tokens <= MAX_TOKENS, ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
                     if (depth == 1 && token == JsonToken.START_OBJECT && parser.currentName == "adminRead") adminReadObject = true
+                    if (depth == 1 && token == JsonToken.START_OBJECT && parser.currentName == "adminContent") adminContentObject = true
                     if (adminReadObject && depth == 2 && token != JsonToken.FIELD_NAME && token != JsonToken.END_OBJECT) {
                         // Closed new-member types only: kotlinx integer coercion must not accept quoted numbers.
                         // Legacy fields keep their existing grammar and every token keeps the same bounded pass.
                         val exactType = when (parser.currentName) {
                             "schemaVersion", "perMinute" -> token == JsonToken.VALUE_NUMBER_INT
+                            "profile" -> token == JsonToken.VALUE_STRING
+                            else -> false
+                        }
+                        requireTestDeployment(exactType, ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
+                    }
+                    if (adminContentObject && depth == 2 && token != JsonToken.FIELD_NAME && token != JsonToken.END_OBJECT) {
+                        val exactType = when (parser.currentName) {
+                            "schemaVersion", "perHour" -> token == JsonToken.VALUE_NUMBER_INT
                             "profile" -> token == JsonToken.VALUE_STRING
                             else -> false
                         }
@@ -65,6 +75,7 @@ internal object ComplaintTestDeploymentJsonV1 {
                         else -> Unit
                     }
                     if (depth == 1) adminReadObject = false
+                    if (depth == 1) adminContentObject = false
                 }
                 requireTestDeployment(parser.nextToken() == null, ComplaintTestDeploymentFailureV1.INPUT_REFUSED)
             }
@@ -108,6 +119,7 @@ internal data class ComplaintTestDeploymentDocumentV1(
     val activeOwnerDeleteQueue: me.manga.kira.backend.complaint.domain.reconciliation.TestActiveOwnerDeleteQueueInputV1? = null,
     val initialCheckpointDeletion: me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointDeletionInputV1? = null,
     val adminRead: TestRegisteredAdminReadInputV1? = null,
+    val adminContent: TestRegisteredAdminContentInputV1? = null,
 )
 
 /** Independent born-with read cohort only. This declaration is not registered/current TEST authority. */
@@ -119,6 +131,18 @@ internal data class TestRegisteredAdminReadInputV1(
 ) {
     companion object {
         const val PROFILE = "TEST_REGISTERED_ADMIN_SEARCH_DETAIL_STATS_V1"
+    }
+}
+
+/** Explicit single-content + complaint password issuance cohort; never an activation or current-state claim. */
+@Serializable
+internal data class TestRegisteredAdminContentInputV1(
+    val schemaVersion: Int,
+    val profile: String,
+    val perHour: Int,
+) {
+    companion object {
+        const val PROFILE = "TEST_REGISTERED_ADMIN_SINGLE_CONTENT_V1"
     }
 }
 

@@ -12,8 +12,10 @@ import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcParticipantRole
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePoolDescriptor
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.api.ComplaintAdminStepUpHttpHandler
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.security.ComplaintAdmissionPolicy
+import me.manga.kira.backend.security.ComplaintAdminContentAdmissionPolicy
 import me.manga.kira.backend.security.ComplaintAdminReadAdmissionPolicy
 import me.manga.kira.backend.security.SecretMaterialFamily
 import me.manga.kira.backend.security.SecretMaterialPurpose
@@ -195,6 +197,42 @@ internal object ComplaintEffectiveTestConfigurationV1 {
                     put("futureSkewSeconds", 60)
                     put("maximumCharacters", 2048)
                     put("maximumPayloadBytes", 512)
+                })
+            })
+        }
+        (owner.adminContentPolicy as? ComplaintAdminContentAdmissionPolicy.Bounded)?.let { policy ->
+            val stepUp = checkNotNull(owner.adminStepUp)
+            val throttle = stepUp.throttleSettings
+            put("adminContent", buildJsonObject {
+                put("schemaVersion", 1)
+                put("profile", TestRegisteredAdminContentInputV1.PROFILE)
+                put("perHour", policy.perHour)
+                put("memberLimit", policy.memberLimit)
+                put("pruneBatch", policy.pruneBatch)
+                put("windowNanos", ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS)
+                put("routes", strings(listOf("POST:/api/v1/admin/step-up", "PATCH:/api/v1/admin/complaints/{id}/content")))
+                put("authentication", "QUALIFIED_USER_JWT_CURRENT_DB_ADMIN_AND_ORIGINAL_CONFIGURED_PASSWORD_ENCODER")
+                put("current", "ORIGINAL_TYPED_INITIAL_OR_EXPLICIT_RECURRENT_CHECKPOINT_NEW_CLAIM_ONLY")
+                put("responseOwner", "ONE_SHARED_OWNER_HISTORY_DETAIL_ADMIN_EIGHT_UNTIL_DELIVERY")
+                put("stepUp", buildJsonObject {
+                    put("scope", "complaint-moderation-mutation")
+                    put("ttlSeconds", stepUp.properties.stepUpTtl.seconds)
+                    put("bodyMaximumBytes", ComplaintAdminStepUpHttpHandler.MAX_BODY_BYTES)
+                    put("passwordMaximumCharacters", ComplaintAdminStepUpHttpHandler.MAX_PASSWORD_CHARACTERS)
+                    put("responseMaximumBytes", ComplaintAdminStepUpHttpHandler.MAX_RESPONSE_BYTES)
+                    put("throttle", buildJsonObject {
+                        put("backend", throttle.backend)
+                        put("instanceCount", throttle.instanceCount)
+                        put("maxEntries", throttle.maxEntries)
+                        put("loginFailureThreshold", throttle.loginFailureThreshold)
+                        put("loginIpFailureThreshold", throttle.loginIpFailureThreshold)
+                        put("loginAttemptTtlMillis", throttle.loginAttemptTtl.toMillis())
+                        put("loginInitialBlockMillis", throttle.loginInitialBlock.toMillis())
+                        put("loginMaxBlockMillis", throttle.loginMaxBlock.toMillis())
+                        put("loginFailureWindowMillis", throttle.loginFailureWindow.toMillis())
+                        put("registrationMaxPerWindow", throttle.registrationMaxPerWindow)
+                        put("registrationWindowMillis", throttle.registrationWindow.toMillis())
+                    })
                 })
             })
         }

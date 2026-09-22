@@ -8,6 +8,7 @@ import me.manga.kira.backend.audit.domain.ComplaintAuditMutation
 import me.manga.kira.backend.audit.domain.ComplaintAuditResourceSubject
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditEntry
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.GuardedDataSource
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
@@ -33,25 +34,57 @@ import me.manga.kira.backend.complaint.domain.ComplaintStateMachine
 import me.manga.kira.backend.complaint.domain.ComplaintStatus
 import me.manga.kira.backend.complaint.domain.ComplaintType
 import me.manga.kira.backend.complaint.domain.rejectAdminContent
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Timestamp
+import java.time.Instant
 import java.util.UUID
 
 /** Non-bean, fixed TEST content producer; D/P comparisons are not activation or route authority. */
-internal class JdbcComplaintAdminContentStore(
+internal class JdbcComplaintAdminContentStore private constructor(
     private val jdbc: JdbcTemplate,
     private val capacity: JdbcComplaintCapacityStore,
     private val audit: AuditService,
     desired: ComplaintInstallationDesiredSettings.Configured,
+    internal val registeredCurrent: TestRegisteredAdminContentV1?,
 ) {
+    constructor(jdbc: JdbcTemplate, capacity: JdbcComplaintCapacityStore, audit: AuditService,
+        desired: ComplaintInstallationDesiredSettings.Configured) : this(jdbc, capacity, audit, desired, null)
+
     private val binding = ComplaintInstallationTestBinding(desired)
     private val authentication = JdbcComplaintAdminReadStore(jdbc, binding.scope)
 
+    init { requirePoolPolicy() }
+
+    private fun requirePoolPolicy() {
+        val source = jdbc.dataSource
+        if (source is GuardedDataSource) source.requireTestInitialCheckpointCreate(registeredCurrent?.policy)
+        else check(registeredCurrent == null)
+    }
+
+    internal fun requireResources(ownership: PersistencePhaseOwnership) {
+        requireConnectionFree(); requirePoolPolicy()
+        registeredCurrent?.let { it.requireEntry(ownership); it.requireIngress() }
+    }
+
+    internal fun bind(phase: PersistencePhaseContext) {
+        registeredCurrent?.let { phase.adminContent.bindRegistered(it) }
+    }
+
     fun authenticate(identity: ComplaintAdminReadIdentity): ComplaintAdminReadOperation = authentication.authenticateContentIdentity(identity)
+
+    /** Final registered identity + current principal in one snapshot; the original read operation still owns completion. */
+    internal fun registeredAuthentication(phase: PersistencePhaseContext, identity: ComplaintAdminReadIdentity): ComplaintAdminReadRows? =
+        registeredCurrent?.let { current ->
+            current.requireAuthentication(phase)
+            registeredPrincipal(jdbc, identity, current.observationIdentityArguments()).also { current.requireAuthentication(phase) }
+        }
 
     fun preflight(identity: ComplaintAdminReadIdentity, tuple: ComplaintAdminContentTuple): ComplaintAdminContentOperation =
         capture(PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT, identity, tuple)
@@ -66,11 +99,31 @@ internal class JdbcComplaintAdminContentStore(
         candidate: ComplaintAdminContentCandidate? = null,
         proof: String? = null,
     ): ComplaintAdminContentOperation {
+        requirePoolPolicy()
         require(identity.scope == binding.scope)
-        return ComplaintAdminContentOperation.capture(jdbc, capacity, audit, binding, path, identity, tuple, candidate, proof)
+        return ComplaintAdminContentOperation.capture(jdbc, capacity, audit, binding, path, identity, tuple, candidate, proof, registeredCurrent)
     }
 
     override fun toString(): String = "JdbcComplaintAdminContentStore(TEST-only,no-mode-authority)"
+
+    companion object {
+        internal fun registeredInitialCheckpoint(jdbc: JdbcTemplate, audit: AuditService, ownership: PersistencePhaseOwnership,
+            registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1): JdbcComplaintAdminContentStore {
+            val current = TestRegisteredAdminContentV1.fromRegistered(registration, assembly, ownership, jdbc)
+            val capacity = JdbcComplaintCapacityStore(jdbc, registration.process.consumers.capacityPolicy.digestBytes())
+            return JdbcComplaintAdminContentStore(jdbc, capacity, audit, registration.process.desiredSettings(), current)
+        }
+
+        /** Scalar comparison only, never a write capability; each caller proves its typed original phase first. */
+        internal fun registeredPrincipal(jdbc: JdbcTemplate, identity: ComplaintAdminReadIdentity, expected: Array<Any?>): ComplaintAdminReadRows {
+            identity.requireCurrent()
+            val args = expected.plus(elements = ComplaintAdminContentOperation.principalArguments(identity))
+            return jdbc.query(ComplaintAdminContentOperation.REGISTERED_AUTH_SQL, { row, _ ->
+                check(row.getBoolean("registered_current_identity") && !row.wasNull())
+                ComplaintAdminReadRows(ComplaintAdminReadVerdict.valueOf(checkNotNull(row.getString("verdict"))), emptyList())
+            }, *args).single()
+        }
+    }
 }
 
 /** No success/consumption fact is published before this exact phase's commit and physical release. */
@@ -86,6 +139,7 @@ internal class ComplaintAdminContentOperation private constructor(
     private val path: PersistencePhasePath,
     private val identity: ComplaintAdminReadIdentity,
     private val tuple: ComplaintAdminContentTuple,
+    private val registeredCurrent: TestRegisteredAdminContentV1?,
 ) {
     private var stage = Stage.NEW
     private var captured: ComplaintAdminContentObservation? = null
@@ -95,8 +149,24 @@ internal class ComplaintAdminContentOperation private constructor(
     private var newClaim = false
     private var grantConsumed = false
     private var consumedGrantId: UUID? = null
+    private var currentBeforeCounters = false
+    private var checkpointTime: Instant? = null
 
     fun belongsTo(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = phase === selected && path === expected
+
+    internal fun registeredWith(selected: TestRegisteredAdminContentV1?): Boolean = registeredCurrent === selected
+
+    internal fun requireCurrentCheckpointRead(selected: TestRegisteredAdminContentV1, original: PersistencePhaseContext) {
+        requireRetained()
+        check(phase === original && registeredCurrent === selected && path === PersistencePhasePath.COMPLAINT_ADMIN_EDIT && newClaim &&
+            stage in setOf(Stage.CLAIMED, Stage.PROVED, Stage.COUNTERS, Stage.LOCKING_DOMAIN, Stage.DOMAIN, Stage.CONTENT, Stage.AUDITING, Stage.REJECTING))
+    }
+
+    internal fun requireCheckpointTime(selected: TestRegisteredAdminContentV1, original: PersistencePhaseContext, sampledAt: Instant) {
+        requireCurrentCheckpointRead(selected, original)
+        check(checkpointTime?.let { !sampledAt.isBefore(it) } != false)
+        checkpointTime = sampledAt
+    }
 
     fun completedFor(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = belongsTo(selected, expected) &&
         stage === Stage.COMPLETE && captured != null && (!newClaim || grantConsumed && consumedGrantId != null &&
@@ -116,6 +186,7 @@ internal class ComplaintAdminContentOperation private constructor(
 
     private fun execute(capacity: JdbcComplaintCapacityStore, audit: AuditService, request: ComplaintAdminContentRequest?, proof: String?) {
         requireRetained()
+        registeredCurrent?.requireOperation(this, phase, path)
         captured = if (path === PersistencePhasePath.COMPLAINT_ADMIN_EDIT) {
             edit(capacity, audit, checkNotNull(request), proof)
         } else {
@@ -126,11 +197,12 @@ internal class ComplaintAdminContentOperation private constructor(
     }
 
     private fun observe(): ComplaintAdminContentObservation {
-        val arguments = arrayOf<Any?>(
-            identity.actor, identity.credentialVersion, identity.validFrom?.let(Timestamp::from), Timestamp.from(identity.validUntil),
+        val facts = principalArguments(identity).plus(elements = arrayOf<Any?>(
             tuple.scope.id, targetArray(tuple), tuple.fingerprintBytes(), tuple.key,
-        )
-        return jdbc.query(OBSERVE_SQL, { row, _ ->
+        ))
+        val arguments = registeredCurrent?.observationIdentityArguments()?.plus(elements = facts) ?: facts
+        return jdbc.query(if (registeredCurrent == null) OBSERVE_SQL else REGISTERED_OBSERVE_SQL, { row, _ ->
+            if (registeredCurrent != null) check(row.getBoolean("registered_current_identity") && !row.wasNull())
             when (row.getString("verdict")) {
                 "UNAUTHORIZED" -> ComplaintAdminContentObservation(failure = ComplaintAdminContentFailure.UNAUTHORIZED)
                 "FORBIDDEN" -> ComplaintAdminContentObservation(failure = ComplaintAdminContentFailure.FORBIDDEN)
@@ -180,12 +252,15 @@ internal class ComplaintAdminContentOperation private constructor(
         }
         newClaim = true
         stage = Stage.CLAIMED
+        registeredCurrent?.lockAndCheck(this, phase) // Exact claim won; current control locks precede grant/counter effects.
+        currentBeforeCounters = registeredCurrent != null
         consumeGrant(proof)
         val paid = capacity.lockForAdminContent(this)
         check(paid.chargedFor(this))
         stage = Stage.LOCKING_DOMAIN
         lockCurrentAdmin()
         lockCurrentRun()
+        registeredCurrent?.checkCurrent(this, phase)
         stage = Stage.DOMAIN
         // Discovery is deliberately nonauthoritative. The current owner is checked again under all locks.
         val owner = jdbc.query(DISCOVER_OWNER, { row, _ -> row.getObject("owner_id", UUID::class.java) }, tuple.targetId, binding.scope.id).singleOrNull()
@@ -193,8 +268,10 @@ internal class ComplaintAdminContentOperation private constructor(
         val ownerRejection = lockOwner(owner)
         phase.adminContent.checkEditWrite(this, jdbc)
         val resourceState = jdbc.query(LOCK_RESOURCE, { row, _ -> row.getString("state") }, tuple.targetId, binding.scope.id).singleOrNull()
+        registeredCurrent?.checkCurrent(this, phase)
         phase.adminContent.checkEditWrite(this, jdbc)
         val content = jdbc.query(LOCK_CONTENT, { row, _ -> readContent(row) }, tuple.targetId, binding.scope.id, owner).singleOrNull()
+        registeredCurrent?.checkCurrent(this, phase)
         requireTokenTime() // Clock sampled AFTER all possible row-lock waits, under the original ADMIN lock.
         val rejection = when {
             content == null -> ComplaintAdminContentRejection.COMPLAINT_NOT_FOUND
@@ -252,6 +329,7 @@ internal class ComplaintAdminContentOperation private constructor(
         }
         val grants = jdbc.query(LOCK_GRANT, { row, _ -> row.getObject("id", UUID::class.java) }, identity.actor, hash)
         if (grants.size != 1 || grants.single() == null) rejectAdminContent(ComplaintAdminContentFailure.STEP_UP_REQUIRED)
+        registeredCurrent?.checkCurrent(this, phase) // AFTER any proof lock wait, before consumption.
         phase.adminContent.checkGrantWrite(this, jdbc)
         // Separate statement samples expiry only after obtaining the exact unused complaint-scope grant lock.
         val consumed = jdbc.query(CONSUME_GRANT, { row, _ -> row.getObject("id", UUID::class.java) }, grants.single(), identity.actor, hash)
@@ -292,6 +370,7 @@ internal class ComplaintAdminContentOperation private constructor(
         val reservation = jdbc.query(LOCK_RESERVATION, { row, _ -> ownerState(row) }, owner).singleOrNull()
         phase.adminContent.checkEditWrite(this, jdbc)
         val credential = jdbc.query(LOCK_CREDENTIAL, { row, _ -> ownerState(row) }, owner).singleOrNull()
+        registeredCurrent?.checkCurrent(this, phase)
         requireTokenTime()
         return when {
             reservation == "DELETION_PENDING" || credential == "DELETION_PENDING" -> ComplaintAdminContentRejection.COMPLAINT_DELETION_PENDING
@@ -312,6 +391,7 @@ internal class ComplaintAdminContentOperation private constructor(
 
     private fun rejectBusiness(code: ComplaintAdminContentRejection, paid: JdbcComplaintCapacityStore.LockedAdminContent): ComplaintAdminContentObservation {
         check(stage === Stage.DOMAIN && grantConsumed)
+        registeredCurrent?.checkCurrent(this, phase)
         requireTokenTime()
         stage = Stage.REJECTING
         paid.keepReceiptOnly(this)
@@ -321,6 +401,7 @@ internal class ComplaintAdminContentOperation private constructor(
     }
 
     private fun complete(receipt: ComplaintAdminContentReceipt) {
+        registeredCurrent?.checkCurrent(this, phase)
         requireTokenTime()
         check(newClaim && grantConsumed && checkNotNull(allocation).completedFor(this, receipt))
         check(receipt.consumedGrantId == checkNotNull(consumedGrantId))
@@ -338,13 +419,15 @@ internal class ComplaintAdminContentOperation private constructor(
 
     internal fun beginCounterLock(selected: JdbcTemplate) {
         requireRetained(selected)
-        check(stage === Stage.PROVED && grantConsumed && allocation == null)
+        check(stage === Stage.PROVED && grantConsumed && allocation == null && (registeredCurrent == null || currentBeforeCounters))
+        registeredCurrent?.checkCurrent(this, phase)
         stage = Stage.COUNTERS
     }
 
     internal fun retainCapacity(paid: JdbcComplaintCapacityStore.LockedAdminContent, selected: JdbcTemplate, ledger: ComplaintCapacityLedger) {
         requireRetained(selected)
         check(stage === Stage.COUNTERS && allocation == null && paid.belongsTo(this))
+        registeredCurrent?.checkCurrent(this, phase) // Original counter wait has ended; freshness precedes accounting.
         allocation = paid
         phase.adminContent.checkEditBounds(this, selected, ledger)
     }
@@ -398,6 +481,7 @@ internal class ComplaintAdminContentOperation private constructor(
             tuple: ComplaintAdminContentTuple,
             candidate: ComplaintAdminContentCandidate?,
             proof: String?,
+            registeredCurrent: TestRegisteredAdminContentV1? = null,
         ): ComplaintAdminContentOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
@@ -405,7 +489,7 @@ internal class ComplaintAdminContentOperation private constructor(
                 check(tuple.actor == identity.actor && tuple.scope == identity.scope && tuple.scope == binding.scope)
                 check((path === PersistencePhasePath.COMPLAINT_ADMIN_EDIT) == (candidate != null))
                 check(candidate == null || candidate.tuple === tuple)
-                val operation = ComplaintAdminContentOperation(phase, jdbc, binding, path, identity, tuple)
+                val operation = ComplaintAdminContentOperation(phase, jdbc, binding, path, identity, tuple, registeredCurrent)
                 phase.adminContent.retain(operation, jdbc)
                 operation.execute(capacity, audit, candidate?.request, proof)
                 return operation
@@ -466,9 +550,14 @@ internal class ComplaintAdminContentOperation private constructor(
                 FROM supplied s LEFT JOIN users u ON u.id = s.user_id
             )
         """.trimIndent()
-        private val OBSERVE_SQL = """
-            $PRINCIPAL_SQL, receipt_time AS MATERIALIZED (SELECT clock_timestamp() AS at)
-            SELECT principal.verdict,
+        private val REGISTERED_PRINCIPAL_SQL = "${TestRegisteredAdminContentV1.IDENTITY_SQL}, ${PRINCIPAL_SQL.removePrefix("WITH ")}"
+        internal val REGISTERED_AUTH_SQL = "$REGISTERED_PRINCIPAL_SQL SELECT (SELECT matches FROM current_identity) AS registered_current_identity, verdict FROM principal"
+        private val OBSERVE_SQL = observationSql(false)
+        private val REGISTERED_OBSERVE_SQL = observationSql(true)
+
+        private fun observationSql(registered: Boolean) = """
+            ${if (registered) REGISTERED_PRINCIPAL_SQL else PRINCIPAL_SQL}, receipt_time AS MATERIALIZED (SELECT clock_timestamp() AS at)
+            SELECT principal.verdict,${if (registered) " (SELECT matches FROM current_identity) AS registered_current_identity," else ""}
                 r.actor_id IS NOT NULL AND (r.state <> 'COMPLETED' OR r.expires_at > receipt_time.at) AS comparable,
                 r.state = 'COMPLETED' AND r.expires_at > receipt_time.at AS visible,
                 r.data_scope_id = ?::uuid AND r.test_only AND r.operation = 'ADMIN_EDIT'
@@ -557,6 +646,10 @@ internal class ComplaintAdminContentOperation private constructor(
         """.trimIndent()
 
         private fun targetArray(tuple: ComplaintAdminContentTuple): String = "{${tuple.targetId}}"
+
+        internal fun principalArguments(identity: ComplaintAdminReadIdentity): Array<Any?> = arrayOf(
+            identity.actor, identity.credentialVersion, identity.validFrom?.let(Timestamp::from), Timestamp.from(identity.validUntil),
+        )
     }
 }
 

@@ -318,6 +318,10 @@ constructor(
     internal val adminBatchStatus: PersistenceComplaintAdminBatchStatus = AdminBatchStatusBoundary()
     private var registeredInitialCheckpointCreate: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateV1? = null
     private var registeredInitialCheckpointEdit: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointEditV1? = null
+    private var registeredAdminContent: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1? = null
+    private var registeredAdminStepUp: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredComplaintStepUpV1? = null
+    private var preparingRegisteredAdminStepUp = false
+    private var registeredAdminStepUpCurrentReady = false
     private var registeredInitialDeletion: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1? = null
     private var initialDeletionControls = false
     private var initialOwnerDeleteStore: me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore? = null
@@ -604,6 +608,14 @@ constructor(
 
     private fun requireStepUpOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
         requireStepUpResource(jdbc, expected)
+        if (expected === PersistencePhasePath.COMPLAINT_STEP_UP_SNAPSHOT || expected === PersistencePhasePath.COMPLAINT_STEP_UP_ISSUANCE) {
+            // A desired-only issuer cannot borrow the protected registered ordinary pool.
+            ownership.dataSource.requireTestInitialCheckpointCreate(registeredAdminStepUp?.policy)
+            registeredAdminStepUp?.let {
+                requireRegisteredAdminStepUpOwner(it, jdbc, ownership)
+                if (expected === PersistencePhasePath.COMPLAINT_STEP_UP_ISSUANCE && !registeredAdminStepUpCurrentReady) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+        }
         if (stepUpOperationIssued) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         stepUpOperationIssued = true
         installLimits()
@@ -625,6 +637,54 @@ constructor(
     internal fun requireStepUpIssuance(issuance: StepUpGrantIssuance, jdbc: JdbcTemplate) {
         requireStepUpResource(jdbc, issuance.scope.issuancePath)
         if (stepUpIssuance !== issuance) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        registeredAdminStepUp?.let {
+            requireRegisteredAdminStepUpOwner(it, jdbc, ownership)
+            if (!registeredAdminStepUpCurrentReady) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            // The existing issuer invokes this before accounting/SQL and after each real wait.
+            // Reuse the original typed current reader, not a cached readiness bit or provider callback.
+            it.owner.checkCurrent(it, this)
+        }
+    }
+
+    internal fun bindRegisteredAdminStepUp(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredComplaintStepUpV1) {
+        requireCaller()
+        if (stage !== Stage.PREPARED || registeredAdminStepUp != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.owner.requirePhaseOwner(ownership)
+        original.bind(this, path)
+        registeredAdminStepUp = original
+    }
+
+    internal fun requireRegisteredAdminStepUpOwner(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredComplaintStepUpV1,
+        jdbc: JdbcTemplate, selected: PersistencePhaseOwnership) {
+        if (path !in setOf(PersistencePhasePath.COMPLAINT_STEP_UP_SNAPSHOT, PersistencePhasePath.COMPLAINT_STEP_UP_ISSUANCE)) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        requireStepUpResource(jdbc, path)
+        if (registeredAdminStepUp !== original || selected !== ownership) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.owner.requirePhaseOwner(ownership)
+        original.requireBound(this)
+    }
+
+    internal fun registeredAdminStepUpConnection(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredComplaintStepUpV1,
+        jdbc: JdbcTemplate, selected: PersistencePhaseOwnership): Connection {
+        requireRegisteredAdminStepUpOwner(original, jdbc, selected)
+        if (path !== PersistencePhasePath.COMPLAINT_STEP_UP_ISSUANCE || (!preparingRegisteredAdminStepUp && !registeredAdminStepUpCurrentReady)) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.requireCurrentRead(this)
+        return connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    /** Fixed pre-counter control locking on the exact issuance holder, not a generic before-work callback. */
+    internal fun prepareRegisteredAdminStepUp(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredComplaintStepUpV1) {
+        requireParticipation()
+        if (registeredAdminStepUp !== original || path !== PersistencePhasePath.COMPLAINT_STEP_UP_ISSUANCE ||
+            stepUpOperationIssued || preparingRegisteredAdminStepUp || registeredAdminStepUpCurrentReady) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        installLimits(); requireWork()
+        original.beginCurrentRead(this)
+        preparingRegisteredAdminStepUp = true
+        try {
+            original.owner.lockAndCheck(original, this)
+            registeredAdminStepUpCurrentReady = true
+        } finally {
+            preparingRegisteredAdminStepUp = false
+        }
     }
 
     internal fun requireComplaintGrantConsumption(jdbc: JdbcTemplate) {
@@ -1721,6 +1781,8 @@ constructor(
             // AUTH/receipt SQL separately compares current desired identity in its same row snapshot.
             registeredInitialCheckpointCreate != null -> checkNotNull(registeredInitialCheckpointCreate).requirePhaseOwner(ownership)
             registeredInitialCheckpointEdit != null -> checkNotNull(registeredInitialCheckpointEdit).requirePhaseOwner(ownership)
+            registeredAdminContent != null -> checkNotNull(registeredAdminContent).requirePhaseOwner(ownership)
+            registeredAdminStepUp != null -> checkNotNull(registeredAdminStepUp).let { it.owner.requireStepUpGate(it, this, gate) }
             registeredInitialDeletion != null -> checkNotNull(registeredInitialDeletion).requirePhaseOwner(ownership, path)
             testOrdinaryDrain != null -> testOrdinaryDrain.requireMaintenanceGate(ownership, path, gate)
             testRunOwnerDelete != null -> testRunOwnerDelete.requireMaintenanceGate(ownership, path, gate)
@@ -4410,6 +4472,16 @@ constructor(
         private var boundsChecked = false
         private val write: Boolean get() = path === PersistencePhasePath.COMPLAINT_ADMIN_EDIT
 
+        override fun bindRegistered(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1) {
+            requireCaller()
+            if (stage !== Stage.PREPARED || registeredAdminContent != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            original.requirePhaseOwner(ownership)
+            original.requirePath(path)
+            original.requireIngress()
+            if (write) original.requireAdmission(admission ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED))
+            registeredAdminContent = original
+        }
+
         override fun bindEdit(handoff: ComplaintAdmittedAdminContent) {
             requireCaller()
             if (stage !== Stage.PREPARED || !write || admission != null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
@@ -4426,6 +4498,7 @@ constructor(
                 refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
             requireStepUpResource(jdbc, expected)
+            ownership.dataSource.requireTestInitialCheckpointCreate(registeredAdminContent?.policy)
             if (issued || (write && admission == null)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             issued = true
             installLimits()
@@ -4434,13 +4507,32 @@ constructor(
 
         override fun retain(operation: ComplaintAdminContentOperation, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
-            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path) ||
+                !operation.registeredWith(registeredAdminContent)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             retained = operation
         }
 
         override fun requireRetained(operation: ComplaintAdminContentOperation, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
             if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun requireRegisteredOwner(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1,
+            jdbc: JdbcTemplate, ownership: PersistencePhaseOwnership) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
+            if (registeredAdminContent !== original || ownership !== this@PersistencePhaseContext.ownership) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            original.requirePath(path)
+            original.requireIngress()
+        }
+
+        override fun requireOwner(operation: ComplaintAdminContentOperation, jdbc: JdbcTemplate, ownership: PersistencePhaseOwnership) {
+            requireRetained(operation, jdbc)
+            if (ownership !== this@PersistencePhaseContext.ownership) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun connection(operation: ComplaintAdminContentOperation, jdbc: JdbcTemplate): Connection {
+            requireRetained(operation, jdbc)
+            return connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
 
         override fun claimEdit(operation: ComplaintAdminContentOperation, jdbc: JdbcTemplate, tuple: ComplaintAdminContentTuple) {

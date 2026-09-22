@@ -53,6 +53,7 @@ import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean
 import org.springframework.orm.jpa.SharedEntityManagerCreator
 import org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.web.context.WebApplicationContext
 import org.springframework.web.servlet.DispatcherServlet
@@ -75,6 +76,7 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
     private val editPolicy: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1? = null,
     private val selectMe: Boolean = false, // Private route choice only; every original registration/owner check still applies.
     private val selectAdminReads: Boolean = false, // Private route selection, never born-with policy or current authority.
+    private val selectAdminContent: Boolean = false,
 ) : AutoCloseable {
     private val startupBudget = PersistenceTimeBudget.start(60_000)
     private val ingress = registration.process.consumers.ingressAdmission
@@ -97,6 +99,8 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
     private var audit: AuditService? = null
     private var adminReadDecoder: JwtDecoder? = null
     private var adminReadCompositionClaimed = false
+    private var adminContentPasswords: PasswordEncoder? = null
+    private var adminContentCompositionClaimed = false
     private var context: AnnotationConfigServletWebServerApplicationContext? = null
     private var contextInitializing = false
     private var contextInitialized = false
@@ -130,6 +134,9 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             requireTestDeployment(!selectAdminReads || (!selectMe && replyPolicy == null && editPolicy == null &&
                 registration.process.consumers.adminReadPolicy is me.manga.kira.backend.security.ComplaintAdminReadAdmissionPolicy.Bounded &&
                 registration.process.consumers.adminCursorCodec != null), ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+            requireTestDeployment(!selectAdminContent || (selectAdminReads &&
+                registration.process.consumers.adminContentPolicy is me.manga.kira.backend.security.ComplaintAdminContentAdmissionPolicy.Bounded &&
+                registration.process.consumers.adminStepUp != null), ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             val pool = registration.process.pools.ordinary
             val originalFactory = LocalContainerEntityManagerFactoryBean().also { factory = it }
             originalFactory.dataSource = pool
@@ -203,12 +210,18 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
                 // One internal fixed bean recipe, retained by this context before refresh/any listening server.
                 // No callback supplied by callers, decoder replacement, request-time lookup or independent graph.
                 selected.registerBeanDefinition("registeredTestBootstrapComposition", RootBeanDefinition(ComplaintTestBootstrapHttpCompositionV1::class.java).apply {
-                    setDependsOn("jwtDecoder")
+                    if (selectAdminContent) setDependsOn("jwtDecoder", "passwordEncoder") else setDependsOn("jwtDecoder")
                     instanceSupplier = Supplier {
                         checkpoint()
                         requireTestDeployment(adminReadDecoder == null && !adminReadCompositionClaimed, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
                         val decoder = selected.getBean("jwtDecoder", JwtDecoder::class.java).also { adminReadDecoder = it }
-                        ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateAdminRead(
+                        if (selectAdminContent) {
+                            requireTestDeployment(adminContentPasswords == null && !adminContentCompositionClaimed, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+                            val passwords = selected.getBean("passwordEncoder", PasswordEncoder::class.java).also { adminContentPasswords = it }
+                            ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateAdminReadContent(
+                                registration, assembly, owner, template, service, this@ComplaintTestRegisteredHttpStartupV1, decoder, passwords,
+                            )
+                        } else ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateAdminRead(
                             registration, assembly, owner, template, service, this@ComplaintTestRegisteredHttpStartupV1, decoder,
                         )
                     }
@@ -326,6 +339,25 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
         adminReadCompositionClaimed = true
     }
 
+    /** This exact refresh's configured decoder AND password encoder; never a caller-substituted provider. */
+    internal fun claimAdminContentComposition(
+        originalRegistration: ComplaintTestNamespaceRegistrationV1,
+        originalAssembly: ComplaintTestProcessAssemblyV1,
+        originalOwnership: PersistencePhaseOwnership,
+        originalJdbc: JdbcTemplate,
+        originalDecoder: JwtDecoder,
+        originalPasswords: PasswordEncoder,
+    ) {
+        requireCaller()
+        requireTestDeployment(selectAdminContent && startEntered && !closeEntered && contextInitializing &&
+            adminReadCompositionClaimed && !adminContentCompositionClaimed && registration === originalRegistration && assembly === originalAssembly &&
+            ownership === originalOwnership && jdbc === originalJdbc && adminReadDecoder === originalDecoder && adminContentPasswords === originalPasswords,
+            ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+        registration.requireActiveIdentityTarget(assembly)
+        registration.requireIdentityAdmissionPhaseResources(originalOwnership, originalJdbc)
+        adminContentCompositionClaimed = true
+    }
+
     private fun awaitReleased(budget: PersistenceTimeBudget?) {
         while (true) {
             if (ingress.registeredStartupAdmissionReleased() && admission?.activeOwners().let { it == null || it == 0 }) return
@@ -364,6 +396,14 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             requireTestDeployment(registration.process.consumers.adminReadPolicy is me.manga.kira.backend.security.ComplaintAdminReadAdmissionPolicy.Bounded &&
                 registration.process.consumers.adminCursorCodec != null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             return ComplaintTestRegisteredHttpStartupV1(assembly, registration, selectAdminReads = true)
+        }
+
+        internal fun retainedWithAdminContent(assembly: ComplaintTestProcessAssemblyV1, registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
+            requireTestDeployment(registration.process.consumers.adminReadPolicy is me.manga.kira.backend.security.ComplaintAdminReadAdmissionPolicy.Bounded &&
+                registration.process.consumers.adminCursorCodec != null &&
+                registration.process.consumers.adminContentPolicy is me.manga.kira.backend.security.ComplaintAdminContentAdmissionPolicy.Bounded &&
+                registration.process.consumers.adminStepUp != null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+            return ComplaintTestRegisteredHttpStartupV1(assembly, registration, selectAdminReads = true, selectAdminContent = true)
         }
 
         /** Original reply-capable full-D/pool pin, not a public readiness switch or default startup expansion. */
