@@ -17,6 +17,7 @@ import me.manga.kira.backend.complaint.api.ComplaintOwnerDetailHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerEditHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerOperationResponse
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryResponses
 import me.manga.kira.backend.complaint.application.ComplaintInstallationBootstrapService
 import me.manga.kira.backend.complaint.application.ComplaintInstallationMeService
 import me.manga.kira.backend.complaint.application.ComplaintInstallationService
@@ -68,6 +69,7 @@ import me.manga.kira.backend.security.ComplaintSecurityResponses
 import me.manga.kira.backend.security.InstallationJwtCodec
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
+import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.web.SecurityFilterChain
 import java.time.Clock
 import java.util.UUID
@@ -81,6 +83,7 @@ import java.util.UUID
  * existing owner reads only. A separate born-with reply selection adds only OWNER_REPLY;
  * a further explicit EDIT selection retains its own operation boundary.
  * An explicit read/CREATE/me sibling adds only the existing installation projection.
+ * A separate born-with Admin read sibling adds its fixed normal-ADMIN search/detail/stats cohort.
  * No delete, LIVE/restart/quarantine or broad Core; all earlier selectors still exclude /me.
  */
 internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
@@ -93,6 +96,7 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     private val replyStore: JdbcComplaintOwnerCreateStore? = null,
     private val editStore: JdbcComplaintOwnerEditStore? = null,
     private val me: ComplaintInstallationMeHttpHandler? = null,
+    private val adminReads: ComplaintTestRegisteredAdminReadsV1? = null,
 ) {
     init {
         require((assembly == null) == (audit == null))
@@ -100,6 +104,7 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         require(replyStore == null || reads != null)
         require(editStore == null || replyStore != null)
         require(me == null || (reads != null && replyStore == null && editStore == null))
+        require(adminReads == null || (reads != null && replyStore == null && editStore == null && me == null))
     }
 
     private val producer = ComplaintInstallationBootstrapHttpHandler(
@@ -159,18 +164,24 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     val mappedPaths: Set<String> = literalPaths +
         (if (reads == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}")) +
         (if (replyStore == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}/replies")) +
-        (if (editStore == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}/content"))
+        (if (editStore == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}/content")) +
+        (adminReads?.mappedPaths ?: emptySet())
 
     internal fun mapsRequest(request: HttpServletRequest): Boolean = ComplaintInstallationRoutes.path(request) in literalPaths ||
         (reads != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
         (replyStore != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
-        (editStore != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request))
+        (editStore != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
+        adminReads?.mapsRequest(request) == true
 
-    /** Original admission surrounds the fixed bodyless check, generic body guard, Spring and MVC. */
+    /** Owner admission surrounds generic/Spring/MVC; selected Admin reads finish in their own original-ingress handler. */
     val ingressFilter: Filter = Filter { request, response, chain ->
         val http = request as HttpServletRequest
         val path = ComplaintInstallationRoutes.path(http)
-        if (!mapsRequest(http) || (path != ComplaintInstallationRoutes.BOOTSTRAP && !factory.implemented(http))) {
+        if (adminReads?.mapsRequest(http) == true) {
+            // This exact existing handler owns original ingress + input bounds + real normal-JWT/current-ADMIN SQL.
+            // It finishes here, before generic buffering/user converter; it never falls through unauthenticated.
+            adminReads.handleRequest(http, response as HttpServletResponse)
+        } else if (!mapsRequest(http) || (path != ComplaintInstallationRoutes.BOOTSTRAP && !factory.implemented(http))) {
             disabled.doFilter(request, response, FilterChain { excluded, output ->
                 // The broad disabled filter already owns the complaint families. Also close the
                 // installation chain's exact status aliases before buffering, never user fallthrough.
@@ -213,6 +224,7 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         private val assembly: ComplaintTestProcessAssemblyV1,
         private val ownership: PersistencePhaseOwnership,
         private val jdbc: JdbcTemplate,
+        sharedResponses: ComplaintOwnerHistoryResponses? = null,
     ) {
         init { requireCurrent() }
 
@@ -229,13 +241,13 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
                 historyUse { historyReader.authenticate(context, bearer, query) }
             override fun read(context: ComplaintOwnerHistoryRequestContext, authentication: ComplaintOwnerHistoryAuthentication) =
                 historyUse { historyReader.read(context, authentication) }
-        }), ingress)
+        }), ingress, sharedResponses ?: ComplaintOwnerHistoryResponses())
         val detail = ComplaintOwnerDetailHttpHandler(ComplaintOwnerDetailService(object : ComplaintOwnerDetailReadPort {
             override fun authenticate(context: ComplaintOwnerDetailRequestContext, bearer: String, id: UUID) =
                 detailUse { detailReader.authenticate(context, bearer, id) }
             override fun read(context: ComplaintOwnerDetailRequestContext, authentication: ComplaintOwnerDetailAuthentication) =
                 detailUse { detailReader.read(context, authentication) }
-        }), ingress)
+        }), ingress, sharedResponses ?: ComplaintOwnerHistoryResponses())
 
         /** Constructed only by the explicit me selector; no new phase owner, SQL or mode authority. */
         fun installationMe(): ComplaintInstallationMeHttpHandler {
@@ -328,6 +340,24 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             val reads = RegisteredOwnerReads(registration, assembly, ownership, jdbc)
             return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
                 reads, me = reads.installationMe())
+        }
+
+        /** One explicit read cohort; old selectors keep their routes, policies and response-owner construction. */
+        fun fromRegisteredInitialCheckpointReadCreateAdminRead(
+            registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership,
+            jdbc: JdbcTemplate,
+            audit: AuditService,
+            startup: ComplaintTestRegisteredHttpStartupV1,
+            userDecoder: JwtDecoder,
+        ): ComplaintTestBootstrapHttpCompositionV1 {
+            registration.requireActiveIdentityTarget(assembly)
+            registration.requireIdentityAdmissionPhaseResources(ownership, jdbc) // Compare only the original already-bound pair.
+            val responses = ComplaintOwnerHistoryResponses()
+            val admin = ComplaintTestRegisteredAdminReadsV1.fromRegistered(registration, assembly, ownership, jdbc, startup, userDecoder, responses)
+            return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
+                RegisteredOwnerReads(registration, assembly, ownership, jdbc, responses), adminReads = admin)
         }
 
         /** Separate concrete reply-capable store/handler selection. All earlier factories retain their narrower routes. */

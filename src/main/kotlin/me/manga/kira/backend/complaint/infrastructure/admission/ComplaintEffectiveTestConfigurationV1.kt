@@ -14,6 +14,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersi
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.security.ComplaintAdmissionPolicy
+import me.manga.kira.backend.security.ComplaintAdminReadAdmissionPolicy
 import me.manga.kira.backend.security.SecretMaterialFamily
 import me.manga.kira.backend.security.SecretMaterialPurpose
 import me.manga.kira.backend.security.VersionBoundTestComplaintConsumerConfigurationV1
@@ -174,6 +175,29 @@ internal object ComplaintEffectiveTestConfigurationV1 {
         put("installationJwt", ComplaintEffectiveConsumerConfigurationV1.installationJwt(owner.jwt))
         put("admission", admission(owner))
         put("ownerCursor", ComplaintEffectiveConsumerConfigurationV1.cursor(owner.ownerCursorCodec))
+        // Absence deliberately preserves every previously serialized consumer/profile byte.
+        (owner.adminReadPolicy as? ComplaintAdminReadAdmissionPolicy.Bounded)?.let { policy ->
+            val cursor = checkNotNull(owner.adminCursorCodec)
+            put("adminRead", buildJsonObject {
+                put("schemaVersion", 1)
+                put("profile", TestRegisteredAdminReadInputV1.PROFILE)
+                put("perMinute", policy.perMinute)
+                put("windowNanos", ComplaintAdmissionPolicy.INGRESS_WINDOW_NANOS)
+                put("routes", strings(listOf("POST:/api/v1/admin/complaints/search", "GET:/api/v1/admin/complaints/{id}", "GET:/api/v1/admin/complaints/stats")))
+                put("authentication", "QUALIFIED_USER_JWT_CURRENT_DB_ADMIN_ACTIVE_EXACT_TEST_SCOPE")
+                put("responseOwner", "ONE_SHARED_OWNER_HISTORY_DETAIL_ADMIN_EIGHT_UNTIL_DELIVERY")
+                put("cursor", buildJsonObject {
+                    put("profile", "FIXED_ADMIN_FILTER_ACTOR_CURSOR_V1")
+                    put("activeKeyId", cursor.activeKeyId)
+                    put("verificationKeyIds", strings(bindings.filter { it.family == SecretMaterialFamily.COMPLAINT_CURSOR }.map { it.logicalKeyId }))
+                    put("macFrame", "kira-complaint-admin-cursor-v1")
+                    put("ttlSeconds", 900)
+                    put("futureSkewSeconds", 60)
+                    put("maximumCharacters", 2048)
+                    put("maximumPayloadBytes", 512)
+                })
+            })
+        }
     }
 
     private fun admission(owner: VersionBoundTestComplaintConsumerConfigurationV1): JsonObject = buildJsonObject {
