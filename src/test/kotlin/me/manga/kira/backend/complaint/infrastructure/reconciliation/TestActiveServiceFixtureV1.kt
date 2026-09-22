@@ -4,6 +4,7 @@ import jakarta.persistence.EntityManagerFactory
 import kotlinx.serialization.json.Json
 import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.ColdFixtureFilesV1
 import me.manga.kira.backend.common.infrastructure.persistence.DeleteAllCounter
 import me.manga.kira.backend.common.infrastructure.persistence.OrdinaryPersistenceAdmission
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
@@ -41,6 +42,8 @@ import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTest
 import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.AwsSecretVersionFixture
+import me.manga.kira.backend.security.aws.EpochSealStsException
+import me.manga.kira.backend.security.aws.EpochSealStsFailure
 import me.manga.kira.backend.security.fullTestJournal
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -53,6 +56,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionSynchronizationManager
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
@@ -132,7 +136,7 @@ internal class TestActiveServiceFixtureV1(private val a: TestActiveRecurrentFixt
     private val registration get() = field<ComplaintTestNamespaceRegistrationV1>("registration")
     private val assembly get() = field<ComplaintTestProcessAssemblyV1>("assembly")
 
-    fun serveThroughSecondRecurrenceAndStopDuringEmptyQueue() {
+    private fun retireAAndCreateColdService(): Pair<Int, Int> {
         a.assertReleased()
         assertNull(a.original); assertNull(a.queue.original)
         assertEquals("AUTHORIZED_DELETE", a.queue.receipt()["state"])
@@ -168,7 +172,11 @@ internal class TestActiveServiceFixtureV1(private val a: TestActiveRecurrentFixt
             scannerS3 = { remaining -> attachReaders(); scanner.s3(remaining) },
             queueSqs = raw.queue.input.sqs, queueSts = raw.queue.input.sts,
             queueKms = raw.queue.input.kms, queueS3 = raw.queue.input.s3)
+        return originalPutCount to originalKeyCount
+    }
 
+    fun serveThroughSecondRecurrenceAndStopDuringEmptyQueue() {
+        val (originalPutCount, originalKeyCount) = retireAAndCreateColdService()
         val held = AtomicBoolean()
         val entered = CountDownLatch(1)
         val released = CountDownLatch(1)
@@ -267,6 +275,117 @@ internal class TestActiveServiceFixtureV1(private val a: TestActiveRecurrentFixt
             assertSame(originalRecurrent, field<TestActiveRecurrentV1>("recurrentOriginal"))
             assertEquals(native, providerCounts(), "No redispatch or replacement cleanup original after stop.")
         }
+    }
+
+    /** Fixed child only: the caller must contain both success and failure BEFORE outer A-fixture teardown. */
+    fun serveWithFirstScannerCloseRefusal(manifest: Path): Path {
+        assertEquals("service-recurrent-close-manifest.json", manifest.fileName.toString())
+        ColdFixtureFilesV1.write(manifest, inputBytes)
+        val (originalPutCount, originalKeyCount) = retireAAndCreateColdService()
+        var nativeCloseCalls = 0
+        raw.onNativeClose = {
+            nativeCloseCalls++
+            if (nativeCloseCalls == 1) throw IOException("Synthetic first recurrent scanner STS close refusal.")
+        }
+        serveEntered = true
+        assertEquals(TestActiveServiceStatusV1.CUSTODY_RETAINED, service.serve(manifest, testActiveServiceSessionsV1()))
+        val original = field<TestActiveRecurrentV1>("recurrentOriginal")
+        val scan = ownedCutField(original, "scan") as TestActiveRecurrentScanV1
+        val principal = checkNotNull(ownedCutField(scan, "principal"))
+        val transport = checkNotNull(ownedCutField(principal, "transport"))
+        fun custody(): List<Any> = listOf(checkNotNull(ownedCutField(original, "scan")),
+            checkNotNull(ownedCutField(scan, "principal")), checkNotNull(ownedCutField(principal, "transport")),
+            checkNotNull(ownedCutField(principal, "raw")), checkNotNull(ownedCutField(principal, "sdk")),
+            checkNotNull((ownedCutField(principal, "closeFailure") as AtomicReference<*>).get()),
+            checkNotNull((ownedCutField(transport, "closeFailure") as AtomicReference<*>).get()),
+            checkNotNull((ownedCutField(original, "failure") as AtomicReference<*>).get()), original.budget,
+            field<Any>("factory"), field<Any>("closeBudget"), field<Any>("failure"), field<Any>("cleanupFailure"))
+        val retainedCustody = custody()
+        fun assertRetained() {
+            assertSqlReleased(); checkNotNull(retainedResources); assertRetainedResources()
+            custody().forEachIndexed { index, actual -> assertSame(retainedCustody[index], actual) }
+            assertEquals(TestActiveServiceStatusV1.CUSTODY_RETAINED, service.status)
+            assertEquals(TestActiveServiceFailureV1.CLEANUP_UNPROVEN, service.failureCode)
+            assertEquals(true, ownedCutField(service, "closeEntered")); assertEquals(false, ownedCutField(service, "serving"))
+            assertEquals(false, ownedCutField(service, "cleanupProven"))
+            assertSame(original, field<TestActiveRecurrentV1>("recurrentOriginal"))
+            assertSame(original, (ownedCutField(checkNotNull(process.activeRecurrent), "active") as AtomicReference<*>).get())
+            assertNull((ownedCutField(checkNotNull(process.activeOwnerDeleteQueue), "active") as AtomicReference<*>).get())
+            listOf("recurrentResult", "queueOriginal", "queueCompleted").forEach { assertNull(ownedCutField(service, it)) }
+            assertEquals(1, recurrences.size); assertSame(original, recurrences.single().original)
+            assertNull(recurrences.single().completed); assertTrue(queues.isEmpty())
+            assertThrows<TestActiveRecurrentExceptionV1> { original.requireActualCleanup() }
+            assertEquals(true, ownedCutField(original, "nativeClaimed")); assertEquals(false, ownedCutField(original, "cleanupProven"))
+            listOf("waiting", "applying", "phase").forEach { assertNull(ownedCutField(original, it)) }
+            assertEquals(false, ownedCutField(original, "phaseEntered"))
+            listOf("principalClosed", "nativeClosed", "retired", "ready").forEach { assertEquals(false, ownedCutField(scan, it)) }
+            assertNull(ownedCutField(scan, "reader")); assertEquals(0, scan.passNumber)
+            assertTrue((ownedCutField(principal, "closed") as AtomicBoolean).get())
+            assertTrue((ownedCutField(principal, "sdkCloseIssued") as AtomicBoolean).get())
+            assertTrue((ownedCutField(transport, "closed") as AtomicBoolean).get())
+            assertTrue((ownedCutField(transport, "delegateCloseIssued") as AtomicBoolean).get())
+            listOf("active", "expected").forEach { assertNull((ownedCutField(transport, it) as AtomicReference<*>).get()) }
+            listOf(principal, transport).forEach {
+                val failure = assertInstanceOf(EpochSealStsException::class.java, (ownedCutField(it, "closeFailure") as AtomicReference<*>).get())
+                assertEquals(EpochSealStsFailure.CLEANUP_FAILED, failure.code)
+            }
+            assertFalse((ownedCutField(registration, "closed") as AtomicBoolean).get())
+            assertTrue(field<EntityManagerFactory>("emf").isOpen)
+            assertFalse(process.pools.shutdownRequested()); assertEquals(false, ownedCutField(assembly, "stopping"))
+            listOf("registrationClosed", "factoryCloseReturned", "assemblyClosed").forEach { assertEquals(false, ownedCutField(service, it)) }
+            listOf(process.pools.ordinary, process.pools.deletion, process.pools.catalogCoordinator.dataSource).forEach { assertFalse(actualPool(it).isClosed) }
+            Files.list(trustParent).use { assertTrue(it.findAny().isPresent, "Retained B still owns its trust generation.") }
+            assertEquals(0, field<OrdinaryPersistenceAdmission>("ordinaryAdmission").activeOwners())
+            assertEquals(0, field<DeletionPersistenceAdmission>("deletionAdmission").activeOwners().totalOwners)
+            field<ComplaintTestNamespaceActiveRegistrationAttemptV1>("registrationAttempt").requireActualCleanup()
+            assertEquals(2, phases.values.count { it.original is ComplaintTestNamespaceActiveRegistrationAttemptV1 })
+            assertTrue(phases.values.any { it.original === original })
+            assertTrue(phases.values.none { it.original is TestActiveRecurrentApplyV1 || it.original is TestActiveOwnerDeleteQueueV1 })
+            phases.values.forEach { it.assertReleased() }
+            (ownedCutField(original, "nativeSeals") as Map<*, *>).values.forEach { (it as TestActiveRecurrentNativeSealV1).requirePhysicalCleanup() }
+            assertEquals(1, nativeCloseCalls); assertEquals(listOf("STS"), raw.order)
+            assertEquals(listOf("STS"), raw.budgets.map { it.first })
+            assertEquals(1, raw.sts.requests.size); assertEquals(1, raw.sts.replies.size)
+            assertEquals(1, raw.sts.createdClients); assertEquals(1, raw.sts.closedClients); assertEquals(0, raw.sts.returnedClientCloses)
+            assertEquals(0, raw.kms.createdClients); assertEquals(0, raw.s3Created)
+            assertTrue(raw.kms.requests.isEmpty() && raw.requests.isEmpty())
+            listOf(raw.queue.sts, raw.queue.kms, raw.queue.sqs).forEach { assertEquals(0, it.createdClients) }
+            assertEquals(0, raw.queue.s3Created)
+            assertTrue(raw.queue.order.isEmpty() && raw.queue.budgets.isEmpty() && raw.queue.requests.isEmpty() && raw.queue.ackRequests.isEmpty())
+            // Raw exchange/body/abort disposal is observed, NOT an original native-close receipt.
+            raw.assertDisposed(returned = false); raw.queue.assertDisposed(); identity.assertClosed(); a.first.native.assertDisposed()
+            assertEquals("AUTHORIZED_DELETE", a.queue.receipt()["state"]); assertEquals("VERIFIED", a.precursor.publication()["state"])
+            assertEquals(0L, a.queue.count("complaint_deletion_journal_applied"))
+            assertTrue(a.scans().isEmpty() && a.entries().isEmpty()); assertNull(a.control()["checkpoint_result"])
+            assertEquals(originalPutCount, a.raw.deletion.publisher.requests.count { it.kind == "PUT" })
+            assertEquals(originalKeyCount, a.raw.deletion.publisher.generated())
+            assertTrue(a.raw.order.isEmpty() && a.raw.requests.isEmpty() && a.raw.queue.order.isEmpty())
+            assertNull(a.original); assertNull(a.queue.original); assertEquals(0L, a.first.native.offsetNanos)
+            assertArrayEquals(originalD, process.canonicalBytes())
+            assertEquals(originalRecurrentInventory, checkNotNull(process.activeRecurrent).inventory())
+            assertEquals(originalQueueInventory, checkNotNull(process.activeOwnerDeleteQueue).inventory())
+            assertion.get()?.let { throw it }
+        }
+        fun counts() = providerCounts() + a.providerCounts() + listOf(nativeCloseCalls, phases.size,
+            identity.secrets.createdClients, identity.secrets.closedClients, identity.catalog.createdClients, identity.catalog.closedClients,
+            raw.s3Created, raw.s3Closed, raw.s3CloseReturned, raw.queue.s3Created, raw.queue.s3Closed, raw.queue.s3CloseReturned,
+            a.first.native.s3Created, a.first.native.s3Closed, a.first.native.s3CloseReturned) +
+            listOf(raw.sts, raw.kms, raw.queue.sts, raw.queue.kms, raw.queue.sqs, a.first.native.sts, a.first.native.kms)
+                .flatMap { listOf(it.createdClients, it.closedClients, it.returnedClientCloses) }
+        assertRetained()
+        // Snapshot AFTER the genuine failed dispatch: paid recurrent intent/seal state is not undone.
+        val image = a.image(); val counters = a.counters(); val observations = counts()
+        service.requestStop()
+        assertEquals(TestActiveServiceFailureV1.CLEANUP_UNPROVEN, assertThrows<TestActiveServiceExceptionV1> { service.close() }.code)
+        assertEquals(TestActiveServiceFailureV1.CLEANUP_UNPROVEN, assertThrows<TestActiveServiceExceptionV1> { service.requireCleanupProven() }.code)
+        assertEquals(TestActiveServiceFailureV1.STARTUP_REFUSED,
+            assertThrows<TestActiveServiceExceptionV1> { service.serve(manifest, testActiveServiceSessionsV1()) }.code)
+        assertRetained()
+        assertEquals(observations, counts(), "No redispatch, native reclose, replacement owner or new SQL phase.")
+        assertTrue(image == a.image(), "Sticky control calls cannot change post-failure durable state; rows remain private.")
+        assertEquals(counters, a.counters(), "No charge/refund/reset after retention.")
+        // Deliberately no fixture/parent close here; only the fixed child may contain this retained graph.
+        return trustParent // TEST artifact location only, never a product cleanup/ownership receipt.
     }
 
     private fun attachReaders() {
