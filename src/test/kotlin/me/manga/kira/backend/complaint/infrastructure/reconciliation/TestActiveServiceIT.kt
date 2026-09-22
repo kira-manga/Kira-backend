@@ -26,8 +26,9 @@ import java.nio.file.Path
 /**
  * SOURCE_ONLY / NOT_COMPILED / NOT_RUN. Real PG/TLS and SDKs, synthetic raw HTTP only.
  * Sequential same-JVM A retirement -> service-owned cold B, not concurrent/two-process or AWS
- * qualification. No test-side B checkpoint/poll/APPLY. Connected poisoned-child shutdown,
- * empty-queue service recurrence and long-cadence fairness remain separate coverage frontiers.
+ * qualification. No test-side B checkpoint/poll/APPLY. The positive includes one naturally due
+ * second recurrence after empty polls; connected poisoned-child shutdown and general/load
+ * fairness remain separate coverage frontiers. Its unchanged declared cadence costs 15 minutes.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
@@ -85,7 +86,7 @@ class TestActiveServiceIT {
         VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, activeFirstCut = true).use { tls ->
             tls.bind()
             withRecurrentFixture(tls, applied = false) { precursor ->
-                TestActiveServiceFixtureV1(precursor).use { it.serveAndStopDuringOriginalQueue() }
+                TestActiveServiceFixtureV1(precursor).use { it.serveThroughSecondRecurrenceAndStopDuringEmptyQueue() }
             }
         }
 
