@@ -244,14 +244,14 @@ internal object TestRegisteredOwnerDeleteHttpCasesV1 {
                 StartedHttpView(first, startup, READ_CREATE).use { web ->
                     val f = Fixture(first, web, raw); raw.fixture = f
                     assertArrayEquals(configuration, first.process.canonicalBytes())
-                    try { action(f) } finally {
+                    AutoCloseable {
                         f.assertReleased()
                         // Owned disposable-scope teardown AFTER assertions. Never refund/reopen/repair a gate,
                         // mint a checkpoint/receipt, or claim product erasure from these fixture DELETEs.
                         for (table in CLEANUP) f.jdbc.update("DELETE FROM $table WHERE data_scope_id = ?", f.scope)
                         f.jdbc.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND action IN " +
                             "('COMPLAINT_CREATED','COMPLAINT_DELETE_AUTHORIZED','COMPLAINT_DELETED','COMPLAINT_RECOVERY_APPLIED')", f.scope)
-                    }
+                    }.use { action(f) }
                     startup.close(); web.assertDisposed(nativeStillActive = true)
                     raw.fixture = null
                 }
@@ -438,7 +438,10 @@ internal object TestRegisteredOwnerDeleteHttpCasesV1 {
         private var keyReply: ((JournalKmsHttpRequest) -> JournalKmsHttpReply)? = null
         private var keyContext: Map<String, String>? = null
         private val assertion = AtomicReference<AssertionError?>()
-        val factories = TestActiveOrdinaryRawHttpV1(ordinary.factories.sts,
+        private val sts = TestRegisteredDeletionHttpStsFixtureV1(
+            { checkNotNull(fixture).assertSqlReleased() },
+            { checkNotNull(fixture).first.process.consumers.journalConfiguration.declaration().journalLocation.region })
+        val factories = TestActiveOrdinaryRawHttpV1(sts::httpClient,
             { remaining -> native(remaining) { selected().kms.httpClient() } },
             { remaining -> native(remaining) { selected().httpClient() } }, checkpoint.input,
             initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
@@ -500,11 +503,11 @@ internal object TestRegisteredOwnerDeleteHttpCasesV1 {
         fun counts(): List<Int> {
             val first = checkNotNull(fixture).first
             return listOf(first.native.sts.requests.size, first.native.kms.requests.size, first.native.requests.size, first.p.f.http.read.requests.size,
-                ordinary.sts.requests.size, publisher?.kms?.requests?.size ?: 0, publisher?.requests?.size ?: 0,
+                ordinary.sts.requests.size, sts.requestCount, publisher?.kms?.requests?.size ?: 0, publisher?.requests?.size ?: 0,
                 checkpoint.sts.requests.size, checkpoint.kms.requests.size, checkpoint.requests.size,
                 queue.sts.requests.size, queue.kms.requests.size, queue.requests.size, queue.sqs.requests.size)
         }
-        fun assertDisposed() { ordinary.assertDisposed(); publisher?.assertClientsClosed(); checkpoint.assertDisposed(); queue.assertDisposed(); assertion.get()?.let { throw it } }
+        fun assertDisposed() { ordinary.assertDisposed(); sts.assertDisposed(); publisher?.assertClientsClosed(); checkpoint.assertDisposed(); queue.assertDisposed(); assertion.get()?.let { throw it } }
         private fun <T> checked(action: () -> T): T = try { action() } catch (failure: AssertionError) { assertion.compareAndSet(null, failure); throw failure }
     }
 
