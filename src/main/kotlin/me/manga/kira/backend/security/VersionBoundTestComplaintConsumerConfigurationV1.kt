@@ -55,7 +55,8 @@ internal class VersionBoundTestComplaintConsumerInputsV1(
 
 /**
  * Cold actual PRE_CUTOVER_TEST/memory/one-declared-instance consumer. Builds its own bounded ingress
- * with enrollment, create/reply, edit and single-delete; never accepts ingress plus claimed settings.
+ * with enrollment, owner operations and explicitly selected Admin policies; never accepts ingress
+ * plus claimed settings. The optional Admin read policy and cursor are born together before full D.
  * Fixed admission keys cannot rotate or retire behind D. Rebuilding loses counters and is not rollout.
  * No bean, namespace registration, process binding, current capability or provider operation.
  */
@@ -74,10 +75,16 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
     val adminBatchDeletePolicy: ComplaintAdminBatchDeleteAdmissionPolicy,
     private val admissionKeys: ComplaintAdmissionKeyConfiguration,
     val ownerCursorCodec: ComplaintOwnerCursorCodec,
+    val adminReadPolicy: ComplaintAdminReadAdmissionPolicy,
+    val adminCursorCodec: ComplaintAdminCursorCodec?,
     val ingressAdmission: ComplaintIngressAdmission,
     descriptors: List<VersionedSecretBinding>,
 ) {
     private val bindings = descriptors.toList()
+
+    init {
+        require((adminReadPolicy is ComplaintAdminReadAdmissionPolicy.Bounded) == (adminCursorCodec != null)) { INVALID_BOUND_TEST_CONSUMERS }
+    }
 
     val admissionCurrentKeyId: String get() = admissionKeys.currentKeyId
     val admissionPreviousKeyId: String? get() = admissionKeys.previousKeyId
@@ -101,6 +108,7 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
             keys: VersionBoundTestComplaintConsumerInputsV1,
             settings: VersionBoundComplaintConsumerSettings,
             adminBatchDeletePerHour: Int = 60,
+            adminReadPerMinute: Int? = null,
         ): VersionBoundTestComplaintConsumerConfigurationV1 {
             requireConnectionFree()
             val user = requireNotNull(jwt.boundUserKeyProvider) { INVALID_BOUND_TEST_CONSUMERS }
@@ -124,6 +132,8 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
             val adminBatchDelete = if (journal.registeredAdminBatchDelete)
                 ComplaintAdminBatchDeleteAdmissionPolicy.Bounded(capacityPolicy, create.memberLimit, create.pruneBatch, adminBatchDeletePerHour)
                 else ComplaintAdminBatchDeleteAdmissionPolicy.Disabled
+            val adminRead = if (adminReadPerMinute == null) ComplaintAdminReadAdmissionPolicy.Disabled
+                else ComplaintAdminReadAdmissionPolicy.Bounded(adminReadPerMinute)
             val resolver = settings.clientIpResolver()
             val copies = ArrayList<ByteArray>(descriptors.size)
             val admissionCopies = ArrayList<ComplaintAdmissionKey>(admissions.size)
@@ -157,18 +167,27 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
                     (jwtMaterials + admissionMaterials).map { it.bytes },
                     Clock.systemUTC(),
                 )
+                // Same acquired cursor family, but the fixed Admin codec owns its distinct actor/route/MAC frame.
+                // Neither a caller codec nor an unversioned material list can be substituted after full D.
+                val adminCodec = if (adminRead is ComplaintAdminReadAdmissionPolicy.Bounded) ComplaintAdminCursorCodec(
+                    keys.cursorActiveKeyId,
+                    cursorMaterials.associate { it.binding.logicalKeyId to it.bytes },
+                    (jwtMaterials + admissionMaterials).map { it.bytes },
+                    Clock.systemUTC(),
+                ) else null
                 val ingress = ComplaintIngressAdmission(
                     resolver, policy, fixedKeys, SystemComplaintAdmissionNanoClock,
                     createPolicy = create,
                     deleteAllPolicy = deleteAll,
                     editPolicy = edit,
                     ownerDeletePolicy = delete,
+                    adminReadPolicy = adminRead,
                     adminDeletePolicy = adminDelete,
                     adminBatchDeletePolicy = adminBatchDelete,
                 )
                 return VersionBoundTestComplaintConsumerConfigurationV1(
                     jwt, capacityPolicy, journal, keys.journalRouting, settings, policy, create, edit, delete, deleteAll, adminDelete, adminBatchDelete,
-                    fixedKeys, codec, ingress, descriptors,
+                    fixedKeys, codec, adminRead, adminCodec, ingress, descriptors,
                 )
             } finally {
                 admissionCopies.forEach { it.destroy() }
