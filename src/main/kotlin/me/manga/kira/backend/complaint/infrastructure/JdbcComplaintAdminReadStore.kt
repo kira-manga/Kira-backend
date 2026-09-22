@@ -252,12 +252,7 @@ internal class ComplaintAdminReadOperation private constructor(
             try {
                 check(!currentAdminOnly || path === PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
                 check(initialDeletion == null || currentAdminOnly)
-                if (currentAdminOnly) {
-                    val source = jdbc.dataSource
-                    if (source is me.manga.kira.backend.common.infrastructure.persistence.GuardedDataSource)
-                        source.requireTestInitialCheckpointDeletion(initialDeletion?.policy)
-                    else check(initialDeletion == null)
-                }
+                if (currentAdminOnly) phase.requireCurrentAdminAuthentication(jdbc, initialDeletion)
                 when (path) {
                     PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION -> phase.adminRead.requireAuthentication(jdbc)
                     PersistencePhasePath.COMPLAINT_ADMIN_SEARCH -> phase.adminRead.requireSearch(jdbc)

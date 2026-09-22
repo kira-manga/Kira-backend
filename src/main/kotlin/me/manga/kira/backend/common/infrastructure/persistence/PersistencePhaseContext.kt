@@ -321,6 +321,8 @@ constructor(
     private var registeredAdminContent: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1? = null
     private var registeredAdminStatus: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1? = null
     private var registeredAdminBatchStatus: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1? = null
+    // AUTH's supplied template is proved against the bound family's privately retained original before principal SQL.
+    private var registeredAdminAuthenticationJdbc: JdbcTemplate? = null
     private var registeredAdminStepUp: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredComplaintStepUpV1? = null
     private var preparingRegisteredAdminStepUp = false
     private var registeredAdminStepUpCurrentReady = false
@@ -1625,6 +1627,31 @@ constructor(
         val original = initialAdmission ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         original.requireExclusiveRelease(ownership)
         return true
+    }
+
+    /** Ordinary registered AUTH is not a deletion graph; only an actually bound original family can select it. */
+    internal fun requireCurrentAdminAuthentication(jdbc: JdbcTemplate,
+        initialDeletion: me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1?) {
+        requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
+        val ordinaryBindings = listOfNotNull(registeredAdminContent, registeredAdminStatus, registeredAdminBatchStatus).size
+        if (ordinaryBindings != 0) {
+            if (ordinaryBindings != 1 || initialDeletion != null || registeredInitialDeletion != null || registeredAdminAuthenticationJdbc != null) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            registeredAdminAuthenticationJdbc = jdbc
+            // Each fixed call passes its original JDBC back through its own bound phase boundary.
+            // A same-pool lookalike template cannot satisfy that identity comparison.
+            when {
+                registeredAdminContent != null -> checkNotNull(registeredAdminContent).requireAuthentication(this)
+                registeredAdminStatus != null -> checkNotNull(registeredAdminStatus).requireStatusAuthentication(this)
+                else -> checkNotNull(registeredAdminBatchStatus).requireBatchStatusAuthentication(this)
+            }
+        } else {
+            // Keep deletion's exact private binding and the lower/unbound absence guard, including on ordinary AUTH.
+            if (initialDeletion !== registeredInitialDeletion) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            dataSource.requireTestInitialCheckpointDeletion(initialDeletion?.policy)
+            initialDeletion?.requirePhaseOwner(ownership, path)
+        }
     }
 
     /** Existing PREPARED phases only: a protected pool cannot borrow a desired-only or recovery request route. */
@@ -4524,7 +4551,8 @@ constructor(
         override fun requireRegisteredOwner(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1,
             jdbc: JdbcTemplate, ownership: PersistencePhaseOwnership) {
             requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
-            if (registeredAdminContent !== original || ownership !== this@PersistencePhaseContext.ownership) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            if (registeredAdminContent !== original || ownership !== this@PersistencePhaseContext.ownership ||
+                (registeredAdminAuthenticationJdbc != null && registeredAdminAuthenticationJdbc !== jdbc)) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             original.requirePath(path)
             original.requireIngress()
         }
@@ -4636,7 +4664,8 @@ constructor(
         override fun requireRegisteredOwner(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1,
             jdbc: JdbcTemplate, ownership: PersistencePhaseOwnership) {
             requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
-            if (registeredAdminStatus !== original || ownership !== this@PersistencePhaseContext.ownership) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            if (registeredAdminStatus !== original || ownership !== this@PersistencePhaseContext.ownership ||
+                (registeredAdminAuthenticationJdbc != null && registeredAdminAuthenticationJdbc !== jdbc)) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             original.requireStatusPath(path)
             original.requireStatusIngress()
         }
@@ -4748,7 +4777,8 @@ constructor(
         override fun requireRegisteredOwner(original: me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentV1,
             jdbc: JdbcTemplate, ownership: PersistencePhaseOwnership) {
             requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
-            if (registeredAdminBatchStatus !== original || ownership !== this@PersistencePhaseContext.ownership) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            if (registeredAdminBatchStatus !== original || ownership !== this@PersistencePhaseContext.ownership ||
+                (registeredAdminAuthenticationJdbc != null && registeredAdminAuthenticationJdbc !== jdbc)) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             original.requireBatchStatusPath(path)
             original.requireBatchStatusIngress()
         }
