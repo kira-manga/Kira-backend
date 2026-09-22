@@ -74,8 +74,10 @@ class TestActiveServicePoisonProcessCasesV1 {
                 assertEquals(checkNotNull(generation), ColdSqlObservationV1.generation(observer))
                 // No child original is closed/released here. Only identified TEST files may be disposed
                 // after independent process/session/generation containment. Unknown evidence stays held.
-                checkNotNull(backing).disposeChildTrust(evidence)
-                database.close() // Actual parent container stop, then its ordinary server-material owner.
+                AutoCloseable { database.close() }.use {
+                    // Even refusal must attempt the parent's container stop; use preserves both failures.
+                    checkNotNull(backing).disposeChildTrust(evidence)
+                }
                 ColdFixtureFilesV1.directory(root)
                 check(rootKey != null && Files.readAttributes(root, PosixFileAttributes::class.java, NOFOLLOW_LINKS).fileKey() == rootKey)
                 Files.walk(root).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
