@@ -121,7 +121,9 @@ internal class TestRegisteredAdminStatusColdInputsV1Test {
                         assembly.assemble(path, AwsSecretVersionFixture.CREDENTIALS, AwsSecretVersionFixture.CREDENTIALS,
                             TestActiveFirstCutInputFixtureV1.ordinaryCredentials, scanner.credentials)
                     }.code)
-                    assertTrue(PgLifecycleTestScope(assembly.lifecycleOwner).actors().none { it.hasEntered() })
+                    // Refusal has no ready target; these retained slots are never cleared by cleanup.
+                    assertNull(poolTestField<Any?>(assembly, "persistence"))
+                    assertNull(poolTestField<Any?>(assembly, "owner"))
                 }
             }
             assertEquals(0, http.createdClients); assertTrue(http.requests.isEmpty())
