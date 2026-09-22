@@ -230,7 +230,8 @@ internal class CatalogTestRunActivationEvidenceFixture(
             testActivationCapacityPolicy(original, ordinarySealHttp?.manifestPublication == true)
         } else original
         fixture.configuration(settings = boundConsumerTestSettings(
-            enrollmentGlobal = ordinarySealHttp?.protectedEnrollmentGlobalPerHour ?: 2, createGlobal = createGlobal), capacity = capacity)
+            enrollmentGlobal = ordinarySealHttp?.protectedEnrollmentGlobalPerHour ?: 2, createGlobal = createGlobal,
+            ownerCreateMemberLimit = ordinaryRawHttp?.mutationMemberLimit ?: 64), capacity = capacity)
     }
     private val activation = FullTestCatalogInputs.activation(
         pools, journal, reader, FullTestCatalogInputs.key(signerId, key(signerId).public.encoded),
@@ -416,7 +417,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
                 consumers.capacityPolicy.creationLimit.toLongArray().toList(), consumers.capacityPolicy.dailyEnrollmentLimit),
             admission = template.admission.copy(
                 enrollmentGlobalPerHour = http.protectedEnrollmentGlobalPerHour ?: template.admission.enrollmentGlobalPerHour,
-                ownerCreateGlobalPerHour = createGlobal),
+                ownerCreateGlobalPerHour = createGlobal, ownerCreateMemberLimit = consumers.ownerCreatePolicy.memberLimit),
             catalog = template.catalog.copy(readerProfile = "PROJECTED_CURRENT", initialBundleBase64 = TestDeploymentInputFixture.base64(initial),
                 currentBundleBase64 = TestDeploymentInputFixture.base64(current),
                 rootPublicKeySpkiBase64 = TestDeploymentInputFixture.base64(trust.rootPublicKeySpki),
@@ -449,6 +450,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             adminRead = ordinaryRawHttp?.adminRead,
             adminContent = ordinaryRawHttp?.adminContent,
             adminStatus = ordinaryRawHttp?.adminStatus,
+            adminBatchStatus = ordinaryRawHttp?.adminBatchStatus,
         )
         intakeDocument = document
         val inputBytes = TestDeploymentInputFixture.bytes(document)
