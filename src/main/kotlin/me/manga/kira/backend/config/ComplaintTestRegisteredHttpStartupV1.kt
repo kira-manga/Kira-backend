@@ -134,7 +134,8 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             replyPolicy?.requireReplies()
             requireTestDeployment(editPolicy == null || editPolicy === replyPolicy, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             editPolicy?.requireEdits()
-            requireTestDeployment(!selectMe || (replyPolicy == null && editPolicy == null), ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+            requireTestDeployment(!selectMe || (replyPolicy == null && editPolicy == null) ||
+                (replyPolicy != null && editPolicy === replyPolicy), ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             requireTestDeployment(!selectAdminReads || (!selectMe && replyPolicy == null && editPolicy == null &&
                 registration.process.consumers.adminReadPolicy is me.manga.kira.backend.security.ComplaintAdminReadAdmissionPolicy.Bounded &&
                 registration.process.consumers.adminCursorCodec != null), ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
@@ -181,6 +182,8 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             val service = AuditService(counted, CurrentUser(), Clock.systemUTC()).also { audit = it }
             val composition = if (selectAdminReads) {
                 null // The new concrete supplier resolves the original configured user decoder only during refresh.
+            } else if (selectMe && editPolicy != null) {
+                ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateMeReplyEdit(registration, assembly, owner, template, service)
             } else if (selectMe) {
                 ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateMe(registration, assembly, owner, template, service)
             } else if (editPolicy != null) {
@@ -490,6 +493,14 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             val policy = checkNotNull(registration.process.initialCheckpointCreate)
             policy.requireEdits()
             return ComplaintTestRegisteredHttpStartupV1(assembly, registration, policy, policy)
+        }
+
+        /** Explicit combined cohort, retaining the same existing EDIT-capable policy and original me projection. */
+        internal fun retainedWithMeReplyEdit(assembly: ComplaintTestProcessAssemblyV1, registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
+            val policy = checkNotNull(registration.process.initialCheckpointCreate)
+            policy.requireReplies()
+            policy.requireEdits()
+            return ComplaintTestRegisteredHttpStartupV1(assembly, registration, policy, policy, selectMe = true)
         }
     }
 }
