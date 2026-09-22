@@ -182,7 +182,7 @@ class ComplaintDesiredDeploymentInputsV1Test {
                     AcquiredVersionedSecret.acquire(inputs.runtimePassword) {
                         resolutions++
                         error("Retired-capacity input reached secret resolution.")
-                    }.close()
+                    }
                 }
                 assertEquals(ComplaintDesiredInstallationFailureV1.INPUT_REFUSED, failure.code)
                 assertNull(failure.cause)
