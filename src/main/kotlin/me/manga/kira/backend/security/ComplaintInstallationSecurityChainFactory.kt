@@ -65,7 +65,8 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
             require(!it.create.hasDeleteStatus() && it.create.hasEditStatus() == (it.edit != null)) { "Complaint CREATE subset refused." }
             if (it.edit != null) require(it.reply != null && it.create.usesEditStatus(it.edit)) { "Complaint EDIT subset refused." }
             require(it.reply == null || it.reply === it.create) { "Complaint REPLY subset refused." }
-            require(it.me == null || (it.reads != null && it.reply == null && it.edit == null)) { "Installation read subset refused." }
+            require(it.me == null || (it.reads != null &&
+                ((it.reply == null && it.edit == null) || (it.reply === it.create && it.edit != null)))) { "Installation read subset refused." }
         }
         core?.let {
             require(it.create.hasDeleteStatus() == (it.delete != null)) { "Complaint delete/status composition refused." }
@@ -213,7 +214,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
         val delete: ComplaintOwnerDeleteHttpHandler?,
     )
 
-    /** Fixed narrower tuple: separate concrete me reader or reply/EDIT siblings, never delete. */
+    /** Fixed narrower tuple: me may join read/CREATE or the complete reply/EDIT cohort, never delete. */
     private class InitialCreate(
         val authentication: ComplaintInstallationBearerAuthenticator,
         val installations: ComplaintInstallationHttpHandler,
@@ -270,6 +271,15 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
             detail: ComplaintOwnerDetailHttpHandler, edit: ComplaintOwnerEditHttpHandler): ComplaintInstallationSecurityChainFactory =
             ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap,
                 InitialCreate(authentication, installations, create, OwnerReads(history, detail), create, edit))
+
+        /** Explicit me/REPLY/EDIT cohort; CREATE owns the exact reply/status handlers and no deletion custody. */
+        fun registeredReadCreateMeReplyEditSubset(bridge: ComplaintHttpIngressBridge, bootstrap: ComplaintInstallationBootstrapHttpHandler,
+            authentication: ComplaintInstallationBearerAuthenticator, installations: ComplaintInstallationHttpHandler,
+            create: ComplaintOwnerCreateHttpHandler, history: ComplaintOwnerHistoryHttpHandler,
+            detail: ComplaintOwnerDetailHttpHandler, me: ComplaintInstallationMeHttpHandler,
+            edit: ComplaintOwnerEditHttpHandler): ComplaintInstallationSecurityChainFactory =
+            ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap,
+                InitialCreate(authentication, installations, create, OwnerReads(history, detail), reply = create, edit = edit, me = me))
     }
 }
 

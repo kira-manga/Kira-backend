@@ -84,8 +84,9 @@ import java.util.UUID
  * existing owner reads only. A separate born-with reply selection adds only OWNER_REPLY;
  * a further explicit EDIT selection retains its own operation boundary.
  * An explicit read/CREATE/me sibling adds only the existing installation projection.
+ * A further explicit me/REPLY/EDIT selection combines that projection with the existing owner cohort.
  * A separate born-with Admin read sibling adds its fixed normal-ADMIN search/detail/stats cohort.
- * No delete, LIVE/restart/quarantine or broad Core; all earlier selectors still exclude /me.
+ * No delete, LIVE/restart/quarantine or broad Core; all earlier selectors remain narrower.
  */
 internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     registration: ComplaintTestNamespaceRegistrationV1,
@@ -105,7 +106,8 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         require(reads == null || assembly != null)
         require(replyStore == null || reads != null)
         require(editStore == null || replyStore != null)
-        require(me == null || (reads != null && replyStore == null && editStore == null))
+        require(me == null || (reads != null &&
+            ((replyStore == null && editStore == null) || (replyStore != null && editStore != null))))
         require(adminReads == null || (reads != null && replyStore == null && editStore == null && me == null))
         require(adminContent == null || adminReads != null)
     }
@@ -141,7 +143,11 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         // AUTH remains early rejection only. Direct CREATE constructs no read producer/handler.
         val authentication = ComplaintInstallationBearerAuthenticator(scope, jwt,
             reads?.authenticationPhases ?: ComplaintOwnerHistoryPhaseExecutor(ownership, JdbcComplaintOwnerHistoryStore(jdbc, scope)), ingress)
-        if (me != null) {
+        if (me != null && edit != null) {
+            val selectedReads = checkNotNull(reads)
+            ComplaintInstallationSecurityChainFactory.registeredReadCreateMeReplyEditSubset(
+                bridge, producer, authentication, installations, create, selectedReads.history, selectedReads.detail, me, edit)
+        } else if (me != null) {
             val selectedReads = checkNotNull(reads)
             ComplaintInstallationSecurityChainFactory.registeredReadCreateMeSubset(
                 bridge, producer, authentication, installations, create, selectedReads.history, selectedReads.detail, me)
@@ -457,6 +463,23 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             val reply = JdbcComplaintOwnerCreateStore.registeredInitialCheckpointWithReplies(jdbc, audit, ownership, registration, assembly)
             return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
                 RegisteredOwnerReads(registration, assembly, ownership, jdbc), reply, edit)
+        }
+
+        /** Explicit me plus complete owner mutation/status tuple, without broad Core or a new persistence owner. */
+        fun fromRegisteredInitialCheckpointReadCreateMeReplyEdit(
+            registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership,
+            jdbc: JdbcTemplate,
+            audit: AuditService,
+        ): ComplaintTestBootstrapHttpCompositionV1 {
+            registration.requireActiveIdentityTarget(assembly)
+            registration.requireInstallationResources(ownership, jdbc)
+            val edit = JdbcComplaintOwnerEditStore.registeredInitialCheckpoint(jdbc, audit, ownership, registration, assembly)
+            val reply = JdbcComplaintOwnerCreateStore.registeredInitialCheckpointWithReplies(jdbc, audit, ownership, registration, assembly)
+            val reads = RegisteredOwnerReads(registration, assembly, ownership, jdbc)
+            return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
+                reads, reply, edit, me = reads.installationMe())
         }
     }
 }
