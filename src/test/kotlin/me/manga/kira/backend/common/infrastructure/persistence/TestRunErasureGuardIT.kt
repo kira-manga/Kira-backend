@@ -21,9 +21,7 @@ import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.jdbc.datasource.ConnectionHolder
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
-import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.SQLException
 
 /** Negative SQL/transport specimens over genuine C/A/D/E. No successful history is fabricated. NOT_RUN. */
@@ -84,24 +82,24 @@ class TestRunErasureGuardIT {
         } }
     }
 
-    @Test fun v30RefusesExpiredScopedLeaseAtActualOtherwiseCompleteFinalPrefix() = v30FinalNegative { jdbc, h ->
-        assertEquals(1, jdbc.update("UPDATE complaint_journal_control SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE data_scope_id = ?", h.scope))
+    @Test fun v30RefusesExpiredScopedLeaseAtActualOtherwiseCompleteFinalPrefix() = v30FinalNegative { h ->
+        "UPDATE complaint_journal_control SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE data_scope_id = '${h.scope}'::uuid"
     }
 
-    @Test fun v30RefusesOpenMaintenanceGateAtActualOtherwiseCompleteFinalPrefix() = v30FinalNegative { jdbc, h ->
-        assertEquals(1, jdbc.update("UPDATE complaint_journal_control SET maintenance_closed = false WHERE data_scope_id = ?", h.scope))
+    @Test fun v30RefusesOpenMaintenanceGateAtActualOtherwiseCompleteFinalPrefix() = v30FinalNegative { h ->
+        "UPDATE complaint_journal_control SET maintenance_closed = false WHERE data_scope_id = '${h.scope}'::uuid"
     }
 
-    @Test fun v30RefusesMissingTerminalProjectionAtActualOtherwiseCompleteFinalPrefix() = v30FinalNegative { jdbc, h ->
-        assertEquals(1, jdbc.update("UPDATE complaint_catalog_mutations SET projected_at = NULL WHERE operation_token = ?", h.catalog.token))
+    @Test fun v30RefusesMissingTerminalProjectionAtActualOtherwiseCompleteFinalPrefix() = v30FinalNegative { h ->
+        "UPDATE complaint_catalog_mutations SET projected_at = NULL WHERE operation_token = '${h.catalog.token}'::uuid"
     }
 
-    @Test fun v30RefusesDifferentGlobalAcceptedHeadAtActualOtherwiseCompleteFinalPrefix() = v30FinalNegative { jdbc, _ ->
-        assertEquals(1, jdbc.update("UPDATE complaint_journal_control SET accepted_catalog_hash = decode(repeat('ab',32),'hex') WHERE data_scope_id = '00000000-0000-0000-0000-000000000000'"))
+    @Test fun v30RefusesDifferentGlobalAcceptedHeadAtActualOtherwiseCompleteFinalPrefix() = v30FinalNegative {
+        "UPDATE complaint_journal_control SET accepted_catalog_hash = decode(repeat('ab',32),'hex') WHERE data_scope_id = '00000000-0000-0000-0000-000000000000'"
     }
 
-    @Test fun v30RefusesWrongPermanentDispositionAtActualOtherwiseCompleteFinalPrefix() = v30FinalNegative { jdbc, h ->
-        assertEquals(1, jdbc.update("UPDATE complaint_installation_ids SET state = 'DELETED' WHERE data_scope_id = ? AND state = 'RETIRED'", h.scope))
+    @Test fun v30RefusesWrongPermanentDispositionAtActualOtherwiseCompleteFinalPrefix() = v30FinalNegative { h ->
+        "UPDATE complaint_installation_ids SET state = 'DELETED' WHERE data_scope_id = '${h.scope}'::uuid AND state = 'RETIRED'"
     }
 
     @Test fun changedOrdinaryRawDenialCannotUseSuccessfulEAsReplacementAuthority() = withFixture { tls ->
@@ -170,24 +168,43 @@ class TestRunErasureGuardIT {
         } }
     }
 
-    /** One negative per genuine FINAL, within its unchanged two-second bound. The bad savepoint
-     * is rolled back BEFORE the original SQL resumes; no guard is disabled and no result replaced. */
-    private fun v30FinalNegative(change: (JdbcTemplate, TestRunErasureFixtureV1) -> Unit) = withFixture { tls ->
+    /** One negative per genuine FINAL, within its unchanged two-second bound. A server exception
+     * block rolls back the specimen BEFORE the original SQL resumes; no JDBC transaction control.
+     * Only the five fixed statements above and typed fixture UUIDs enter this private SQL body. */
+    private fun v30FinalNegative(changeSql: (TestRunErasureFixtureV1) -> String) = withFixture { tls ->
         withActiveHistoryTerminalCatalogRun(tls) { active -> TestRunErasureFixtureV1(active.catalog).use { h ->
             val e = h.projectE(); val before = h.baseline(); var checked = 0
             h.jdbc.before = { call -> if (call.sql == TestRunErasureSqlV1.deleteActive) {
-                assertEquals(PersistencePhasePath.COMPLAINT_TEST_RUN_ERASURE_FINAL, call.path); assertEquals(0, checked++)
+                assertEquals(PersistencePhasePath.COMPLAINT_TEST_RUN_ERASURE_FINAL, call.path); assertEquals(0, checked)
                 val actual = JdbcTemplate(h.runtime.pools.deletion).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
                 listOf("app_installations", "complaint_resource_ids", "complaints", "complaint_journal_publications",
                     "complaint_recovery_capacity_reservations", "complaint_deletion_journal_applied", "complaint_test_terminal_intents").forEach { table ->
                     assertEquals(0L, actual.queryForObject("SELECT count(*) FROM $table WHERE data_scope_id = ?", Long::class.java, h.scope))
                 }
-                val connection = (TransactionSynchronizationManager.getResource(h.runtime.pools.deletion) as ConnectionHolder).connection
-                val savepoint = connection.setSavepoint()
-                try {
-                    change(actual, h)
-                    erasureSqlState("23514") { actual.update("DELETE FROM complaint_test_active_seal_intents WHERE data_scope_id = ?", h.scope) }
-                } finally { connection.rollback(savepoint); connection.releaseSavepoint(savepoint) }
+                val preimage = h.allPhysicalRows(actual)
+                actual.execute("""
+                    DO ${'$'}erasure_guard${'$'}
+                    DECLARE
+                        changed bigint;
+                        at_delete boolean := false;
+                    BEGIN
+                        BEGIN
+                            ${changeSql(h)};
+                            GET DIAGNOSTICS changed = ROW_COUNT;
+                            IF changed IS DISTINCT FROM 1 THEN
+                                RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'Expected one guard specimen mutation';
+                            END IF;
+                            at_delete := true;
+                            DELETE FROM complaint_test_active_seal_intents WHERE data_scope_id = '${h.scope}'::uuid;
+                            RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'Expected active row DELETE refusal';
+                        EXCEPTION WHEN SQLSTATE '23514' THEN
+                            IF NOT at_delete THEN RAISE; END IF;
+                        END;
+                    END;
+                    ${'$'}erasure_guard${'$'};
+                """.trimIndent())
+                assertEquals(preimage, h.allPhysicalRows(actual), "The actual guard refusal must restore every row/xmin before original F resumes.")
+                checked++
             } }
             try { assertEquals(TestRunErasureResultV1.PURGED, h.child(e).erase(h.request())) } finally { h.jdbc.before = {} }
             assertEquals(1, checked); h.assertReleased(); h.assertPurged(before); h.jdbc.assertOrder()
