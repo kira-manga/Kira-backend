@@ -33,6 +33,7 @@ import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
+import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.ResultSetExtractor
 import org.springframework.jdbc.core.RowMapper
@@ -40,8 +41,10 @@ import org.springframework.jdbc.datasource.ConnectionHolder
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import software.amazon.awssdk.http.SdkHttpClient
+import java.lang.reflect.Modifier
 import java.sql.Connection
 import java.sql.ResultSet
+import java.sql.SQLException
 import java.time.Clock
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -313,6 +316,7 @@ internal class TestRunErasureFixtureV1(
         jdbc.before = {}; jdbc.after = {}
         try {
             originals.forEach { runCatching(it::close) } // Negative originals stay failed; only physical release is asserted here.
+            runCatching(jdbc::reportRetainedFailure) // Before the release gate can mask the first F failure.
             assertReleased(false); assertEquals(emptyCreated, emptyClosed)
             emptyRequests.forEach { assertEquals(1, it.calls); assertEquals(1, it.aborts); assertEquals(1, checkNotNull(it.reply).closes) }
         } finally {
@@ -351,6 +355,12 @@ internal class TestRunErasureSqlProbeV1(private val f: TestRunErasureFixtureV1) 
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     private val failure = AtomicReference<AssertionError?>()
     private var dispatching = false
+    private var lastEnteredSql: String? = null
+    private var lastReturnedSql: String? = null
+    private var lastSqlReturned = false
+    private var probeBoundary = ProbeBoundary.NOT_ENTERED
+    private var firstSqlFailure: SqlFailure? = null
+    private var diagnosticReported = false
     init { exceptionTranslator = SQLExceptionSubclassTranslator() }
     override fun <T : Any?> query(sql: String, mapper: RowMapper<T>): List<T> = once(sql, emptyArray()) { super.query(sql, mapper) }
     override fun <T : Any?> query(sql: String, mapper: RowMapper<T>, vararg args: Any?): List<T> = once(sql, args) { super.query(sql, mapper, *args) }
@@ -361,6 +371,7 @@ internal class TestRunErasureSqlProbeV1(private val f: TestRunErasureFixtureV1) 
         if (dispatching) return action()
         dispatching = true
         return try {
+            lastEnteredSql = sql; lastSqlReturned = false; probeBoundary = ProbeBoundary.PROBE
             val phase = checkNotNull(PersistencePhaseOwnership.current())
             val path = ownedCutField(phase, "path") as PersistencePhasePath
             assertTrue(path.testRunErasure); assertSame(original, ownedCutField(phase, "testRunErasure"))
@@ -385,10 +396,76 @@ internal class TestRunErasureSqlProbeV1(private val f: TestRunErasureFixtureV1) 
             }
             assertSame(observed.lease, lease); assertFalse(lease.completion.quiescent())
             val call = Call(phase, path, sql, args.map { if (it is ByteArray) Sha256.hex(it) else it })
-            calls.add(call); before(call); action().also { after(call) }
-        } catch (problem: AssertionError) { failure.compareAndSet(null, problem); throw problem }
+            calls.add(call)
+            probeBoundary = ProbeBoundary.BEFORE
+            before(call)
+            probeBoundary = ProbeBoundary.JDBC
+            action().also {
+                lastReturnedSql = sql; lastSqlReturned = true; probeBoundary = ProbeBoundary.AFTER
+                after(call)
+                probeBoundary = ProbeBoundary.RETURNED
+            }
+        } catch (problem: Throwable) {
+            if (problem is AssertionError) failure.compareAndSet(null, problem)
+            runCatching {
+                if (firstSqlFailure == null) firstSqlFailure = SqlFailure(sql, probeBoundary, lastSqlReturned, probeFailureCode(problem))
+            }
+            throw problem
+        }
         finally { dispatching = false }
     }
+
+    /** Failure-only passive state. Never samples time, queries SQL, or attempts to release a phase. */
+    fun reportRetainedFailure() {
+        if (diagnosticReported || !this::original.isInitialized) return
+        val first = (ownedCutField(original, "firstFailure") as AtomicReference<*>).get()
+        val retainedPhase = ownedCutField(original, "phase") as? PersistencePhaseContext
+        if (first == null && firstSqlFailure == null && retainedPhase == null) return
+        diagnosticReported = true
+        val firstState = if (first == null) "firstFailure=NONE" else
+            "firstStage=${enumField(first, "stage")} firstStep=${enumField(first, "step")} " +
+                "firstCategory=${ownedCutField(first, "category") as String} firstCode=${ownedCutField(first, "code") as String}"
+        val sql = firstSqlFailure
+        System.err.println("TEST_RUN_ERASURE_FIRST_FAILURE $firstState " +
+            "firstSqlEdge=${sqlEdge(sql?.sql)} firstSqlBoundary=${sql?.boundary?.name ?: "NONE"} " +
+            "firstSqlReturned=${sql?.returned?.toString() ?: "NONE"} firstSqlFailure=${sql?.code ?: "NONE"}")
+        val retainedState = runCatching {
+            val phase = retainedPhase ?: observations.keys.lastOrNull()
+            val phaseFailure = phase?.let { (ownedCutField(it, "failure") as AtomicReference<*>).get() as? PersistencePhaseFailureCode }
+            val operation = phase?.let { ownedCutField(it.testRunErasureBoundary, "retained") }
+            "phaseSource=${if (retainedPhase != null) "RETAINED" else if (phase != null) "LAST_OBSERVED" else "NONE"} " +
+                "phasePath=${enumField(phase, "path")} phaseStageAtReport=${enumField(phase, "stage")} " +
+                "phaseFailureAtReport=${phaseFailure?.name ?: "NONE"} phaseOutcomeAtReport=${phase?.databaseOutcome()?.name ?: "NONE"} " +
+                "operationStageAtReport=${enumField(operation, "stage")} operationWorkAtReport=${enumField(operation, "work")}"
+        }.getOrDefault("retainedDiagnostic=UNAVAILABLE")
+        System.err.println("TEST_RUN_ERASURE_RETAINED lastEnteredSql=${sqlEdge(lastEnteredSql)} lastReturnedSql=${sqlEdge(lastReturnedSql)} " +
+            "probeBoundaryAtReport=${probeBoundary.name} lastSqlReturned=$lastSqlReturned $retainedState")
+    }
+
+    private enum class ProbeBoundary { NOT_ENTERED, PROBE, BEFORE, JDBC, AFTER, RETURNED }
+    private class SqlFailure(val sql: String, val boundary: ProbeBoundary, val returned: Boolean, val code: String)
+
+    private fun probeFailureCode(problem: Throwable): String = when (problem) {
+        is PersistencePhaseException -> "PERSISTENCE_PHASE:${problem.code.name}"
+        is PersistenceBoundaryException -> "PERSISTENCE_BOUNDARY:${problem.code.name}"
+        is DataAccessException -> "DATA_ACCESS:${boundedSqlState(problem.cause as? SQLException)}"
+        is SQLException -> "SQL:${boundedSqlState(problem)}"
+        is AssertionError -> "ASSERTION"
+        is Error -> "ERROR"
+        else -> "OTHER"
+    }
+    private fun boundedSqlState(problem: SQLException?): String = problem?.sqlState?.takeIf { state ->
+        state.length == 5 && state.all { it in 'A'..'Z' || it in '0'..'9' }
+    } ?: "UNAVAILABLE"
+    private fun enumField(owner: Any?, name: String): String = owner?.let { (ownedCutField(it, name) as? Enum<*>)?.name } ?: "NONE"
+    private fun sqlEdge(sql: String?): String {
+        if (sql == null) return "NONE"
+        // Fixed source field labels only; neither SQL text nor arguments enter the report.
+        return TestRunErasureSqlV1::class.java.declaredFields.firstOrNull {
+            it.type == String::class.java && Modifier.isStatic(it.modifiers) && it.trySetAccessible() && it.get(null) == sql
+        }?.name ?: "OTHER"
+    }
+
     fun assertReleased(committed: Boolean) {
         failure.get()?.let { throw it }
         observations.forEach { (phase, observed) ->
