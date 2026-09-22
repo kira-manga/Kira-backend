@@ -67,7 +67,9 @@ internal fun withRegisteredCompleteHttp(tls: VersionBoundPersistenceConnectedFix
             else first.assembly.beginRegisteredCompleteHttpStartup(first.registration)
         startup.use {
             if (oldStatusOnly) startup.start() else startup.start(sourceSigning = sharedSourceSigning(),
-                normalProperties = mapOf("kira.security.throttle.max-entries" to "1024")) // Existing born TEST bound, never a raised limit.
+                normalProperties = mapOf("kira.security.throttle.max-entries" to "1024", // Existing born TEST bound, never a raised limit.
+                    "kira.admin.seed-enabled" to "false", // Existing BCrypt Admin-user fixture owns this TEST setup.
+                    "kira.tutorial.seed-enabled" to "false")) // Unrelated sample content/media is not part of this TEST fixture.
             StartedHttpView(first, startup, if (oldStatusOnly) TestRegisteredCompleteHttpFixtureV1.OLD_PATHS else TestRegisteredCompleteHttpFixtureV1.PATHS,
                 sharedOrdinary = !oldStatusOnly).use { web ->
                 withRegisteredAdminContentFixtureV1(first, raw.ordinary, raw.checkpoint, web) { admin ->
