@@ -150,8 +150,13 @@ internal object TestRegisteredOwnerDeleteHttpCasesV1 {
             assertEquals(1, f.jdbc.update("UPDATE app_installations SET credential_version = credential_version + 1 WHERE id = ? AND data_scope_id = ?", actor.id, f.scope))
             problem(f.delete(input, token), 401, "UNAUTHORIZED")
             problem(f.status(input, token), 401, "UNAUTHORIZED")
+            // The unchanged, actually enrolled foreign credential remains current but cannot observe this receipt.
+            problem(f.status(input, foreignToken), 404, "OPERATION_NOT_FOUND")
             f.first.registration.close()
-            checked(f.delete(input, token), 503); checked(f.status(input, token), 503)
+            checked(f.delete(input, token), 503) // DELETE checks registration before early bearer authentication.
+            // STATUS authenticates first: distinguish stale-credential rejection from the registered read's refusal.
+            problem(f.status(input, token), 401, "UNAUTHORIZED")
+            problem(f.status(input, foreignToken), 503, "SERVICE_UNAVAILABLE")
             f.assertReleased()
             assertEquals(completedCounters, f.counters()); assertEquals(completedProviders, f.raw.counts())
         }
