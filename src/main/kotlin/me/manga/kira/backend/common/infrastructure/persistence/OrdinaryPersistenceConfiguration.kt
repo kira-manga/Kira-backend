@@ -7,6 +7,7 @@ import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapa
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintGrantCleanupPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.OrdinaryPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ScopedAdminStepUpPhaseExecutor
+import me.manga.kira.backend.config.ComplaintTestRegisteredHttpStartupV1
 import me.manga.kira.backend.config.KiraAdminStudioProperties
 import me.manga.kira.backend.security.AuthThrottle
 import me.manga.kira.backend.security.JdbcComplaintGrantCleanupStore
@@ -17,6 +18,7 @@ import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.actuate.autoconfigure.health.ConditionalOnEnabledHealthIndicator
 import org.springframework.boot.actuate.jdbc.DataSourceHealthIndicator
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties
 import org.springframework.boot.autoconfigure.jdbc.JdbcConnectionDetails
 import org.springframework.boot.autoconfigure.jdbc.JdbcProperties
@@ -45,6 +47,7 @@ import javax.sql.DataSource
 @EnableConfigurationProperties(DataSourceProperties::class, JdbcProperties::class)
 internal class OrdinaryPersistenceConfiguration {
     @Bean(name = ["dataSource", "ordinaryDataSource"], destroyMethod = "close")
+    @ConditionalOnMissingBean(ComplaintTestRegisteredHttpStartupV1::class)
     @Primary
     @Suppress("TooGenericExceptionCaught") // Close the retained owner before sanitizing any bootstrap failure.
     fun dataSource(properties: DataSourceProperties, details: ObjectProvider<JdbcConnectionDetails>, environment: Environment): GuardedDataSource =
@@ -65,9 +68,11 @@ internal class OrdinaryPersistenceConfiguration {
         }
 
     @Bean(name = ["complaintDeletionDataSource"], destroyMethod = "close")
+    @ConditionalOnMissingBean(ComplaintTestRegisteredHttpStartupV1::class)
     fun complaintDeletionDataSource(@Qualifier("ordinaryDataSource") ordinary: GuardedDataSource): GuardedDataSource = ordinary.closedDeletionDataSource()
 
     @Bean(name = ["transactionManager", "ordinaryJpaTransactionManager"])
+    @ConditionalOnMissingBean(ComplaintTestRegisteredHttpStartupV1::class)
     @Primary
     fun transactionManager(
         entityManagerFactory: EntityManagerFactory,
@@ -76,10 +81,12 @@ internal class OrdinaryPersistenceConfiguration {
     ): GuardedJpaTransactionManager = GuardedJpaTransactionManager.sourceOnly(entityManagerFactory, ordinary, customizers.ifAvailable)
 
     @Bean(name = ["complaintDeletionTransactionManager"])
+    @ConditionalOnMissingBean(ComplaintTestRegisteredHttpStartupV1::class)
     fun complaintDeletionTransactionManager(@Qualifier("complaintDeletionDataSource") deletion: GuardedDataSource): GuardedJdbcTransactionManager =
         GuardedJdbcTransactionManager(deletion)
 
     @Bean(name = ["jdbcTemplate", "ordinaryJdbcTemplate"])
+    @ConditionalOnMissingBean(ComplaintTestRegisteredHttpStartupV1::class)
     @Primary
     fun jdbcTemplate(
         @Qualifier("ordinaryDataSource") ordinary: GuardedDataSource,
@@ -99,6 +106,7 @@ internal class OrdinaryPersistenceConfiguration {
     }
 
     @Bean(name = ["complaintDeletionJdbcTemplate"])
+    @ConditionalOnMissingBean(ComplaintTestRegisteredHttpStartupV1::class)
     fun complaintDeletionJdbcTemplate(@Qualifier("complaintDeletionDataSource") deletion: GuardedDataSource): JdbcTemplate =
         JdbcTemplate(deletion).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
 
@@ -108,10 +116,12 @@ internal class OrdinaryPersistenceConfiguration {
         DataSourceHealthIndicator(ordinary, ordinary.ordinaryValidationQuery())
 
     @Bean
+    @ConditionalOnMissingBean(ComplaintTestRegisteredHttpStartupV1::class)
     fun ordinaryPersistenceAdmission(@Qualifier("ordinaryDataSource") ordinary: GuardedDataSource): OrdinaryPersistenceAdmission =
         OrdinaryPersistenceAdmission.sourceOnly(ordinary.ordinaryPoolSize())
 
     @Bean
+    @ConditionalOnMissingBean(ComplaintTestRegisteredHttpStartupV1::class)
     fun ordinaryPersistenceOwnership(
         admission: OrdinaryPersistenceAdmission,
         @Qualifier("ordinaryJpaTransactionManager") manager: GuardedJpaTransactionManager,
@@ -125,10 +135,13 @@ internal class OrdinaryPersistenceConfiguration {
         properties: KiraAdminStudioProperties,
         passwords: PasswordEncoder,
         throttle: AuthThrottle,
+        startup: ComplaintTestRegisteredHttpStartupV1? = null,
     ): ScopedAdminStepUpIssuer {
+        startup?.claimSourceStepUpResources(ownership, jdbc, properties, passwords, throttle)
         val sourceCleanup = OrdinaryPersistencePhaseExecutor(ownership, JdbcSourceGrantCleanupStore(jdbc), clock)
-        // No authenticated complaint-policy digest is supplied. More importantly, the same
-        // owner's sourceOnly admission refuses every complaint phase BEFORE any of this SQL.
+        // No registered current owner or authenticated complaint-policy digest is supplied here.
+        // Without selection, sourceOnly still refuses every complaint phase BEFORE SQL. The selected
+        // shared-path codec dispatches COMPLAINT only to its separately bound original issuer.
         val closedCapacity = JdbcComplaintCapacityStore(jdbc, expectedPolicyDigest = null)
         val closedCleanup = ComplaintGrantCleanupPhaseExecutor(ownership, JdbcComplaintGrantCleanupStore(jdbc, closedCapacity), clock)
         val store = JdbcScopedAdminStepUpStore(jdbc, closedCapacity, clock, properties)

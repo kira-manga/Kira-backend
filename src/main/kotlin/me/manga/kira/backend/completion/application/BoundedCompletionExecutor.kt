@@ -26,6 +26,9 @@ class BoundedCompletionExecutor(threads: Int, queueCapacity: Int, threadFactory:
         delegate.shutdownNow()
     }
 
+    /** Physical executor termination, not caller cancellation, active-count zero or an empty queue. */
+    internal fun isTerminated(): Boolean = delegate.isTerminated
+
     fun activeCount(): Int = delegate.activeCount
 
     fun queueSize(): Int = delegate.queue.size

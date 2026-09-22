@@ -9,6 +9,7 @@ import me.manga.kira.backend.audit.domain.ComplaintInstallationEnrollmentAudit
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.common.web.DisabledComplaintRoutesFilter
+import me.manga.kira.backend.complaint.api.ComplaintAdminStepUpHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationBootstrapHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
@@ -75,11 +76,13 @@ import me.manga.kira.backend.security.ComplaintSecurityFailure
 import me.manga.kira.backend.security.ComplaintSecurityRejected
 import me.manga.kira.backend.security.ComplaintSecurityResponses
 import me.manga.kira.backend.security.InstallationJwtCodec
+import org.springframework.http.server.RequestPath
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.web.SecurityFilterChain
+import org.springframework.web.util.pattern.PathPatternParser
 import java.time.Clock
 import java.util.UUID
 
@@ -208,6 +211,7 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         else ComplaintInstallationSecurityChainFactory.registeredReadCreateSubset(bridge, producer, authentication, installations, create, reads.history, reads.detail)
     }
     private val disabled = DisabledComplaintRoutesFilter()
+    private val sharedStepUpPath = PathPatternParser().parse(ComplaintAdminStepUpHttpHandler.PATH)
 
     private val literalPaths: Set<String> = (if (assembly == null) setOf(ComplaintInstallationRoutes.BOOTSTRAP) else setOf(
         ComplaintInstallationRoutes.BOOTSTRAP, ComplaintInstallationRoutes.ENROLLMENT, ComplaintInstallationRoutes.SESSION,
@@ -222,6 +226,10 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         (if (editStore == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}/content")) +
         (adminReads?.mappedPaths ?: emptySet()) + (adminContent?.mappedPaths ?: emptySet())
 
+    // The complete filter alone classifies the shared step-up POST. A SOURCE continuation must
+    // reach the existing MVC controller, not the complaint factory's earlier template mapping.
+    internal val mvcMappedPaths: Set<String> = if (completeOwnerAdmin) mappedPaths - ComplaintAdminStepUpHttpHandler.PATH else mappedPaths
+
     internal fun mapsRequest(request: HttpServletRequest): Boolean = ComplaintInstallationRoutes.path(request) in literalPaths ||
         (reads != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
         (ownerDelete != null && request.method == "DELETE" && ComplaintInstallationRoutes.isDetail(request)) ||
@@ -233,7 +241,13 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     val ingressFilter: Filter = Filter { request, response, chain ->
         val http = request as HttpServletRequest
         val path = ComplaintInstallationRoutes.path(http)
-        if (adminContent?.mapsRequest(http) == true) {
+        if (completeOwnerAdmin && matchesSharedStepUp(http)) {
+            // MVC's decoded aliases must not reach the normal controller with an unclassified
+            // COMPLAINT body. Only the exact existing wire POST gets the single bounded codec.
+            if (http.method == "POST" && path == ComplaintAdminStepUpHttpHandler.PATH) {
+                checkNotNull(adminContent).handleSharedStepUp(http, response as HttpServletResponse, chain)
+            } else ComplaintSecurityResponses.problem(http, response as HttpServletResponse, ComplaintSecurityFailure.NOT_FOUND)
+        } else if (adminContent?.mapsRequest(http) == true) {
             adminContent.handleRequest(http, response as HttpServletResponse)
         } else if (adminReads?.mapsRequest(http) == true) {
             // This exact existing handler owns original ingress + input bounds + real normal-JWT/current-ADMIN SQL.
@@ -266,6 +280,13 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
                 }
             })
         }
+    }
+
+    @Suppress("SwallowedException")
+    private fun matchesSharedStepUp(request: HttpServletRequest): Boolean = try {
+        sharedStepUpPath.matches(RequestPath.parse(request.requestURI, request.contextPath).pathWithinApplication())
+    } catch (failure: IllegalArgumentException) {
+        false // The existing container/firewall owns globally malformed paths.
     }
 
     val handler = factory.handler // Fixed dispatcher claims this same ingress once; never map the standalone producer.
