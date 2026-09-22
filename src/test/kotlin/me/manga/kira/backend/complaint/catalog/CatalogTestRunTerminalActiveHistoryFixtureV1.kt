@@ -395,7 +395,10 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
         assertEquals(producerCounts, a.native.counts(), "D/E never re-encrypt, PUT or reopen A's producer graph.")
         assertEquals(queueOrder, b?.raw?.order); assertEquals(acknowledgements, b?.raw?.ackRequests)
         assertEquals(queueOpenings, queueClients()); assertEquals(queueSqlCalls, b?.calls?.size)
-        b?.assertReleased()
+        b?.let {
+            // Cold continuation retires the original root; a shutdown request alone is not cleanup proof.
+            if (it.process.pools.shutdownRequested()) it.assertReleasedAfterRuntimeRetirement() else it.assertReleased()
+        }
     }
     if (queue === TerminalCatalogQueueHistoryV1.ABSENT) {
         try {
