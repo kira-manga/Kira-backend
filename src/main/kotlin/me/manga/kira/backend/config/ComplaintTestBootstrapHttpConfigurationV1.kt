@@ -23,5 +23,5 @@ internal class ComplaintTestBootstrapHttpConfigurationV1 {
 
     @Bean
     fun complaintTestBootstrapHandlerMapping(composition: ComplaintTestBootstrapHttpCompositionV1): SimpleUrlHandlerMapping =
-        SimpleUrlHandlerMapping(composition.mappedPaths.associateWith { composition.handler }, -1)
+        SimpleUrlHandlerMapping(composition.mvcMappedPaths.associateWith { composition.handler }, -1)
 }

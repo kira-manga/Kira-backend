@@ -324,6 +324,9 @@ class CompletionService(
         executor.shutdownNow()
     }
 
+    /** Retained shared-endpoint shutdown observes the same original executor after stop. */
+    internal fun registeredHttpWorkTerminated(): Boolean = executor.isTerminated()
+
     /** Internal normalized outcome of the provider call — [providerDetail]/[cause] are server-log-only. */
     private sealed interface Resolved {
         data class Success(val result: String, val latencyMs: Int) : Resolved

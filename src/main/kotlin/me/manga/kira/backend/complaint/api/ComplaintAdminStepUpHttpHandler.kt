@@ -4,9 +4,16 @@ import com.fasterxml.jackson.core.JsonFactory
 import com.fasterxml.jackson.core.JsonToken
 import com.fasterxml.jackson.core.StreamReadConstraints
 import com.fasterxml.jackson.core.StreamReadFeature
+import jakarta.servlet.AsyncContext
 import jakarta.servlet.DispatcherType
+import jakarta.servlet.FilterChain
+import jakarta.servlet.ReadListener
+import jakarta.servlet.ServletInputStream
 import jakarta.servlet.ServletOutputStream
+import jakarta.servlet.ServletRequest
+import jakarta.servlet.ServletResponse
 import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletRequestWrapper
 import jakarta.servlet.http.HttpServletResponse
 import jakarta.servlet.http.HttpServletResponseWrapper
 import me.manga.kira.backend.common.exception.ServiceUnavailableException
@@ -22,7 +29,10 @@ import me.manga.kira.backend.security.ComplaintIngressContext
 import me.manga.kira.backend.security.IssuedScopedAdminStepUp
 import me.manga.kira.backend.security.ScopedAdminStepUpScope
 import org.springframework.web.HttpRequestHandler
+import java.io.BufferedReader
+import java.io.ByteArrayInputStream
 import java.io.IOException
+import java.io.InputStreamReader
 import java.io.InterruptedIOException
 import java.io.PrintWriter
 import java.nio.ByteBuffer
@@ -33,19 +43,25 @@ internal interface ComplaintAdminStepUpHttpPort {
     fun issue(context: ComplaintIngressContext, bearer: String, password: String, clientIp: String): IssuedScopedAdminStepUp
 }
 
-/** Explicit TEST complaint-only route; never discovers the ordinary/source controller or accepts a caller principal. */
+/** Original TEST ingress/codec. A selected shared endpoint may continue SOURCE through normal servlet security. */
 internal class ComplaintAdminStepUpHttpHandler(
     private val issuer: ComplaintAdminStepUpHttpPort,
     private val ingress: ComplaintIngressAdmission,
     private val clientIps: ClientIpResolver,
     private val responses: ComplaintOwnerHistoryResponses,
 ) : HttpRequestHandler {
-    override fun handleRequest(request: HttpServletRequest, response: HttpServletResponse) {
+    override fun handleRequest(request: HttpServletRequest, response: HttpServletResponse) = handle(request, response, null)
+
+    /** Fixed servlet continuation only; no supplied principal, source issuer or complaint-failure fallback. */
+    internal fun handleSharedRequest(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) =
+        handle(request, response, chain)
+
+    private fun handle(request: HttpServletRequest, response: HttpServletResponse, sourceChain: FilterChain?) {
         val output = DeliveryResponse(response)
         guarded(request, output) {
             ingress.withIngress(request) { context ->
                 try {
-                    guarded(request, output) { exchange(request, output, context) }
+                    guarded(request, output) { exchange(request, output, context, sourceChain) }
                 } finally {
                     output.releasePermit()
                 }
@@ -82,7 +98,7 @@ internal class ComplaintAdminStepUpHttpHandler(
         }
     }
 
-    private fun exchange(request: HttpServletRequest, response: DeliveryResponse, context: ComplaintIngressContext) {
+    private fun exchange(request: HttpServletRequest, response: DeliveryResponse, context: ComplaintIngressContext, sourceChain: FilterChain?) {
         if (request.dispatcherType != DispatcherType.REQUEST || request.isAsyncStarted) rejectAdminRead(ComplaintAdminReadFailure.UNAVAILABLE)
         interrupted()
         ingress.requireLiveContext(context)
@@ -92,13 +108,29 @@ internal class ComplaintAdminStepUpHttpHandler(
         val permit = responses.acquire() ?: rejectAdminRead(ComplaintAdminReadFailure.UNAVAILABLE)
         response.retainPermit(permit)
         val bytes = readBody(request)
-        val password = try {
+        try {
             if (bytes.size > MAX_BODY_BYTES) rejectAdminRead(ComplaintAdminReadFailure.TOO_LARGE)
             if (headers.length >= 0 && bytes.size.toLong() != headers.length) invalid()
-            password(bytes)
+            val input = input(bytes)
+            if (input.scope === ScopedAdminStepUpScope.SOURCE) {
+                val continuation = sourceChain ?: invalid() // Earlier complaint-only selectors stay narrow.
+                responses.requirePermit(permit)
+                interrupted()
+                ingress.requireLiveContext(context)
+                // The normal controller is synchronous. Replay only this request's bounded, validated
+                // bytes; the original ingress/response permit and outer servlet owner survive its tail.
+                continuation.doFilter(SourceRequest(request, bytes), response)
+                return
+            }
+            bytes.fill(0) // The complaint branch no longer needs raw password bytes during issuance.
+            writeComplaint(request, response, context, headers, input.password, permit)
         } finally {
             bytes.fill(0)
         }
+    }
+
+    private fun writeComplaint(request: HttpServletRequest, response: DeliveryResponse, context: ComplaintIngressContext,
+        headers: InputHeaders, password: String, permit: ComplaintOwnerHistoryResponses.Permit) {
         val issued = issuer.issue(context, headers.bearer ?: rejectAdminRead(ComplaintAdminReadFailure.UNAUTHORIZED), password, clientIps.resolve(request))
         check(issued.scope === ScopedAdminStepUpScope.COMPLAINT && TOKEN.matches(issued.token) && issued.grantId.version() == 4 && issued.grantId.variant() == 2)
         responses.requirePermit(permit)
@@ -123,7 +155,7 @@ internal class ComplaintAdminStepUpHttpHandler(
     }
 
     @Suppress("SwallowedException")
-    private fun password(bytes: ByteArray): String = try {
+    private fun input(bytes: ByteArray): StepUpInput = try {
         val decoded = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes))
         try {
@@ -138,12 +170,15 @@ internal class ComplaintAdminStepUpHttpHandler(
                     if (json.nextToken() != JsonToken.VALUE_STRING) invalid()
                     when (name) {
                         "password" -> password = json.text.also { if (it.isBlank() || it.length > MAX_PASSWORD_CHARACTERS) invalid() }
-                        "scope" -> scope = json.text.also { if (it.length > 64 || it != ScopedAdminStepUpScope.COMPLAINT.storedName) invalid() }
+                        "scope" -> scope = json.text.also {
+                            if (it != ScopedAdminStepUpScope.COMPLAINT.storedName && it != ScopedAdminStepUpScope.SOURCE.storedName) invalid()
+                        }
                         else -> invalid()
                     }
                 }
-                if (json.nextToken() != null || fields != 2 || password == null || scope == null) invalid()
-                checkNotNull(password)
+                if (json.nextToken() != null || password == null || fields !in 1..2) invalid()
+                StepUpInput(checkNotNull(password), if (scope == ScopedAdminStepUpScope.COMPLAINT.storedName)
+                    ScopedAdminStepUpScope.COMPLAINT else ScopedAdminStepUpScope.SOURCE)
             }
         } finally {
             if (decoded.hasArray()) decoded.array().fill('\u0000')
@@ -252,6 +287,33 @@ internal class ComplaintAdminStepUpHttpHandler(
 
     private class InputHeaders(val bearer: String?, val length: Long) {
         override fun toString(): String = "ComplaintAdminStepUpHeaders(redacted)"
+    }
+
+    private class StepUpInput(val password: String, val scope: ScopedAdminStepUpScope) {
+        override fun toString(): String = "StepUpInput(redacted)"
+    }
+
+    /** Request-local replay, never a cached scope/principal attribute accepted from another dispatch. */
+    private class SourceRequest(request: HttpServletRequest, private val bytes: ByteArray) : HttpServletRequestWrapper(request) {
+        override fun getContentLength(): Int = bytes.size
+        override fun getContentLengthLong(): Long = bytes.size.toLong()
+        override fun getCharacterEncoding(): String = "UTF-8"
+        override fun isAsyncSupported(): Boolean = false
+        override fun startAsync(): AsyncContext = throw IllegalStateException("Step-up is synchronous")
+        override fun startAsync(request: ServletRequest, response: ServletResponse): AsyncContext =
+            throw IllegalStateException("Step-up is synchronous")
+        override fun getInputStream(): ServletInputStream {
+            val input = ByteArrayInputStream(bytes)
+            return object : ServletInputStream() {
+                override fun read(): Int = input.read()
+                override fun read(target: ByteArray, offset: Int, length: Int): Int = input.read(target, offset, length)
+                override fun isFinished(): Boolean = input.available() == 0
+                override fun isReady(): Boolean = true
+                override fun setReadListener(listener: ReadListener) = throw IllegalStateException("Step-up is synchronous")
+            }
+        }
+        override fun getReader(): BufferedReader = BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8))
+        override fun toString(): String = "StepUpSourceRequest(redacted)"
     }
 
     private class DeliveryResponse(response: HttpServletResponse) : HttpServletResponseWrapper(response) {

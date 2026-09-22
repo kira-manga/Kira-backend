@@ -1,5 +1,6 @@
 package me.manga.kira.backend.config
 
+import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.audit.application.AuditService
@@ -88,10 +89,12 @@ internal class ComplaintTestRegisteredAdminContentV1 private constructor(
     ownerResources: TestOwnerDeleteProcessBindingV1.OwnerHttpResources? = null,
     adminResources: TestOwnerDeleteProcessBindingV1.AdminHttpResources? = null,
     adminPublisher: TestAdminDeleteJournalPublisherFactoryV1? = null,
+    private val sharedEndpoint: Boolean = false,
 ) {
     init {
         require((adminResources == null) == (ownerResources == null) && (adminResources == null) == (adminPublisher == null))
         require(adminResources == null || (selectStatus && selectBatchStatus))
+        require(!sharedEndpoint || adminResources != null)
     }
     private val consumers = registration.process.consumers
     private val scope = registration.process.desiredSettings().scope
@@ -236,6 +239,23 @@ internal class ComplaintTestRegisteredAdminContentV1 private constructor(
         }
     }
 
+    /** Only the complete retained composition has the ordinary servlet continuation. */
+    @Suppress("SwallowedException")
+    internal fun handleSharedStepUp(request: HttpServletRequest, response: HttpServletResponse, chain: FilterChain) {
+        check(sharedEndpoint)
+        if (request.method != "POST" || request.requestURI != request.contextPath + ComplaintAdminStepUpHttpHandler.PATH) {
+            ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.NOT_FOUND)
+            return
+        }
+        try {
+            requireCurrent() // The same original prebuffer refusal, before classifying either scope.
+        } catch (failure: ComplaintTestNamespaceRegistrationExceptionV1) {
+            ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.UNAVAILABLE)
+            return
+        }
+        stepUpHandler.handleSharedRequest(request, response, chain)
+    }
+
     private fun requireCurrent() {
         requireConnectionFree()
         registration.requireActiveIdentityTarget(assembly)
@@ -287,7 +307,8 @@ internal class ComplaintTestRegisteredAdminContentV1 private constructor(
             startup.claimAdminDeleteComposition(registration, assembly, ownership, jdbc, userDecoder, passwordEncoder,
                 ownerResources, adminResources, adminPublisher)
             return ComplaintTestRegisteredAdminContentV1(registration, assembly, ownership, jdbc, audit, userDecoder, passwordEncoder, responses,
-                selectStatus = true, selectBatchStatus = true, ownerResources = ownerResources, adminResources = adminResources, adminPublisher = adminPublisher)
+                selectStatus = true, selectBatchStatus = true, ownerResources = ownerResources, adminResources = adminResources,
+                adminPublisher = adminPublisher, sharedEndpoint = true)
         }
     }
 }
