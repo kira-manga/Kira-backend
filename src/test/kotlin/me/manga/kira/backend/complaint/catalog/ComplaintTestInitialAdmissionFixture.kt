@@ -55,16 +55,16 @@ internal fun withInitialAdmission(tls: VersionBoundPersistenceConnectedFixture, 
     terminalHistory: TestOrdinaryDrainFixtureInputsV1? = null,
     globalScanBeforeActivation: Boolean = false,
     action: (InitialAdmissionFixture) -> Unit) =
-    // The longest current-row drift history pays four enrollment attempts, including refusals, before any window expires.
+    // Default drift histories pay four enrollment attempts; explicit larger workloads select their bound before intake/D.
     TestOrdinarySealHttpFixtureV1(horizon = sealRecoveryHorizon ?: java.time.Instant.parse("2038-01-01T00:00:00Z"),
-        protectedIntake = true, protectedEnrollmentGlobalPerHour = 4,
+        protectedIntake = true, protectedEnrollmentGlobalPerHour = ordinaryRawHttp?.enrollmentGlobal ?: 4,
         manifestPublication = terminalHistory != null, purgePublication = terminalHistory != null,
         terminalEpochSeal = terminalHistory != null, terminalInventory = terminalHistory?.terminalQuiescence != null,
         activeOrdinaryHistory = terminalHistory != null,
         maximumActiveHistorySeals = terminalHistory?.maximumActiveHistorySeals ?: 1).use { native ->
         require(sealRecoveryHorizon == null || activeSealRecovery)
         require(terminalHistory == null || activeFirstCut)
-        ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, ordinarySealHttp = native,
+        ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, ordinarySealHttp = native, createGlobal = ordinaryRawHttp?.createGlobal ?: 2,
             // Only closed setup predecessor leases: not the tested release or natural-expiry qualification.
             // The genuine global-prefix path also waits for the two TEST setup leases on real DB time.
             expireClosedSetupPredecessors = !globalScanBeforeActivation, activeFirstCut = activeFirstCut, activeSealRecovery = activeSealRecovery,

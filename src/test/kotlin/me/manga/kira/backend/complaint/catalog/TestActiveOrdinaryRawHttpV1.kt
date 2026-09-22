@@ -33,6 +33,12 @@ internal class TestActiveOrdinaryRawHttpV1(
     val adminContent: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentInputV1? = null,
     // Optional status/closure declaration; selection and every grant/current-state check remain product work.
     val adminStatus: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminStatusInputV1? = null,
+    // Optional STATUS-only batch declaration; no deletion branch or supplied current authority.
+    val adminBatchStatus: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminBatchStatusInputV1? = null,
+    // Explicit before-D workload bounds for genuine registered50; no live quota/member resets or replacement keys.
+    val createGlobal: Int = 2,
+    val enrollmentGlobal: Int = 4,
+    val mutationMemberLimit: Int = 64,
 ) {
     init { require(ordinaryPoolSize == 2 || ordinaryPoolSize == 3 && initialCheckpointCreate != null) }
 }

@@ -662,11 +662,14 @@ internal object TestRegisteredHttpStartupCasesV1 {
         adminRead: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadInputV1? = null,
         adminContent: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentInputV1? = null,
         adminStatus: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminStatusInputV1? = null,
+        adminBatchStatus: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminBatchStatusInputV1? = null,
+        createGlobal: Int = 2, enrollmentGlobal: Int = 4, mutationMemberLimit: Int = 64,
         action: (TestActiveFirstCutFixtureV1, TestActiveOrdinaryRawFixtureV1, TestActiveInitialCheckpointRawFixtureV1) -> Unit) {
         val ordinary = TestActiveOrdinaryRawFixtureV1()
         val raw = TestActiveInitialCheckpointRawFixtureV1()
         val factories = ordinary.factories.let { TestActiveOrdinaryRawHttpV1(it.sts, it.kms, it.s3, raw.input,
-            initialCheckpointCreate = initialCheckpointCreate, adminRead = adminRead, adminContent = adminContent, adminStatus = adminStatus) }
+            initialCheckpointCreate = initialCheckpointCreate, adminRead = adminRead, adminContent = adminContent, adminStatus = adminStatus,
+            adminBatchStatus = adminBatchStatus, createGlobal = createGlobal, enrollmentGlobal = enrollmentGlobal, mutationMemberLimit = mutationMemberLimit) }
         withTestActiveFirstCut(tls, ordinaryRawHttp = factories, globalScanBeforeActivation = globalScanBeforeActivation) {
             first -> action(first, ordinary, raw)
         }
@@ -718,10 +721,11 @@ internal object TestRegisteredHttpStartupCasesV1 {
 
         fun get(path: String, bearer: String? = null): HttpResponse<ByteArray> =
             send(HttpRequest.newBuilder(uri(path)).apply { bearer?.let { header("Authorization", "Bearer $it") } }.GET())
-        fun post(path: String, body: ByteArray, bearer: String? = null, key: UUID? = null): HttpResponse<ByteArray> =
+        fun post(path: String, body: ByteArray, bearer: String? = null, key: UUID? = null, proof: String? = null): HttpResponse<ByteArray> =
             send(HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json").apply {
                 bearer?.let { header("Authorization", "Bearer $it") }
                 key?.let { header("X-Kira-Idempotency-Key", it.toString()) }
+                proof?.let { header("X-Kira-Admin-Step-Up", it) }
             }.POST(HttpRequest.BodyPublishers.ofByteArray(body)))
 
         fun patch(attempt: RegisteredInitialEditAttemptV1, bearer: String): HttpResponse<ByteArray> =
