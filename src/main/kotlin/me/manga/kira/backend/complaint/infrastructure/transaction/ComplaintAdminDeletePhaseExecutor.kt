@@ -34,8 +34,10 @@ internal class ComplaintAdminDeletePhaseExecutor(
     private val store: JdbcComplaintAdminDeleteStore,
     private val reads: ComplaintAdminDeleteReadPhaseExecutor,
     private val verification: JdbcComplaintAdminDeleteVerificationStore,
-    private val apply: JdbcComplaintAdminDeleteApplyStore,
+    private val apply: JdbcComplaintAdminDeleteApplyStore?,
 ) {
+    // The fixed registered HTTP graph constructs no APPLY store. Lower callers retain their original one.
+    init { check(apply != null || store.graph.initialDeletion != null) }
     fun requirePublisher(publisher: TestAdminDeleteJournalPublisherFactoryV1) = publisher.requireBinding(store)
     fun requireGraph(graph: TestOwnerDeleteLocalGraphV1, selectedReads: ComplaintAdminDeleteReadPhaseExecutor) { check(store.graph === graph && reads === selectedReads); graph.requireUnchanged() }
     @Suppress("TooGenericExceptionCaught")
@@ -112,8 +114,8 @@ internal class ComplaintAdminDeletePhaseExecutor(
         return (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).result
     }
     fun resume(work: CommittedTestAdminDeleteWork.RecordedVerified): CommittedTestAdminDeleteVerificationV1 = verification.resume(work)
-    fun apply(work: CommittedTestAdminDeleteWork, proof: CommittedTestAdminDeleteVerificationV1): ComplaintAdminDeleteReceipt = executeApply(apply.capture(work, proof)).result
-    fun recover(readback: TestOwnerDeleteJournalReadbackV1) = executeApply(apply.captureRecovery(readback)).requireRecovered()
+    fun apply(work: CommittedTestAdminDeleteWork, proof: CommittedTestAdminDeleteVerificationV1): ComplaintAdminDeleteReceipt = executeApply(checkNotNull(apply).capture(work, proof)).result
+    fun recover(readback: TestOwnerDeleteJournalReadbackV1) = executeApply(checkNotNull(apply).captureRecovery(readback)).requireRecovered()
     @Suppress("TooGenericExceptionCaught")
     private fun executeApply(input: TestAdminDeleteApplyInputV1): ComplaintAdminDeleteApplyOperation {
         val phase = ownership.enterComplaintAdminDeleteApply()

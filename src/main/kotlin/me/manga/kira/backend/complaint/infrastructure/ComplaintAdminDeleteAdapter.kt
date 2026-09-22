@@ -16,6 +16,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadFailure
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadRejected
 import me.manga.kira.backend.complaint.domain.rejectAdminDelete
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestDeploymentExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestAdminDeleteJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintAdminDeletePhaseExecutor
@@ -25,7 +27,7 @@ import me.manga.kira.backend.security.OwnerDeleteAllJournalException
 import java.util.UUID
 import java.util.concurrent.CancellationException
 
-/** Explicit lower composition; no bean, registered request binding or activation/installation authority. */
+/** Explicit TEST composition. Registered requests publish/VERIFY only; independently owned B performs APPLY. */
 internal class ComplaintAdminDeleteAdapter(
     private val graph: TestOwnerDeleteLocalGraphV1,
     private val decoder: ComplaintAdminJwtIdentityDecoder,
@@ -62,24 +64,38 @@ internal class ComplaintAdminDeleteAdapter(
             preflight.receipt?.let { return it }
             // Only a physically released committed receipt observation confirms historical authorization.
             confirmedGrant = preflight.authorizedGrantId
-            if (preflight.authorized) return continuation.complete(phases.reload(identity, candidate, preflight))
-            val admitted = when (input.family) {
-                ComplaintAdminDeleteFamily.SINGLE -> admission.admitAdminDelete(ingress, candidate.tuple)
-                ComplaintAdminDeleteFamily.BATCH -> admission.admitAdminBatchDelete(ingress, candidate.tuple)
-            }
-            return publisher.reserve().use { lane ->
-                val authorized = phases.authorize(identity, candidate, preflight, proof, admitted)
-                confirmedGrant = when (authorized) {
-                    is TestAdminDeleteAuthorizationV1.Completed -> authorized.receipt.consumedGrantId
-                    is TestAdminDeleteAuthorizationV1.Continue -> authorized.work.consumedGrantId
+            if (preflight.authorized) {
+                val authorized = phases.reload(identity, candidate, preflight)
+                if (graph.initialDeletion == null) return continuation.complete(authorized)
+                continuation.publishRegistered(authorized)
+            } else {
+                val admitted = when (input.family) {
+                    ComplaintAdminDeleteFamily.SINGLE -> admission.admitAdminDelete(ingress, candidate.tuple)
+                    ComplaintAdminDeleteFamily.BATCH -> admission.admitAdminBatchDelete(ingress, candidate.tuple)
                 }
-                continuation.complete(authorized, lane)
+                publisher.reserve().use { lane ->
+                    // Reserve this original Admin lane BEFORE AUTHORIZE; no SDK work while SQL is held.
+                    val authorized = phases.authorize(identity, candidate, preflight, proof, admitted,
+                        if (graph.initialDeletion == null) null else lane)
+                    confirmedGrant = when (authorized) {
+                        is TestAdminDeleteAuthorizationV1.Completed -> authorized.receipt.consumedGrantId
+                        is TestAdminDeleteAuthorizationV1.Continue -> authorized.work.consumedGrantId
+                    }
+                    if (graph.initialDeletion == null) return continuation.complete(authorized, lane)
+                    continuation.publishRegistered(authorized, lane)
+                }
             }
+            // No phase-two exception can fall through here. The original read reauthenticates the
+            // current ADMIN and exact tuple; only separately completed B can yield erasure success.
+            check(graph.initialDeletion != null)
+            val fresh = reads.preflight(identity, candidate.tuple)
+            fresh.failure?.let(::rejectAdminDelete)
+            return fresh.receipt ?: throw ComplaintAdminDeleteRejected(ComplaintAdminDeleteFailure.UNAVAILABLE, confirmedGrant)
         } catch (failure: ComplaintAdminReadRejected) {
             if (confirmedGrant != null) throw ComplaintAdminDeleteRejected(ComplaintAdminDeleteFailure.UNAVAILABLE, confirmedGrant)
             rejectAdminDelete(deleteFailure(failure.failure))
         } catch (failure: ComplaintAdminDeleteRejected) {
-            if (failure.failure == ComplaintAdminDeleteFailure.UNAVAILABLE && confirmedGrant != null)
+            if (confirmedGrant != null && (graph.initialDeletion != null || failure.failure == ComplaintAdminDeleteFailure.UNAVAILABLE))
                 throw ComplaintAdminDeleteRejected(ComplaintAdminDeleteFailure.UNAVAILABLE, confirmedGrant)
             throw failure
         } catch (_: PersistencePhaseException) {
@@ -87,6 +103,10 @@ internal class ComplaintAdminDeleteAdapter(
         } catch (_: JournalPublicationExceptionV1) {
             throw ComplaintAdminDeleteRejected(ComplaintAdminDeleteFailure.UNAVAILABLE, confirmedGrant)
         } catch (_: OwnerDeleteAllJournalException) {
+            throw ComplaintAdminDeleteRejected(ComplaintAdminDeleteFailure.UNAVAILABLE, confirmedGrant)
+        } catch (_: ComplaintTestNamespaceRegistrationExceptionV1) {
+            throw ComplaintAdminDeleteRejected(ComplaintAdminDeleteFailure.UNAVAILABLE, confirmedGrant)
+        } catch (_: ComplaintTestDeploymentExceptionV1) {
             throw ComplaintAdminDeleteRejected(ComplaintAdminDeleteFailure.UNAVAILABLE, confirmedGrant)
         } catch (failure: CancellationException) {
             throw failure

@@ -139,6 +139,15 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         return ComplaintTestRegisteredHttpStartupV1.retainedWithOwnerDeleteAll(this, registration).also { httpStartup = it }
     }
 
+    /** One explicitly selected coherent owner/Admin listener, retaining the original assembly child and all existing birth policies. */
+    fun beginRegisteredCompleteHttpStartup(registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
+        requireConnectionFree()
+        requireTestDeployment(caller === Thread.currentThread() && httpStartup == null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+        registration.requireActiveIdentityTarget(this)
+        requireTestDeployment(registration.process === target, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+        return ComplaintTestRegisteredHttpStartupV1.retainedComplete(this, registration).also { httpStartup = it }
+    }
+
     /** One explicit born-with read cohort. This never widens the older owner-only startup selectors. */
     fun beginRegisteredAdminReadHttpStartup(registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
         requireConnectionFree()

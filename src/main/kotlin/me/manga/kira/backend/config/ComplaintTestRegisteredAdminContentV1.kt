@@ -8,14 +8,19 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseO
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintAdminContentResponses
+import me.manga.kira.backend.complaint.api.ComplaintAdminDeleteHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintAdminDeleteResponses
 import me.manga.kira.backend.complaint.api.ComplaintAdminStepUpHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintAdminStepUpHttpPort
 import me.manga.kira.backend.complaint.api.ComplaintAdminStatusHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintAdminStatusResponses
 import me.manga.kira.backend.complaint.api.ComplaintAdminBatchStatusHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintAdminBatchHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintAdminBatchStatusResponses
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryResponses
 import me.manga.kira.backend.complaint.application.ComplaintAdminContentService
+import me.manga.kira.backend.complaint.application.ComplaintAdminDeleteService
+import me.manga.kira.backend.complaint.application.ComplaintAdminBatchDeleteService
 import me.manga.kira.backend.complaint.application.ComplaintAdminStatusService
 import me.manga.kira.backend.complaint.application.ComplaintAdminBatchStatusService
 import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchStatusInput
@@ -43,10 +48,12 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminJwtIdentityD
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminContentStore
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminStatusStore
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminBatchStatusStore
+import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteProcessBindingV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
+import me.manga.kira.backend.complaint.infrastructure.journal.TestAdminDeleteJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintAdminContentPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintAdminStatusPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintAdminBatchStatusPhaseExecutor
@@ -64,6 +71,7 @@ import me.manga.kira.backend.security.ScopedAdminStepUpIssuer
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.jwt.JwtDecoder
+import org.springframework.web.HttpRequestHandler
 
 /** Fixed registered TEST graph. No bean scan, alternate ingress/provider, seeded grant or caller-authority callback. */
 internal class ComplaintTestRegisteredAdminContentV1 private constructor(
@@ -77,7 +85,14 @@ internal class ComplaintTestRegisteredAdminContentV1 private constructor(
     responses: ComplaintOwnerHistoryResponses,
     selectStatus: Boolean = false,
     selectBatchStatus: Boolean = false,
+    ownerResources: TestOwnerDeleteProcessBindingV1.OwnerHttpResources? = null,
+    adminResources: TestOwnerDeleteProcessBindingV1.AdminHttpResources? = null,
+    adminPublisher: TestAdminDeleteJournalPublisherFactoryV1? = null,
 ) {
+    init {
+        require((adminResources == null) == (ownerResources == null) && (adminResources == null) == (adminPublisher == null))
+        require(adminResources == null || (selectStatus && selectBatchStatus))
+    }
     private val consumers = registration.process.consumers
     private val scope = registration.process.desiredSettings().scope
     private val ingress = consumers.ingressAdmission
@@ -98,6 +113,14 @@ internal class ComplaintTestRegisteredAdminContentV1 private constructor(
         ),
         passwordEncoder, stepUpSettings.throttle,
     )
+
+    // Deletion uses this wrapper's configured identity decoder and real shared complaint-grant issuer.
+    // The original deletion binding performs its own typed current AUTHORIZE; no second current/step-up graph.
+    private val deleteWriter = adminResources?.adapter(registration, assembly, ownership, jdbc,
+        checkNotNull(ownerResources), identities, checkNotNull(adminPublisher))
+    private val deleteHandler = deleteWriter?.let {
+        ComplaintAdminDeleteHttpHandler(ComplaintAdminDeleteService(it), ingress, ComplaintAdminDeleteResponses(responses))
+    }
 
     private val contentHandler = ComplaintAdminContentHttpHandler(ComplaintAdminContentService(object : ComplaintAdminContentPort {
         @Suppress("SwallowedException")
@@ -125,12 +148,12 @@ internal class ComplaintTestRegisteredAdminContentV1 private constructor(
         }), ingress, ComplaintAdminStatusResponses(responses))
     } else null
 
-    private val batchStatusHandler = if (selectBatchStatus) {
+    private val batchStatusHandler: HttpRequestHandler? = if (selectBatchStatus) {
         checkNotNull(statusHandler)
         val batchStore = JdbcComplaintAdminBatchStatusStore.registeredInitialCheckpoint(jdbc, audit, ownership, registration, assembly, current)
         val batchPhases = ComplaintAdminBatchStatusPhaseExecutor(ownership, batchStore)
         val batchWriter = ComplaintAdminBatchStatusAdapter(scope, userDecoder, batchPhases, ingress, clockSkew)
-        ComplaintAdminBatchStatusHttpHandler(ComplaintAdminBatchStatusService(object : ComplaintAdminBatchStatusPort {
+        val service = ComplaintAdminBatchStatusService(object : ComplaintAdminBatchStatusPort {
             @Suppress("SwallowedException")
             override fun change(context: ComplaintAdminBatchStatusRequestContext, bearer: String, proof: String?, input: ComplaintAdminBatchStatusInput) = try {
                 requireCurrent()
@@ -138,7 +161,10 @@ internal class ComplaintTestRegisteredAdminContentV1 private constructor(
             } catch (failure: ComplaintTestNamespaceRegistrationExceptionV1) {
                 rejectAdminStatus(ComplaintAdminStatusFailure.UNAVAILABLE)
             }
-        }), ingress, ComplaintAdminBatchStatusResponses(responses))
+        })
+        val output = ComplaintAdminBatchStatusResponses(responses)
+        if (deleteWriter == null) ComplaintAdminBatchStatusHttpHandler(service, ingress, output)
+        else ComplaintAdminBatchHttpHandler(service, ingress, output, ComplaintAdminBatchDeleteService(deleteWriter))
     } else null
 
     private val stepUpHandler = ComplaintAdminStepUpHttpHandler(object : ComplaintAdminStepUpHttpPort {
@@ -166,7 +192,8 @@ internal class ComplaintTestRegisteredAdminContentV1 private constructor(
 
     private val mutationSuffixes = listOf(SUFFIX) + if (statusHandler == null) emptyList() else ComplaintAdminStatusOperation.entries.map { it.suffix }
     val mappedPaths: Set<String> = setOf(ComplaintAdminStepUpHttpHandler.PATH) + mutationSuffixes.map { "${PREFIX}{id}$it" } +
-        (if (batchStatusHandler == null) emptySet() else setOf(BATCH_PATH))
+        (if (batchStatusHandler == null) emptySet() else setOf(BATCH_PATH)) +
+        (if (deleteHandler == null) emptySet() else setOf("${PREFIX}{id}"))
 
     @Suppress("SwallowedException")
     fun mapsRequest(request: HttpServletRequest): Boolean {
@@ -174,8 +201,12 @@ internal class ComplaintTestRegisteredAdminContentV1 private constructor(
         if (request.method == "POST") return uri == request.contextPath + ComplaintAdminStepUpHttpHandler.PATH ||
             batchStatusHandler != null && uri == request.contextPath + BATCH_PATH
         val prefix = request.contextPath + PREFIX
-        if (request.method != "PATCH" || !uri.startsWith(prefix)) return false
-        val suffix = mutationSuffixes.singleOrNull { uri.endsWith(it) && uri.length == prefix.length + 36 + it.length } ?: return false
+        if (!uri.startsWith(prefix)) return false
+        val suffix = when (request.method) {
+            "DELETE" -> if (deleteHandler != null && uri.length == prefix.length + 36) "" else return false
+            "PATCH" -> mutationSuffixes.singleOrNull { uri.endsWith(it) && uri.length == prefix.length + 36 + it.length } ?: return false
+            else -> return false
+        }
         return try {
             ComplaintIdentifiers.resourceId(uri.substring(prefix.length, uri.length - suffix.length))
             true
@@ -199,6 +230,7 @@ internal class ComplaintTestRegisteredAdminContentV1 private constructor(
         when {
             request.method == "POST" && request.requestURI == request.contextPath + BATCH_PATH -> checkNotNull(batchStatusHandler).handleRequest(request, response)
             request.method == "POST" -> stepUpHandler.handleRequest(request, response)
+            request.method == "DELETE" -> checkNotNull(deleteHandler).handleRequest(request, response)
             request.requestURI.endsWith(SUFFIX) -> contentHandler.handleRequest(request, response)
             else -> checkNotNull(statusHandler).handleRequest(request, response)
         }
@@ -240,6 +272,22 @@ internal class ComplaintTestRegisteredAdminContentV1 private constructor(
             startup.claimAdminBatchStatusComposition(registration, assembly, ownership, jdbc, userDecoder, passwordEncoder)
             return ComplaintTestRegisteredAdminContentV1(registration, assembly, ownership, jdbc, audit, userDecoder, passwordEncoder, responses,
                 selectStatus = true, selectBatchStatus = true)
+        }
+
+        /** Both erasure services are selected together on the same existing content/status issuer and original deletion pair. */
+        internal fun fromRegisteredComplete(registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, audit: AuditService, startup: ComplaintTestRegisteredHttpStartupV1,
+            userDecoder: JwtDecoder, passwordEncoder: PasswordEncoder, responses: ComplaintOwnerHistoryResponses,
+            ownerResources: TestOwnerDeleteProcessBindingV1.OwnerHttpResources,
+            adminResources: TestOwnerDeleteProcessBindingV1.AdminHttpResources,
+            adminPublisher: TestAdminDeleteJournalPublisherFactoryV1): ComplaintTestRegisteredAdminContentV1 {
+            startup.claimAdminContentComposition(registration, assembly, ownership, jdbc, userDecoder, passwordEncoder)
+            startup.claimAdminStatusComposition(registration, assembly, ownership, jdbc, userDecoder, passwordEncoder)
+            startup.claimAdminBatchStatusComposition(registration, assembly, ownership, jdbc, userDecoder, passwordEncoder)
+            startup.claimAdminDeleteComposition(registration, assembly, ownership, jdbc, userDecoder, passwordEncoder,
+                ownerResources, adminResources, adminPublisher)
+            return ComplaintTestRegisteredAdminContentV1(registration, assembly, ownership, jdbc, audit, userDecoder, passwordEncoder, responses,
+                selectStatus = true, selectBatchStatus = true, ownerResources = ownerResources, adminResources = adminResources, adminPublisher = adminPublisher)
         }
     }
 }
