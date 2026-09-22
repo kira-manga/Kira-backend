@@ -8,6 +8,7 @@ import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrent
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentStorageV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointCreateInputV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointDeletionInputV1
+import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.complaint.journal.JournalPublisherHttpRequest
 import me.manga.kira.backend.complaint.journal.JournalPublisherObject
@@ -59,6 +60,9 @@ internal class TestActiveRecurrentRawFixtureV1(
     val order = mutableListOf<String>()
     val budgets = mutableListOf<Pair<String, Int>>()
     private var fixture: TestActiveRecurrentFixtureV1? = null
+    private var serviceReader: ServiceReader? = null
+    private val process get() = serviceReader?.producer ?: checkNotNull(fixture).process
+    private val record get() = serviceReader?.record ?: checkNotNull(fixture).record
     private val listedObjects = linkedMapOf<Pair<String, String>, JournalPublisherObject>()
     private val assertion = AtomicReference<AssertionError?>()
     var s3Created = 0
@@ -74,9 +78,9 @@ internal class TestActiveRecurrentRawFixtureV1(
     var changeSts: (JournalKmsHttpReply) -> Unit = {}
     var onNativeClose: () -> Unit = {}
     private val input = TestActiveInitialCheckpointHttpInputV1(
-        { remaining -> if (fixture == null) deletion.checkpoint.input.sts(remaining) else native("STS", remaining, sts::httpClient) },
-        { remaining -> if (fixture == null) deletion.checkpoint.input.kms(remaining) else native("KMS", remaining, kms::httpClient) },
-        { remaining -> if (fixture == null) deletion.checkpoint.input.s3(remaining) else native("S3", remaining, ::s3Client) })
+        { remaining -> if (fixture == null && serviceReader == null) deletion.checkpoint.input.sts(remaining) else native("STS", remaining, sts::httpClient) },
+        { remaining -> if (fixture == null && serviceReader == null) deletion.checkpoint.input.kms(remaining) else native("KMS", remaining, kms::httpClient) },
+        { remaining -> if (fixture == null && serviceReader == null) deletion.checkpoint.input.s3(remaining) else native("S3", remaining, ::s3Client) })
     val factories = deletion.factories.let { original ->
         TestActiveOrdinaryRawHttpV1(original.sts, original.kms, original.s3, initialCheckpoint = input,
             initialCheckpointCreate = initialCheckpointCreate, shortInitialCheckpointFreshness = shortFreshness,
@@ -105,11 +109,11 @@ internal class TestActiveRecurrentRawFixtureV1(
         kms.respond = { request -> checked {
             boundary(); signed(request, "kms"); order.add("DECRYPT")
             assertEquals(AwsJournalKmsFixture.DECRYPT_TARGET, request.target(), "Read-only recurrent recovery never generates a key.")
-            val f = checkNotNull(fixture); val record = f.record
-            val historical = f.historicalAll
+            val original = record
+            val historical = fixture?.historicalAll
             val context = request.fields()["EncryptionContext"].fields().asSequence().associate { it.key to it.value.textValue() }
             when {
-                context == record.kmsContext -> record.decrypt(request) // Original producer responder, not copied plaintext.
+                context == original.kmsContext -> original.decrypt(request) // Original producer responder, not copied plaintext.
                 historical != null && context == historical.kmsContext -> historical.decrypt(request) // Explicit existing protocol-history map, not producer evidence.
                 else -> JournalKmsHttpReply("""{"__type":"InvalidCiphertextException","message":"Synthetic context mismatch"}""").apply {
                     status = 400 // A tampered-key NEGATIVE cannot obtain either wrapped key under a different context.
@@ -118,12 +122,27 @@ internal class TestActiveRecurrentRawFixtureV1(
         } }
     }
     fun attach(f: TestActiveRecurrentFixtureV1) {
-        check(fixture == null); fixture = f
+        check(fixture == null && serviceReader == null); fixture = f
         listedObjects[f.record.stored.key to f.record.stored.version] = f.record.stored
         f.historicalAll?.stored?.let { listedObjects[it.key to it.version] = it }
         assertTrue(requests.isEmpty() && sts.requests.isEmpty() && kms.requests.isEmpty())
     }
     fun detach(f: TestActiveRecurrentFixtureV1) { check(fixture === f); fixture = null; listedObjects.clear(); assertNoLostAssertions() }
+    /** Original A data/routing only; callbacks observe B, whose MAIN inputs remain raw HTTP. */
+    fun attachProducerForService(producer: VersionBoundTestNamespaceProcessV1, record: TestRegisteredInitialDeletionNativeRecordV1,
+        providerBoundary: () -> Unit, passNumber: () -> Int): AutoCloseable {
+        check(fixture == null && serviceReader == null)
+        check(record.event.belongsTo(producer.consumers.journalRouting))
+        assertTrue(requests.isEmpty() && sts.requests.isEmpty() && kms.requests.isEmpty())
+        val selected = ServiceReader(producer, record, providerBoundary, passNumber)
+        serviceReader = selected
+        listedObjects[record.stored.key to record.stored.version] = record.stored
+        return AutoCloseable {
+            check(serviceReader === selected); serviceReader = null; listedObjects.clear(); assertNoLostAssertions()
+        }
+    }
+    private class ServiceReader(val producer: VersionBoundTestNamespaceProcessV1, val record: TestRegisteredInitialDeletionNativeRecordV1,
+        val providerBoundary: () -> Unit, val passNumber: () -> Int)
     /** One independent additional raw B owner; every retry is a fresh genuine begin on its fixed record. */
     fun <T> withFreshQueue(action: (TestActiveOwnerDeleteQueueRawFixtureV1) -> T): T {
         checkNotNull(fixture).assertReleased()
@@ -142,10 +161,9 @@ internal class TestActiveRecurrentRawFixtureV1(
     }
     private fun reply(request: JournalPublisherHttpRequest): S3CatalogReply = checked {
         boundary()
-        val f = checkNotNull(fixture)
-        val j = f.process.consumers.journalConfiguration
+        val j = process.consumers.journalConfiguration
         val location = j.declaration().journalLocation
-        val pass = f.passNumber()
+        val pass = serviceReader?.passNumber?.invoke() ?: checkNotNull(fixture).passNumber()
         journalPublisherRawAssertSigned(request, location.region, location.accountId, input.credentials)
         assertTrue(request.body.isEmpty()); assertFalse(request.kind == "PUT")
         beforeS3(request)
@@ -155,7 +173,7 @@ internal class TestActiveRecurrentRawFixtureV1(
                 assertEquals(listOf(j.ordinaryPrefix), request.http.rawQueryParameters()["prefix"])
                 assertEquals(listOf("2"), request.http.rawQueryParameters()["max-keys"])
                 assertTrue(request.http.rawQueryParameters().keys.none { it in setOf("delimiter", "key-marker", "version-id-marker", "start-after") })
-                val inventory = (listOf(f.record.stored) + listOfNotNull(f.historicalAll?.stored)).sortedWith { a, b ->
+                val inventory = (listOf(record.stored) + listOfNotNull(fixture?.historicalAll?.stored)).sortedWith { a, b ->
                     TestOrdinaryDrainRowsV1.compare(a.key to a.version, b.key to b.version)
                 }
                 val versions = listing(pass, inventory)
@@ -178,7 +196,7 @@ internal class TestActiveRecurrentRawFixtureV1(
         reply.also { changeS3(request, it) }
     }
     private fun signed(request: JournalKmsHttpRequest, service: String) {
-        val location = checkNotNull(fixture).process.consumers.journalConfiguration.declaration().journalLocation
+        val location = process.consumers.journalConfiguration.declaration().journalLocation
         assertEquals("https", request.http.protocol()); assertEquals("$service.${location.region}.amazonaws.com", request.http.host())
         assertEquals(input.credentials.sessionToken(), request.http.firstMatchingHeader("x-amz-security-token").orElseThrow())
         val auth = request.http.firstMatchingHeader("Authorization").orElseThrow()
@@ -196,7 +214,7 @@ internal class TestActiveRecurrentRawFixtureV1(
             override fun clientName(): String = "SyntheticRecurrent$kind"
         }
     }
-    private fun boundary() { requireConnectionFree(); checkNotNull(fixture).assertSqlReleased() }
+    private fun boundary() { requireConnectionFree(); serviceReader?.providerBoundary?.invoke() ?: checkNotNull(fixture).assertSqlReleased() }
     private fun <T> checked(action: () -> T): T = try { action() } catch (problem: AssertionError) { assertion.compareAndSet(null, problem); throw problem }
     fun assertNoLostAssertions() { assertion.get()?.let { throw it }; queue.assertNoLostAssertions(); freshQueue.assertNoLostAssertions() }
     fun resetFaults() { listing = { _, values -> values }; listDocument = { _, text -> text }; beforeS3 = {}; changeS3 = { _, _ -> }; changeSts = {}; onNativeClose = {} }
