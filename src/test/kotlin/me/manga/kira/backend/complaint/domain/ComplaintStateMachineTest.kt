@@ -13,11 +13,11 @@ import java.util.UUID
 
 class ComplaintStateMachineTest {
     @TestFactory
-    fun `every non-notice status has the declared transition matrix`(): List<DynamicTest> = listOf(ComplaintKind.REPORT, ComplaintKind.REPLY).flatMap { kind ->
-        ComplaintStatus.entries.flatMap { from ->
+    fun `every active non-notice status has the declared transition matrix`(): List<DynamicTest> = listOf(ComplaintKind.REPORT, ComplaintKind.REPLY).flatMap { kind ->
+        ComplaintStatus.entries.filterNot { it == ComplaintStatus.UNKNOWN }.flatMap { from ->
             ComplaintStatus.entries.map { to ->
                 DynamicTest.dynamicTest("$kind $from to $to") {
-                    val state = legacyState(from).copy(kind = kind)
+                    val state = installationState(from).copy(kind = kind)
                     when {
                         to !in setOf(
                             ComplaintStatus.OPEN,
@@ -86,18 +86,42 @@ class ComplaintStateMachineTest {
     }
 
     @Test
-    fun `legacy closure is retained on content edit and normalized on explicit admin closure`() {
-        for (oldReason in listOf(null, "reason")) {
-            val state = legacyState(ComplaintStatus.CLOSED).copy(closure = ComplaintClosure.Legacy(oldReason, null))
+    fun `content edit retains admin closure and reopening clears the tuple`() {
+        for (kind in listOf(ComplaintKind.REPORT, ComplaintKind.REPLY)) {
+            val state = closedState().copy(kind = kind)
             val edit = ComplaintStateMachine.contentEdited(state)
             assertSame(state.closure, edit.closure)
             assertEquals(ComplaintStatus.CLOSED, edit.status)
             assertEquals(8L, edit.version)
-            val closure = ComplaintStateMachine.close(state, " reason ", admin, now)
-            assertEquals(ComplaintClosure.Admin("reason", admin, now), closure.closure)
-            assertEquals(8L, closure.version)
             val reopened = ComplaintStateMachine.transition(state, ComplaintStatus.OPEN)
             assertNull(reopened.closure)
+            assertEquals(8L, reopened.version)
+            assertEquals(ComplaintStatus.CLOSED, state.status)
+            assertEquals(7L, state.version)
+        }
+    }
+
+    @Test
+    fun `historical legacy ownership status and closure cannot enter active moderation`() {
+        for (kind in listOf(ComplaintKind.REPORT, ComplaintKind.REPLY)) {
+            for (status in ComplaintStatus.entries) {
+                assertRule(ComplaintRuleCode.INVALID_MODERATION_STATE) {
+                    ComplaintModerationState(
+                        kind, ComplaintOwnership.LEGACY_UNCLAIMED, status, 7,
+                        if (status == ComplaintStatus.CLOSED) ComplaintClosure.Admin("reason", admin, now) else null,
+                    )
+                }
+            }
+            assertRule(ComplaintRuleCode.INVALID_MODERATION_STATE) {
+                ComplaintModerationState(kind, ComplaintOwnership.INSTALLATION, ComplaintStatus.UNKNOWN, 7)
+            }
+            for (closure in listOf(ComplaintClosure.Legacy(null, null), ComplaintClosure.Legacy("reason", null), ComplaintClosure.Legacy("reason", now))) {
+                for (ownership in listOf(ComplaintOwnership.INSTALLATION, ComplaintOwnership.LEGACY_UNCLAIMED)) {
+                    assertRule(ComplaintRuleCode.INVALID_MODERATION_STATE) {
+                        ComplaintModerationState(kind, ownership, ComplaintStatus.CLOSED, 7, closure)
+                    }
+                }
+            }
         }
     }
 
@@ -121,9 +145,9 @@ class ComplaintStateMachineTest {
 
     @Test
     fun `closures reject missing blank oversized or non-normalized reasons`() {
-        assertThrows(ComplaintValidationException::class.java) { ComplaintStateMachine.close(legacyState(ComplaintStatus.OPEN), "  ", admin, now) }
+        assertThrows(ComplaintValidationException::class.java) { ComplaintStateMachine.close(installationState(ComplaintStatus.OPEN), "  ", admin, now) }
         assertThrows(ComplaintValidationException::class.java) {
-            ComplaintStateMachine.close(legacyState(ComplaintStatus.OPEN), "a".repeat(501), admin, now)
+            ComplaintStateMachine.close(installationState(ComplaintStatus.OPEN), "a".repeat(501), admin, now)
         }
         assertRule(ComplaintRuleCode.INVALID_MODERATION_STATE) { ComplaintClosure.Admin(" reason ", admin, now) }
         assertRule(ComplaintRuleCode.INVALID_MODERATION_STATE) { ComplaintClosure.Legacy(" reason ", null) }
@@ -131,7 +155,7 @@ class ComplaintStateMachineTest {
 
     @Test
     fun `version exhaustion never wraps a mutable row into an old version`() {
-        val state = legacyState(ComplaintStatus.OPEN).copy(version = Long.MAX_VALUE)
+        val state = installationState(ComplaintStatus.OPEN).copy(version = Long.MAX_VALUE)
         assertRule(ComplaintRuleCode.VERSION_EXHAUSTED) { ComplaintStateMachine.transition(state, ComplaintStatus.RESOLVED) }
         assertRule(ComplaintRuleCode.VERSION_EXHAUSTED) { ComplaintStateMachine.close(state, "reason", admin, now) }
         assertRule(ComplaintRuleCode.VERSION_EXHAUSTED) { ComplaintStateMachine.contentEdited(state) }
@@ -154,12 +178,12 @@ class ComplaintStateMachineTest {
         ComplaintClosure.Admin("reason\nnext line", admin, now),
     )
 
-    private fun legacyState(status: ComplaintStatus): ComplaintModerationState = ComplaintModerationState(
+    private fun installationState(status: ComplaintStatus): ComplaintModerationState = ComplaintModerationState(
         ComplaintKind.REPORT,
-        ComplaintOwnership.LEGACY_UNCLAIMED,
+        ComplaintOwnership.INSTALLATION,
         status,
         7,
-        if (status == ComplaintStatus.CLOSED) ComplaintClosure.Legacy(null, null) else null,
+        if (status == ComplaintStatus.CLOSED) ComplaintClosure.Admin("reason", admin, now) else null,
     )
 
     private fun assertRule(code: ComplaintRuleCode, action: () -> Unit) {

@@ -26,8 +26,7 @@ object ComplaintStateMachine {
     fun close(current: ComplaintModerationState, reason: String, actorId: UUID, closedAt: Instant): ComplaintModerationState {
         requireMutable(current)
         val normalized = ComplaintTextRules.closureReason(reason)
-        // An explicit Admin closure must also normalize an incomplete legacy tuple, even when its
-        // old reason happens to match. A true no-op never changes the actor/time or consumes a version.
+        // A true no-op never changes the actor/time or consumes a version.
         if (current.closure is ComplaintClosure.Admin && current.closure.reason == normalized) {
             throw ComplaintRuleException(ComplaintRuleCode.NO_CHANGE)
         }
