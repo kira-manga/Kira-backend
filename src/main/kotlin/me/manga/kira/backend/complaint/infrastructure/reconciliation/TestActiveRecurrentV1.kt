@@ -678,6 +678,15 @@ internal class TestActiveRecurrentV1 private constructor(
         scan?.requirePhysicalReleased()
         nativeSeals.values.forEach { it.requirePhysicalCleanup() }
     }
+
+    /** Sticky original-close observation only. A failed/expired attempt can be disposed, never made successful here. */
+    internal fun requireActualCleanup() {
+        requireConnectionFree(); requireRecipe(recipe)
+        requireRecurrent(closing && finished && cleanupProven && !nativeClaimed && !readbackReserved && !executing && waiting == null)
+        requireNativeReleased(recipe)
+        requireActualReadbackCleanup()
+    }
+
     internal fun abortNative() { observeFailure(TestActiveRecurrentExceptionV1()); close() }
     override fun close() {
         requireRecurrent(caller === Thread.currentThread())

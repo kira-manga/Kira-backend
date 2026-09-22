@@ -571,6 +571,18 @@ internal class TestActiveOwnerDeleteQueueV1 private constructor(
         requireConnectionFree(); requireCustody(coordinator.catalogRefreshCustody)
         requireQueue(providerClosed && providerFailure == null && phase == null && !phaseEntered && !cleanupUncertain)
     }
+
+    /** Original cleanup only: poll's finally, or a cancelled original that never admitted even its first poll. */
+    internal fun requireActualCleanup() {
+        requireConnectionFree(); requireRecipe(recipe)
+        val cancelledBeforePoll = !started && failure.get() is CancellationException && coordinatorJdbc == null &&
+            captured == null && acquired == null && rechecked == null && settled == null && !readbackStage && raw == null &&
+            principal.get() == null && queue == null && reader == null
+        requireQueue((finished || cancelledBeforePoll) && !nativeClaimed && !readbackReserved)
+        requireNativeReleased(recipe)
+        requireActualReadbackCleanup()
+    }
+
     private inner class TimedReadback(private val actual: S3CatalogReadbackAdapter) : CatalogReadbackPort {
         override fun listVersions(request: CatalogListRequest) = checked { actual.listVersions(request) }
         override fun openVersion(request: CatalogGetRequest): CatalogVersionBody {

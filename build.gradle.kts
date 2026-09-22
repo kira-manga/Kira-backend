@@ -39,6 +39,17 @@ java {
     }
 }
 
+// Separate non-web entry. Its real cold launch remains UNKNOWN/fail-closed; this task grants no authority.
+tasks.register<JavaExec>("runComplaintTestActiveService") {
+    group = "application"
+    description = "Run the explicit TEST active service entry (operational launch remains unqualified)."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("me.manga.kira.backend.database.ComplaintTestActiveServiceMain")
+    javaLauncher.set(javaToolchains.launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    })
+}
+
 // Explicit, unqualified verification lane only; never a default repository or Maven-local fallback.
 val ownedPgVerificationRepository = providers.gradleProperty("kiraOwnedPgVerificationRepository")
     .orNull?.takeIf { it.isNotBlank() }
