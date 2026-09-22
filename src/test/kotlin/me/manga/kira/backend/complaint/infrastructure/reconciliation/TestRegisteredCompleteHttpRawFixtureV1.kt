@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAd
 import me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherFixture
 import me.manga.kira.backend.complaint.journal.TestOwnerDeleteJournalPublisherFixture
 import me.manga.kira.backend.complaint.journal.journalPublisherRawAssertSigned
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.JournalKmsHttpReply
@@ -61,8 +62,9 @@ internal class TestRegisteredCompleteHttpRawFixtureV1 {
         f.assertSqlReleased(); f.assertPending(attempt, checkNotNull(grant), verified = false)
         assertEquals(1L, f.first.process.publicationLanes.activeOwners().totalOwners)
         val row = f.publication(attempt)
-        val event = TestOwnerDeleteJournalCodecV1.restoreCanonical(f.first.process.consumers.journalRouting,
-            row.getValue("event_bytes") as ByteArray, row.getValue("routing_key_id") as String)
+        val event = TestOwnerDeleteJournalCodecV1.restoreAdminErasureCanonical(f.first.process.consumers.journalRouting,
+            row.getValue("event_bytes") as ByteArray, row.getValue("routing_key_id") as String,
+            if (attempt.batch) ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE else ComplaintJournalDeletionKindV1.ADMIN_DELETE)
         val tuple = event.adminComparison
         assertEquals(attempt.operation, tuple.eventKind.name); assertEquals(f.admin.users[0].id, tuple.actorId)
         assertEquals(f.admin.scope, tuple.scope); assertEquals(attempt.key, tuple.operationKey)
