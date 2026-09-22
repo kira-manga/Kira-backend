@@ -130,6 +130,17 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         return ComplaintTestRegisteredHttpStartupV1.retainedWithAdminReads(this, registration).also { httpStartup = it }
     }
 
+    /** Single-content + genuine password issuance is a further explicit pre-D selection, never a read default. */
+    fun beginRegisteredAdminContentHttpStartup(registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
+        requireConnectionFree()
+        requireTestDeployment(caller === Thread.currentThread() && httpStartup == null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+        registration.requireActiveIdentityTarget(this)
+        requireTestDeployment(registration.process === target && target.initialCheckpointCreate != null &&
+            target.consumers.adminContentPolicy is me.manga.kira.backend.security.ComplaintAdminContentAdmissionPolicy.Bounded &&
+            target.consumers.adminStepUp != null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+        return ComplaintTestRegisteredHttpStartupV1.retainedWithAdminContent(this, registration).also { httpStartup = it }
+    }
+
     /** Explicit reply-capable sibling. The original startup still selects read/CREATE only, even on this profile. */
     fun beginRegisteredReplyHttpStartup(registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
         requireConnectionFree()
@@ -291,7 +302,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
             jwt, inputs.capacity, inputs.journal,
             VersionBoundTestComplaintConsumerInputsV1(
                 secret(inputs.admissionCurrent), inputs.admissionPrevious?.let(::secret), inputs.cursorActiveKeyId, inputs.cursorKeys().map(::secret), routing,
-            ), inputs.consumerSettings, adminReadPerMinute = inputs.adminRead?.perMinute,
+            ), inputs.consumerSettings, adminReadPerMinute = inputs.adminRead?.perMinute, adminContentPerHour = inputs.adminContent?.perHour,
         )
         val db = inputs.database
         val configuration = VersionBoundPersistenceConfiguration.fromAcquired(

@@ -3,7 +3,10 @@ package me.manga.kira.backend.security
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
+import me.manga.kira.backend.config.KiraAdminStudioProperties
+import me.manga.kira.backend.config.KiraSecurityProperties
 import java.time.Clock
+import java.time.Duration
 
 /** TEST acquisitions only. The retained routing consumer, not a second material list, binds the actual TEST J. */
 internal class VersionBoundTestComplaintConsumerInputsV1(
@@ -77,6 +80,9 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
     val ownerCursorCodec: ComplaintOwnerCursorCodec,
     val adminReadPolicy: ComplaintAdminReadAdmissionPolicy,
     val adminCursorCodec: ComplaintAdminCursorCodec?,
+    val adminContentPolicy: ComplaintAdminContentAdmissionPolicy,
+    val adminStepUp: VersionBoundTestComplaintAdminStepUpV1?,
+    val clientIpResolver: ClientIpResolver,
     val ingressAdmission: ComplaintIngressAdmission,
     descriptors: List<VersionedSecretBinding>,
 ) {
@@ -84,6 +90,8 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
 
     init {
         require((adminReadPolicy is ComplaintAdminReadAdmissionPolicy.Bounded) == (adminCursorCodec != null)) { INVALID_BOUND_TEST_CONSUMERS }
+        require((adminContentPolicy is ComplaintAdminContentAdmissionPolicy.Bounded) == (adminStepUp != null) &&
+            (adminStepUp == null || adminReadPolicy is ComplaintAdminReadAdmissionPolicy.Bounded)) { INVALID_BOUND_TEST_CONSUMERS }
     }
 
     val admissionCurrentKeyId: String get() = admissionKeys.currentKeyId
@@ -109,6 +117,7 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
             settings: VersionBoundComplaintConsumerSettings,
             adminBatchDeletePerHour: Int = 60,
             adminReadPerMinute: Int? = null,
+            adminContentPerHour: Int? = null,
         ): VersionBoundTestComplaintConsumerConfigurationV1 {
             requireConnectionFree()
             val user = requireNotNull(jwt.boundUserKeyProvider) { INVALID_BOUND_TEST_CONSUMERS }
@@ -134,6 +143,10 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
                 else ComplaintAdminBatchDeleteAdmissionPolicy.Disabled
             val adminRead = if (adminReadPerMinute == null) ComplaintAdminReadAdmissionPolicy.Disabled
                 else ComplaintAdminReadAdmissionPolicy.Bounded(adminReadPerMinute)
+            require(adminContentPerHour == null || adminRead is ComplaintAdminReadAdmissionPolicy.Bounded) { INVALID_BOUND_TEST_CONSUMERS }
+            val adminContent = if (adminContentPerHour == null) ComplaintAdminContentAdmissionPolicy.Disabled
+                else ComplaintAdminContentAdmissionPolicy.Bounded(capacityPolicy, create.memberLimit, create.pruneBatch, adminContentPerHour)
+            val stepUp = if (adminContentPerHour == null) null else VersionBoundTestComplaintAdminStepUpV1()
             val resolver = settings.clientIpResolver()
             val copies = ArrayList<ByteArray>(descriptors.size)
             val admissionCopies = ArrayList<ComplaintAdmissionKey>(admissions.size)
@@ -182,12 +195,13 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
                     editPolicy = edit,
                     ownerDeletePolicy = delete,
                     adminReadPolicy = adminRead,
+                    adminContentPolicy = adminContent,
                     adminDeletePolicy = adminDelete,
                     adminBatchDeletePolicy = adminBatchDelete,
                 )
                 return VersionBoundTestComplaintConsumerConfigurationV1(
                     jwt, capacityPolicy, journal, keys.journalRouting, settings, policy, create, edit, delete, deleteAll, adminDelete, adminBatchDelete,
-                    fixedKeys, codec, adminRead, adminCodec, ingress, descriptors,
+                    fixedKeys, codec, adminRead, adminCodec, adminContent, stepUp, resolver, ingress, descriptors,
                 )
             } finally {
                 admissionCopies.forEach { it.destroy() }
@@ -214,6 +228,22 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
     }
 
     private class KeyMaterial(val binding: VersionedSecretBinding, val bytes: ByteArray)
+}
+
+/** Actual fixed memory throttle and issuance inputs, born together before D; no caller-selected implementations. */
+internal class VersionBoundTestComplaintAdminStepUpV1 {
+    val clock: Clock = Clock.systemUTC()
+    val properties = KiraAdminStudioProperties(stepUpTtl = Duration.ofSeconds(300))
+    val throttleSettings = KiraSecurityProperties.Throttle(
+        backend = "memory", instanceCount = 1, maxEntries = 1024,
+        loginFailureThreshold = 5, loginIpFailureThreshold = 25,
+        loginAttemptTtl = Duration.ofSeconds(30), loginInitialBlock = Duration.ofSeconds(60),
+        loginMaxBlock = Duration.ofSeconds(900), loginFailureWindow = Duration.ofSeconds(900),
+        registrationMaxPerWindow = 20, registrationWindow = Duration.ofSeconds(3600),
+    )
+    val throttle = AuthThrottleService(KiraSecurityProperties(throttle = throttleSettings), clock)
+
+    override fun toString(): String = "VersionBoundTestComplaintAdminStepUpV1(fixed-memory-single-instance,redacted)"
 }
 
 private const val INVALID_BOUND_TEST_CONSUMERS = "Invalid version-bound TEST complaint consumer configuration"

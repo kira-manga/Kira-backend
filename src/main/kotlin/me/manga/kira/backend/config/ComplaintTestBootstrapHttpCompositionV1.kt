@@ -69,6 +69,7 @@ import me.manga.kira.backend.security.ComplaintSecurityResponses
 import me.manga.kira.backend.security.InstallationJwtCodec
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.web.SecurityFilterChain
 import java.time.Clock
@@ -97,6 +98,7 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     private val editStore: JdbcComplaintOwnerEditStore? = null,
     private val me: ComplaintInstallationMeHttpHandler? = null,
     private val adminReads: ComplaintTestRegisteredAdminReadsV1? = null,
+    private val adminContent: ComplaintTestRegisteredAdminContentV1? = null,
 ) {
     init {
         require((assembly == null) == (audit == null))
@@ -105,6 +107,7 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         require(editStore == null || replyStore != null)
         require(me == null || (reads != null && replyStore == null && editStore == null))
         require(adminReads == null || (reads != null && replyStore == null && editStore == null && me == null))
+        require(adminContent == null || adminReads != null)
     }
 
     private val producer = ComplaintInstallationBootstrapHttpHandler(
@@ -165,19 +168,21 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         (if (reads == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}")) +
         (if (replyStore == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}/replies")) +
         (if (editStore == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}/content")) +
-        (adminReads?.mappedPaths ?: emptySet())
+        (adminReads?.mappedPaths ?: emptySet()) + (adminContent?.mappedPaths ?: emptySet())
 
     internal fun mapsRequest(request: HttpServletRequest): Boolean = ComplaintInstallationRoutes.path(request) in literalPaths ||
         (reads != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
         (replyStore != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
         (editStore != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
-        adminReads?.mapsRequest(request) == true
+        adminReads?.mapsRequest(request) == true || adminContent?.mapsRequest(request) == true
 
     /** Owner admission surrounds generic/Spring/MVC; selected Admin reads finish in their own original-ingress handler. */
     val ingressFilter: Filter = Filter { request, response, chain ->
         val http = request as HttpServletRequest
         val path = ComplaintInstallationRoutes.path(http)
-        if (adminReads?.mapsRequest(http) == true) {
+        if (adminContent?.mapsRequest(http) == true) {
+            adminContent.handleRequest(http, response as HttpServletResponse)
+        } else if (adminReads?.mapsRequest(http) == true) {
             // This exact existing handler owns original ingress + input bounds + real normal-JWT/current-ADMIN SQL.
             // It finishes here, before generic buffering/user converter; it never falls through unauthenticated.
             adminReads.handleRequest(http, response as HttpServletResponse)
@@ -358,6 +363,27 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             val admin = ComplaintTestRegisteredAdminReadsV1.fromRegistered(registration, assembly, ownership, jdbc, startup, userDecoder, responses)
             return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
                 RegisteredOwnerReads(registration, assembly, ownership, jdbc, responses), adminReads = admin)
+        }
+
+        /** Further explicit fixed TEST cohort; old Admin-read selection gains no issuer or mutation. */
+        fun fromRegisteredInitialCheckpointReadCreateAdminReadContent(
+            registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership,
+            jdbc: JdbcTemplate,
+            audit: AuditService,
+            startup: ComplaintTestRegisteredHttpStartupV1,
+            userDecoder: JwtDecoder,
+            passwordEncoder: PasswordEncoder,
+        ): ComplaintTestBootstrapHttpCompositionV1 {
+            registration.requireActiveIdentityTarget(assembly)
+            registration.requireIdentityAdmissionPhaseResources(ownership, jdbc)
+            val responses = ComplaintOwnerHistoryResponses()
+            val admin = ComplaintTestRegisteredAdminReadsV1.fromRegistered(registration, assembly, ownership, jdbc, startup, userDecoder, responses)
+            val content = ComplaintTestRegisteredAdminContentV1.fromRegistered(registration, assembly, ownership, jdbc, audit,
+                startup, userDecoder, passwordEncoder, responses)
+            return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
+                RegisteredOwnerReads(registration, assembly, ownership, jdbc, responses), adminReads = admin, adminContent = content)
         }
 
         /** Separate concrete reply-capable store/handler selection. All earlier factories retain their narrower routes. */

@@ -1723,6 +1723,19 @@ internal class ComplaintIngressAdmission(
             owner.locked { owner.requireEditState(selected) }
         }
 
+        /** Exact registered content handoff only; a read/owner/deletion admission cannot substitute it. */
+        internal fun requireAdminContentOwner(handoff: ComplaintAdmittedAdminContent, owner: ComplaintIngressAdmission) {
+            val selected = handoff as? AdmittedAdminContent ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            if (selected.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            owner.locked { owner.requireAdminContentState(selected) }
+        }
+
+        /** Compare the actual current registered Admin ingress; absence never grants entry or a transferable handle. */
+        internal fun requireRegisteredAdminContentIngressOwner(owner: ComplaintIngressAdmission) {
+            val context = current.get() ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            owner.locked { owner.state(context) }
+        }
+
         internal fun requireOwnerDeleteOwner(handoff: ComplaintAdmittedOwnerDelete, owner: ComplaintIngressAdmission) {
             val selected = handoff as? AdmittedDelete ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
             if (selected.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)

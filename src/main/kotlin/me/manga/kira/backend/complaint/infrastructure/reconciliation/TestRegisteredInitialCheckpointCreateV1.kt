@@ -15,6 +15,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableRowV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalRunContextV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerEditOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminContentOperation
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
 import me.manga.kira.backend.security.EpochSealFramesV1
@@ -141,6 +142,34 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
         selected.requireCurrentOperation(this, operation, phase)
         operation.requireCheckpointTime(selected, phase, readCurrent(phase.ownerEdit.connection(operation, jdbc)))
         selected.requireCurrentOperation(this, operation, phase)
+    }
+
+    /** Content retains its own typed claim/boundary; only this original current reader is shared. */
+    internal fun lockAndCheck(operation: ComplaintAdminContentOperation, phase: PersistencePhaseContext, selected: TestRegisteredAdminContentV1) {
+        selected.requireCurrentOperation(this, operation, phase)
+        check(jdbc.query(TestActiveInitialCheckpointSqlV1.lockGlobal, { _, _ -> true }).single())
+        check(jdbc.query(TestActiveInitialCheckpointSqlV1.lockScope, { _, _ -> true }, identity.scope).single())
+        checkCurrent(operation, phase, selected)
+    }
+
+    internal fun checkCurrent(operation: ComplaintAdminContentOperation, phase: PersistencePhaseContext, selected: TestRegisteredAdminContentV1) {
+        selected.requireCurrentOperation(this, operation, phase)
+        operation.requireCheckpointTime(selected, phase, readCurrent(phase.adminContent.connection(operation, jdbc)))
+        selected.requireCurrentOperation(this, operation, phase)
+    }
+
+    /** Genuine complaint grant issuance has a separate typed original-phase request record, never a content claim. */
+    internal fun lockAndCheck(attempt: TestRegisteredComplaintStepUpV1, phase: PersistencePhaseContext, selected: TestRegisteredAdminContentV1) {
+        selected.requireCurrentOperation(this, attempt, phase)
+        check(jdbc.query(TestActiveInitialCheckpointSqlV1.lockGlobal, { _, _ -> true }).single())
+        check(jdbc.query(TestActiveInitialCheckpointSqlV1.lockScope, { _, _ -> true }, identity.scope).single())
+        checkCurrent(attempt, phase, selected)
+    }
+
+    internal fun checkCurrent(attempt: TestRegisteredComplaintStepUpV1, phase: PersistencePhaseContext, selected: TestRegisteredAdminContentV1) {
+        selected.requireCurrentOperation(this, attempt, phase)
+        attempt.requireCheckpointTime(phase, readCurrent(phase.registeredAdminStepUpConnection(attempt, jdbc, ownership)))
+        selected.requireCurrentOperation(this, attempt, phase)
     }
 
     /** One explicit pre-D selection; callers above prove exact typed operation/owner before and after. */
