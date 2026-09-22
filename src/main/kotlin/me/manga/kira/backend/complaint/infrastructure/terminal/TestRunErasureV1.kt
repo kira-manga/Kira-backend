@@ -1,6 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.terminal
 
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceGateV1
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcParticipantRole
@@ -11,27 +12,35 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseO
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackException
 import me.manga.kira.backend.complaint.domain.terminal.TestOrdinaryDenialStatementV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDenialStatementV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEvidenceDigestV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalExceptionV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalInventoryWitnessV1
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalCanonicalV4
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalV1
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OrdinaryJournalRetentionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOrdinaryInventoryReadbackV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOrdinaryInventoryReaderV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestTerminalInventoryReadbackV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestTerminalInventoryReaderV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestRunErasurePhaseExecutorV1
+import me.manga.kira.backend.security.EpochSealExceptionV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalException
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import me.manga.kira.backend.security.TestPostTerminalInventoryFoldV1
+import me.manga.kira.backend.security.TestTerminalCodecExceptionV1
 import me.manga.kira.backend.security.TestTerminalJsonV1
+import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.ResultSetExtractor
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
 import java.io.InterruptedIOException
+import java.sql.SQLException
 import java.time.Clock
 import java.time.Instant
 import java.util.UUID
@@ -90,6 +99,7 @@ internal class TestRunErasureV1 private constructor(
     }
     private val caller = Thread.currentThread()
     private val failure = AtomicReference<Throwable?>()
+    private val firstFailure = AtomicReference<FirstFailure?>()
     private var started = false
     private var closed = false
     private var cleanupProven = false
@@ -406,6 +416,31 @@ internal class TestRunErasureV1 private constructor(
         }
     }
     internal fun observeFailure(problem: Throwable) {
+        // Passive first-failure scalars, before redaction/cleanup can mask the original edge. No logging.
+        if (firstFailure.get() == null) runCatching {
+            val (category, code) = when (problem) {
+                is PersistencePhaseException -> "PERSISTENCE_PHASE" to problem.code.name
+                is PersistenceBoundaryException -> "PERSISTENCE_BOUNDARY" to problem.code.name
+                is CatalogReadbackException -> "CATALOG_READBACK" to problem.code.name
+                is TestTerminalExceptionV1 -> "TEST_TERMINAL" to problem.code.name
+                is JournalPublicationExceptionV1 -> "JOURNAL_PUBLICATION" to problem.code.name
+                is TestTerminalCodecExceptionV1 -> "TEST_TERMINAL_CODEC" to problem.code.name
+                is EpochSealExceptionV1 -> "EPOCH_SEAL" to problem.code.name
+                is OwnerDeleteAllJournalException -> "OWNER_DELETE_ALL_JOURNAL" to problem.code.name
+                is DataAccessException -> "DATA_ACCESS" to boundedSqlState(problem.cause as? SQLException)
+                is SQLException -> "SQL" to boundedSqlState(problem)
+                is TestRunErasureExceptionV1 -> "ERASURE" to "REFUSED"
+                is AssertionError -> "ASSERTION" to "NONE"
+                is Error -> "ERROR" to "NONE"
+                is CancellationException -> "CANCELLED" to "NONE"
+                is InterruptedException, is InterruptedIOException -> "INTERRUPTED" to "NONE"
+                is IllegalStateException -> "STATE" to "NONE"
+                is IllegalArgumentException -> "ARGUMENT" to "NONE"
+                is ArithmeticException -> "ARITHMETIC" to "NONE"
+                else -> "OTHER" to "NONE"
+            }
+            firstFailure.compareAndSet(null, FirstFailure(stage, step, category, code))
+        }
         val retained = when {
             problem is Error -> problem
             problem is CancellationException -> CancellationException("TEST run erasure cancelled.")
@@ -430,9 +465,13 @@ internal class TestRunErasureV1 private constructor(
         throwIfSignalled(); cleanupProven = true
     }
     override fun toString(): String = "TestRunErasureV1(one-original,same-lineage,routine-deletion,redacted)"
+    private class FirstFailure(val stage: Stage, val step: TestRunErasureStepV1, val category: String, val code: String)
     private enum class Stage { NEW, SQL, CATALOG, DENIALS, ORDINARY, TERMINAL, CLOSED }
     companion object {
         private const val MAX_BATCHES = 128
+        private fun boundedSqlState(problem: SQLException?): String = problem?.sqlState?.takeIf { state ->
+            state.length == 5 && state.all { it in 'A'..'Z' || it in '0'..'9' }
+        } ?: "UNAVAILABLE"
         internal fun begin(predecessor: CatalogTestRunTerminalV1, owner: PersistencePhaseOwnership, jdbc: JdbcTemplate): TestRunErasureV1 =
             TestRunErasureV1(predecessor, predecessor.process, owner, jdbc, predecessor.expectedDeclaration.activation.run().installationLimit)
 
