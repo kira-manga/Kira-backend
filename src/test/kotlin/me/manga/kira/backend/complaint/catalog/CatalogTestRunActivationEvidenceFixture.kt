@@ -447,6 +447,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             initialCheckpointDeletion = ordinaryRawHttp?.initialCheckpointDeletion,
             activeOwnerDeleteQueue = ordinaryRawHttp?.activeOwnerDeleteQueue?.input,
             adminRead = ordinaryRawHttp?.adminRead,
+            adminContent = ordinaryRawHttp?.adminContent,
         )
         intakeDocument = document
         val inputBytes = TestDeploymentInputFixture.bytes(document)

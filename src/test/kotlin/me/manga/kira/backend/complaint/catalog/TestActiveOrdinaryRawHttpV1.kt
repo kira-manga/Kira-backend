@@ -29,6 +29,8 @@ internal class TestActiveOrdinaryRawHttpV1(
     val ordinaryPoolSize: Int = 2,
     // Optional born-with Admin read declaration; absence preserves every existing fixture's full D.
     val adminRead: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminReadInputV1? = null,
+    // Optional single-content/password cohort; never supplies a grant, authenticated identity or current checkpoint.
+    val adminContent: me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentInputV1? = null,
 ) {
     init { require(ordinaryPoolSize == 2 || ordinaryPoolSize == 3 && initialCheckpointCreate != null) }
 }
