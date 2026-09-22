@@ -1,0 +1,228 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 18,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpIT",
+      "cohort": "NEW_ADMIN_CONTENT",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredAdminPasswordEditCountsExactMutationAndReceiptsReplayOriginalGrantWithoutConsumingFreshProof",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredAdminContentHttpIT.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "ca478833da13ad511c4bc4fbb34ac133e4c86f726226385f667c5851d990c8ee",
+      "xml_names": [
+        "registeredAdminPasswordEditCountsExactMutationAndReceiptsReplayOriginalGrantWithoutConsumingFreshProof()"
+      ]
+    },
+    {
+      "annotation_line": 21,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpIT",
+      "cohort": "NEW_ADMIN_CONTENT",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredAdminContentUsesCurrentDatabaseIdentityPasswordScopeAndActualIssuedProof",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredAdminContentHttpIT.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "ca478833da13ad511c4bc4fbb34ac133e4c86f726226385f667c5851d990c8ee",
+      "xml_names": [
+        "registeredAdminContentUsesCurrentDatabaseIdentityPasswordScopeAndActualIssuedProof()"
+      ]
+    },
+    {
+      "annotation_line": 24,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpIT",
+      "cohort": "NEW_ADMIN_CONTENT",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredAdminContentRequiresOriginalPairAndCurrentCheckpointForNewClaimsButNotTerminalReplay",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredAdminContentHttpIT.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "ca478833da13ad511c4bc4fbb34ac133e4c86f726226385f667c5851d990c8ee",
+      "xml_names": [
+        "registeredAdminContentRequiresOriginalPairAndCurrentCheckpointForNewClaimsButNotTerminalReplay()"
+      ]
+    },
+    {
+      "annotation_line": 27,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpIT",
+      "cohort": "NEW_ADMIN_CONTENT",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredAdminContentAndPasswordIssuanceShareBoundedBodiesEightResponsesAndOriginalCleanup",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredAdminContentHttpIT.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "ca478833da13ad511c4bc4fbb34ac133e4c86f726226385f667c5851d990c8ee",
+      "xml_names": [
+        "registeredAdminContentAndPasswordIssuanceShareBoundedBodiesEightResponsesAndOriginalCleanup()"
+      ]
+    },
+    {
+      "annotation_line": 35,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentColdInputsV1Test",
+      "cohort": "NEW_ADMIN_CONTENT",
+      "expected_invocations_from_annotation": 1,
+      "method": "absentAdminContentStaysDisabledAndExplicitDeclarationBindsItsPolicyIssuerAndSharedOwnerInFullD",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestRegisteredAdminContentColdInputsV1Test.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "74e4072c36eac76f30b0bcecbf408c3cb256f8cfdedf9e79ec8d566ca7f30bbc",
+      "xml_names": [
+        "absentAdminContentStaysDisabledAndExplicitDeclarationBindsItsPolicyIssuerAndSharedOwnerInFullD()"
+      ]
+    },
+    {
+      "annotation_line": 83,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentColdInputsV1Test",
+      "cohort": "NEW_ADMIN_CONTENT",
+      "expected_invocations_from_annotation": 1,
+      "method": "malformedOrUnpairedAdminContentDeclarationRefusesBeforeAnySecretNativePoolOrLifecycleWork",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestRegisteredAdminContentColdInputsV1Test.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "74e4072c36eac76f30b0bcecbf408c3cb256f8cfdedf9e79ec8d566ca7f30bbc",
+      "xml_names": [
+        "malformedOrUnpairedAdminContentDeclarationRefusesBeforeAnySecretNativePoolOrLifecycleWork()"
+      ]
+    },
+    {
+      "annotation_line": 85,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT",
+      "cohort": "R14_V26_FINAL_EXPIRED_LEASE",
+      "expected_invocations_from_annotation": 1,
+      "method": "v30RefusesExpiredScopedLeaseAtActualOtherwiseCompleteFinalPrefix",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "53c541675c980ba5262c3822875a1d5a7ece8ee967941713e6fd517c592691b8",
+      "xml_names": [
+        "v30RefusesExpiredScopedLeaseAtActualOtherwiseCompleteFinalPrefix()"
+      ]
+    },
+    {
+      "annotation_line": 89,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT",
+      "cohort": "R15_V26_FINAL_OPEN_GATE",
+      "expected_invocations_from_annotation": 1,
+      "method": "v30RefusesOpenMaintenanceGateAtActualOtherwiseCompleteFinalPrefix",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "53c541675c980ba5262c3822875a1d5a7ece8ee967941713e6fd517c592691b8",
+      "xml_names": [
+        "v30RefusesOpenMaintenanceGateAtActualOtherwiseCompleteFinalPrefix()"
+      ]
+    },
+    {
+      "annotation_line": 97,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT",
+      "cohort": "R16_V26_FINAL_GLOBAL_HEAD",
+      "expected_invocations_from_annotation": 1,
+      "method": "v30RefusesDifferentGlobalAcceptedHeadAtActualOtherwiseCompleteFinalPrefix",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "53c541675c980ba5262c3822875a1d5a7ece8ee967941713e6fd517c592691b8",
+      "xml_names": [
+        "v30RefusesDifferentGlobalAcceptedHeadAtActualOtherwiseCompleteFinalPrefix()"
+      ]
+    },
+    {
+      "annotation_line": 101,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT",
+      "cohort": "R17_V26_FINAL_WRONG_DISPOSITION",
+      "expected_invocations_from_annotation": 1,
+      "method": "v30RefusesWrongPermanentDispositionAtActualOtherwiseCompleteFinalPrefix",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "53c541675c980ba5262c3822875a1d5a7ece8ee967941713e6fd517c592691b8",
+      "xml_names": [
+        "v30RefusesWrongPermanentDispositionAtActualOtherwiseCompleteFinalPrefix()"
+      ]
+    },
+    {
+      "annotation_line": 119,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT",
+      "cohort": "R18_POST_E_MANIFEST_CONFLICT",
+      "expected_invocations_from_annotation": 1,
+      "method": "currentManifestConflictRefusesEvenAValidDeletedPairInsteadOfRepairingItToRetired",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "53c541675c980ba5262c3822875a1d5a7ece8ee967941713e6fd517c592691b8",
+      "xml_names": [
+        "currentManifestConflictRefusesEvenAValidDeletedPairInsteadOfRepairingItToRetired()"
+      ]
+    },
+    {
+      "annotation_line": 132,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT",
+      "cohort": "R19_POST_E_REOPENED_WORK",
+      "expected_invocations_from_annotation": 1,
+      "method": "reopenedVerifiedOrdinaryWorkAfterERefusesBeforeNativeOrAnyErasurePayment",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "53c541675c980ba5262c3822875a1d5a7ece8ee967941713e6fd517c592691b8",
+      "xml_names": [
+        "reopenedVerifiedOrdinaryWorkAfterERefusesBeforeNativeOrAnyErasurePayment()"
+      ]
+    },
+    {
+      "annotation_line": 136,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT",
+      "cohort": "R20_POST_E_PENDING_RESOURCE",
+      "expected_invocations_from_annotation": 1,
+      "method": "unresolvedDeletionPendingResourceAfterERefusesBeforeNativeOrAnyErasurePayment",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt",
+      "source_head": "2003b0221571460b08fbe947f06897f42d9cfc23",
+      "source_sha256": "53c541675c980ba5262c3822875a1d5a7ece8ee967941713e6fd517c592691b8",
+      "xml_names": [
+        "unresolvedDeletionPendingResourceAfterERefusesBeforeNativeOrAnyErasurePayment()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 13,
+  "expected_source_paths": 2471,
+  "expected_total": 13,
+  "selection_basis": {
+    "batch": "REGISTERED_ADMIN_CONTENT_SIX_PLUS_FINAL_AND_SEMANTIC_SEVEN",
+    "carryforward": "Carry61 tenPASS and60 fourPASS unchanged.62 results separate; R21-R24 remain for next group, no silent omissions/package/issue credit.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "NEW_ADMIN_CONTENT": 6,
+      "R14_V26_FINAL_EXPIRED_LEASE": 1,
+      "R15_V26_FINAL_OPEN_GATE": 1,
+      "R16_V26_FINAL_GLOBAL_HEAD": 1,
+      "R17_V26_FINAL_WRONG_DISPOSITION": 1,
+      "R18_POST_E_MANIFEST_CONFLICT": 1,
+      "R19_POST_E_REOPENED_WORK": 1,
+      "R20_POST_E_PENDING_RESOURCE": 1
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "expected_source_paths": 2471,
+    "gradle_seconds": 2400,
+    "inventory": "Enumerate every committed path from final reviewed source; match root-pinned complete path count and preserve all348 historical paths. New-file count is pending; no file subset or fixed2458 exclusion.",
+    "plan": "review/working/app-29-backend-focused-20260922-63/PLAN.md",
+    "prerequisite": "Final reviewed source and exact pins required before dispatch.",
+    "required_source": "2003b0221571460b08fbe947f06897f42d9cfc23",
+    "required_tree": "6c98d76987f103ace8a7a3db994107f7447efbac",
+    "scope": "Six new registered Admin content/issuance declarations plus R14-R20 seven previously pending F FINAL-predicate and post-E semantic refusals."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt": "53c541675c980ba5262c3822875a1d5a7ece8ee967941713e6fd517c592691b8",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestRegisteredAdminContentColdInputsV1Test.kt": "74e4072c36eac76f30b0bcecbf408c3cb256f8cfdedf9e79ec8d566ca7f30bbc",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredAdminContentHttpIT.kt": "ca478833da13ad511c4bc4fbb34ac133e4c86f726226385f667c5851d990c8ee"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT": 7,
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentColdInputsV1Test": 2,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpIT": 4
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentColdInputsV1Test.absentAdminContentStaysDisabledAndExplicitDeclarationBindsItsPolicyIssuerAndSharedOwnerInFullD",
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestRegisteredAdminContentColdInputsV1Test.malformedOrUnpairedAdminContentDeclarationRefusesBeforeAnySecretNativePoolOrLifecycleWork",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpIT.registeredAdminPasswordEditCountsExactMutationAndReceiptsReplayOriginalGrantWithoutConsumingFreshProof",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpIT.registeredAdminContentUsesCurrentDatabaseIdentityPasswordScopeAndActualIssuedProof",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpIT.registeredAdminContentRequiresOriginalPairAndCurrentCheckpointForNewClaimsButNotTerminalReplay",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredAdminContentHttpIT.registeredAdminContentAndPasswordIssuanceShareBoundedBodiesEightResponsesAndOriginalCleanup",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT.v30RefusesExpiredScopedLeaseAtActualOtherwiseCompleteFinalPrefix",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT.v30RefusesOpenMaintenanceGateAtActualOtherwiseCompleteFinalPrefix",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT.v30RefusesDifferentGlobalAcceptedHeadAtActualOtherwiseCompleteFinalPrefix",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT.v30RefusesWrongPermanentDispositionAtActualOtherwiseCompleteFinalPrefix",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT.currentManifestConflictRefusesEvenAValidDeletedPairInsteadOfRepairingItToRetired",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT.reopenedVerifiedOrdinaryWorkAfterERefusesBeforeNativeOrAnyErasurePayment",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT.unresolvedDeletionPendingResourceAfterERefusesBeforeNativeOrAnyErasurePayment"
+  ]
+}
