@@ -2,6 +2,7 @@ package me.manga.kira.backend.database.complaint
 
 import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.FlywayException
+import org.flywaydb.core.internal.exception.FlywayMigrateException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -108,9 +109,10 @@ class ComplaintCleanStartMigrationIT : ComplaintPostgresTest() {
             seedCurrent(schema)
             schema.exec(seed)
             assertUnchanged(schema) {
-                val failure = assertThrows(FlywayException::class.java) { schema.flyway().migrate() }
+                val failure = assertThrows(FlywayMigrateException::class.java) { schema.flyway().migrate() }
                 assertEquals("23514", sqlCause(failure)?.sqlState, label)
-                assertTrue(failure.message.orEmpty().contains(MIGRATION), label)
+                assertEquals(MIGRATION, failure.migration.script, label)
+                assertEquals("31.4", failure.migration.version.toString(), label)
                 if (label.startsWith("retired ")) {
                     assertTrue(sqlCause(failure)?.message.orEmpty().contains("Clean-start complaint accounting required"), label)
                 }
