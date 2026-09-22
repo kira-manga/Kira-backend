@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.infrastructure
 
+import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.GuardedDataSource
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
@@ -10,6 +11,7 @@ import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveInitialCh
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableRowV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalRunContextV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
+import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutIdentityV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointRowsV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointSqlV1
@@ -17,10 +19,14 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestInitial
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionSqlV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredRecurrentCheckpointDeletionCurrentV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveCutoffPublicationV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeletePhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteReadPhaseExecutor
 import me.manga.kira.backend.security.ComplaintAdmittedAdminErasure
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDelete
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
 import me.manga.kira.backend.security.EpochSealFramesV1
+import me.manga.kira.backend.security.InstallationJwtCodec
+import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestTerminalJsonV1
 import java.time.Instant
 import java.util.HexFormat
@@ -32,6 +38,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettin
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalPublisherFactoryV1
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
 import org.springframework.jdbc.core.JdbcTemplate
@@ -119,6 +126,37 @@ internal class TestOwnerDeleteProcessBindingV1 private constructor(
     internal fun ownerPublisher(store: JdbcComplaintOwnerDeleteStore) = publication.ownerPublisher(this, store)
     internal fun allPublisher(store: JdbcComplaintOwnerDeleteAllStore) = publication.allPublisher(this, store)
     internal fun adminPublisher(store: JdbcComplaintAdminDeleteStore) = publication.adminPublisher(this, store)
+
+    internal fun ownerHttpResources(audit: AuditService): OwnerHttpResources = OwnerHttpResources(this, audit)
+
+    /** One fixed original SQL graph. Its publisher stays separately retained by the startup before any listener. */
+    internal class OwnerHttpResources(private val original: TestOwnerDeleteProcessBindingV1, audit: AuditService) {
+        init {
+            original.requireEntry(original.ordinaryOwner, PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHENTICATION)
+            original.requireEntry(original.deletionOwner, PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE)
+        }
+        private val graph = original.lower
+        private val capacity = JdbcComplaintCapacityStore(original.deletion, graph.policy.digestBytes())
+        private val store = JdbcComplaintOwnerDeleteStore(original.deletion, capacity, audit, graph,
+            TestOwnerDeleteJournalCodecV1.forCanonicalization(graph.routing))
+        private val reads = ComplaintOwnerDeleteReadPhaseExecutor(original.ordinaryOwner, JdbcComplaintOwnerDeleteReceiptStore(original.ordinary, graph))
+        private val verification = JdbcComplaintOwnerDeleteVerificationStore(original.deletion, graph, store)
+        private val phases = ComplaintOwnerDeletePhaseExecutor(original.deletionOwner, store, reads, verification,
+            JdbcComplaintOwnerDeleteApplyStore(original.deletion, capacity, audit, graph, store, verification))
+
+        internal fun publisher(): TestOwnerDeleteJournalPublisherFactoryV1 = original.ownerPublisher(store)
+
+        internal fun adapter(registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, jwt: InstallationJwtCodec,
+            publisher: TestOwnerDeleteJournalPublisherFactoryV1): ComplaintOwnerDeleteAdapter {
+            requireConnectionFree()
+            check(registration === original.registration && assembly === original.assembly &&
+                ownership === original.ordinaryOwner && jdbc === original.ordinary)
+            original.requireEntry(ownership, PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHENTICATION)
+            original.requireEntry(original.deletionOwner, PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE)
+            return ComplaintOwnerDeleteAdapter(graph, jwt, reads, phases, publisher)
+        }
+    }
 
     internal fun observationIdentityArguments(): Array<Any?> = identity.arguments()
 

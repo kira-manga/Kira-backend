@@ -9,6 +9,25 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwner
 /** No re-claim, semantic charge, current key selection or exception-to-202 shortcut on continuation. */
 internal class ComplaintOwnerDeleteContinuation(private val phases: ComplaintOwnerDeletePhaseExecutor, private val publisher: TestOwnerDeleteJournalPublisherFactoryV1) {
     init { phases.requirePublisher(publisher) }
+
+    /** Registered A only. Neither a recorded proof nor a Completed hint is a fresh HTTP receipt; B owns APPLY. */
+    fun publishRegistered(outcome: TestOwnerDeleteAuthorizationV1, reserved: JournalPublicationLanesV1.TestOwnerDeleteReservation? = null) {
+        requireConnectionFree()
+        phases.requirePublisher(publisher)
+        when (outcome) {
+            is TestOwnerDeleteAuthorizationV1.Completed -> Unit
+            is TestOwnerDeleteAuthorizationV1.Continue -> when (val work = outcome.work) {
+                is CommittedTestOwnerDeleteWork.Prepared -> {
+                    if (reserved == null) publisher.reserve().use { lane -> phases.verify(work, lane.publish(work), lane) }
+                    else phases.verify(work, reserved.publish(work), reserved)
+                }
+                is CommittedTestOwnerDeleteWork.RecordedVerified -> Unit // Never resume into direct registered APPLY.
+                else -> error("Original closed work branch required")
+            }
+        }
+    }
+
+    /** Historical lower TEST continuation is unchanged and is not used by registered request work. */
     fun complete(outcome: TestOwnerDeleteAuthorizationV1, reserved: JournalPublicationLanesV1.TestOwnerDeleteReservation? = null): ComplaintOwnerDeleteReceipt {
         requireConnectionFree()
         phases.requirePublisher(publisher)
