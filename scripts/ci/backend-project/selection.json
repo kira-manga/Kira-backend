@@ -1,0 +1,91 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 18,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerMeReplyEditHttpIT",
+      "cohort": "NEW_COMBINED_OWNER_COHORT",
+      "expected_invocations_from_annotation": 1,
+      "method": "oneOriginalListenerFollowsEnrollmentLocationThenCreatesRepliesEditsAndReplaysExactReceipts",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerMeReplyEditHttpIT.kt",
+      "source_head": "d4e3e34475b98fc5951cbf7ca2e7955fdf8a8242",
+      "source_sha256": "34dd087111beccab7760df6360c02635f8022cec0461772dc5375d79c491554f",
+      "xml_names": [
+        "oneOriginalListenerFollowsEnrollmentLocationThenCreatesRepliesEditsAndReplaysExactReceipts()"
+      ]
+    },
+    {
+      "annotation_line": 21,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerMeReplyEditHttpIT",
+      "cohort": "NEW_COMBINED_OWNER_COHORT",
+      "expected_invocations_from_annotation": 1,
+      "method": "createOnlyBirthRefusesCombinedStartupAndOlderMeListenerStillExcludesReplyAndEdit",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerMeReplyEditHttpIT.kt",
+      "source_head": "d4e3e34475b98fc5951cbf7ca2e7955fdf8a8242",
+      "source_sha256": "34dd087111beccab7760df6360c02635f8022cec0461772dc5375d79c491554f",
+      "xml_names": [
+        "createOnlyBirthRefusesCombinedStartupAndOlderMeListenerStillExcludesReplyAndEdit()"
+      ]
+    },
+    {
+      "annotation_line": 24,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerMeReplyEditHttpIT",
+      "cohort": "NEW_COMBINED_OWNER_COHORT",
+      "expected_invocations_from_annotation": 1,
+      "method": "replyOnlyBirthRefusesCombinedStartupAndOlderReplyListenerStillExcludesMeAndEdit",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerMeReplyEditHttpIT.kt",
+      "source_head": "d4e3e34475b98fc5951cbf7ca2e7955fdf8a8242",
+      "source_sha256": "34dd087111beccab7760df6360c02635f8022cec0461772dc5375d79c491554f",
+      "xml_names": [
+        "replyOnlyBirthRefusesCombinedStartupAndOlderReplyListenerStillExcludesMeAndEdit()"
+      ]
+    },
+    {
+      "annotation_line": 27,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerMeReplyEditHttpIT",
+      "cohort": "NEW_COMBINED_OWNER_COHORT",
+      "expected_invocations_from_annotation": 1,
+      "method": "absentCreateDeclarationCannotRetainCombinedStartupOrInitializeJpaAndListener",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerMeReplyEditHttpIT.kt",
+      "source_head": "d4e3e34475b98fc5951cbf7ca2e7955fdf8a8242",
+      "source_sha256": "34dd087111beccab7760df6360c02635f8022cec0461772dc5375d79c491554f",
+      "xml_names": [
+        "absentCreateDeclarationCannotRetainCombinedStartupOrInitializeJpaAndListener()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 4,
+  "expected_source_paths": 2479,
+  "expected_total": 4,
+  "selection_basis": {
+    "batch": "COMBINED_OWNER_ME_REPLY_EDIT_FOUR",
+    "carryforward": "All four focused67 methods remain unexecuted after TEST compile failure; no selector expansion.66 Admin/status and F remain separate; carry unchanged prior passes, no dropped requirement or package credit.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "NEW_COMBINED_OWNER_COHORT": 4
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "expected_source_paths": 2479,
+    "gradle_seconds": 2400,
+    "inventory": "Enumerate every committed path from final reviewed source; match root-pinned complete path count2479 and preserve all348 historical paths. No file subset or fixed2458 exclusion.",
+    "plan": "review/working/app-29-backend-focused-20260922-68/PLAN.md",
+    "prerequisite": "Root reviewed one-line TEST parentId correction; explicit admission and exact pins required before preparation/dispatch.",
+    "required_source": "d4e3e34475b98fc5951cbf7ca2e7955fdf8a8242",
+    "required_tree": "fd6f555b8274a31d67ba78b5527da49f4b99fc73",
+    "scope": "Four genuine combined owner me/CREATE/REPLY/EDIT declarations: one real flow, two narrower policies/listeners and absent birth refusal."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredOwnerMeReplyEditHttpIT.kt": "34dd087111beccab7760df6360c02635f8022cec0461772dc5375d79c491554f"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerMeReplyEditHttpIT": 4
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerMeReplyEditHttpIT.oneOriginalListenerFollowsEnrollmentLocationThenCreatesRepliesEditsAndReplaysExactReceipts",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerMeReplyEditHttpIT.createOnlyBirthRefusesCombinedStartupAndOlderMeListenerStillExcludesReplyAndEdit",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerMeReplyEditHttpIT.replyOnlyBirthRefusesCombinedStartupAndOlderReplyListenerStillExcludesMeAndEdit",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredOwnerMeReplyEditHttpIT.absentCreateDeclarationCannotRetainCombinedStartupOrInitializeJpaAndListener"
+  ]
+}
