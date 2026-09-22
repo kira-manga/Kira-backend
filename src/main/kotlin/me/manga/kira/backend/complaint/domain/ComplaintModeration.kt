@@ -14,7 +14,7 @@ sealed interface ComplaintClosure {
         override fun toString(): String = "ComplaintClosure.Admin(redacted)"
     }
 
-    /** Only an imported LEGACY_UNCLAIMED row may lack its historical reason or time. */
+    /** Historical shape retained for recognition only; active moderation rejects this closure. */
     data class Legacy(override val reason: String?, val closedAt: Instant?) : ComplaintClosure {
         init {
             if (reason != null && ComplaintTextRules.closureReason(reason) != reason) invalidModerationState()
@@ -24,7 +24,7 @@ sealed interface ComplaintClosure {
     }
 }
 
-/** The content, ownership lookup, authorization and locked update are separate application concerns. */
+/** Active clean-start state. Content, ownership lookup, authorization and locked update are separate concerns. */
 data class ComplaintModerationState(
     val kind: ComplaintKind,
     val ownership: ComplaintOwnership,
@@ -33,9 +33,10 @@ data class ComplaintModerationState(
     val closure: ComplaintClosure? = null,
 ) {
     init {
+        if (ownership == ComplaintOwnership.LEGACY_UNCLAIMED || status == ComplaintStatus.UNKNOWN || closure is ComplaintClosure.Legacy) {
+            invalidModerationState()
+        }
         if (version <= 0 || (status == ComplaintStatus.CLOSED) != (closure != null)) invalidModerationState()
-        if (closure is ComplaintClosure.Legacy && ownership != ComplaintOwnership.LEGACY_UNCLAIMED) invalidModerationState()
-        if (status == ComplaintStatus.UNKNOWN && ownership != ComplaintOwnership.LEGACY_UNCLAIMED) invalidModerationState()
         if ((kind == ComplaintKind.NOTICE) != (ownership == ComplaintOwnership.SYSTEM)) invalidModerationState()
         if (kind == ComplaintKind.NOTICE && status != ComplaintStatus.PINNED) invalidModerationState()
     }

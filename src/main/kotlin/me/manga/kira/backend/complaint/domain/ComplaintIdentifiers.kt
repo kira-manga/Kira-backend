@@ -14,7 +14,7 @@ object ComplaintIdentifiers {
 
     fun idempotencyKey(value: String): UUID = version4(value, ComplaintField.IDEMPOTENCY_KEY)
 
-    /** Server notice/import IDs need canonical spelling, but are not necessarily version 4. */
+    /** Server notice IDs need canonical spelling, but are not necessarily version 4. */
     fun resourceId(value: String): UUID = canonical(value, ComplaintField.RESOURCE_ID)
 
     fun dataScope(value: String): ComplaintDataScope = ComplaintDataScope.of(canonical(value, ComplaintField.DATA_SCOPE_ID))
