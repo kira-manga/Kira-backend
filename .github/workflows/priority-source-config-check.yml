@@ -22,8 +22,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      GRADLE_USER_HOME: ${{ runner.temp }}/priority-source-gradle
-      EVIDENCE: ${{ runner.temp }}/priority-source-evidence
+      GRADLE_USER_HOME: /tmp/kira-priority-source-gradle-${{ github.run_id }}-${{ github.run_attempt }}
+      EVIDENCE: /tmp/kira-priority-source-evidence-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
