@@ -85,11 +85,17 @@ class StoredCatalogPairVerifier(private val signer: DocumentSigner) {
         check(document.signatureFormat == DocumentSignatureCodec.FORMAT && document.signatureAlgorithm == DocumentSignatureCodec.ALGORITHM)
         checkChain(document.documentRevision, document.previousDocumentRevision, document.previousDocumentChecksum)
         verifySignature(
-            signer.publicKeys(), document.signingKeyId, document.signatureBase64,
+            signer.publicKeys(),
+            document.signingKeyId,
+            document.signatureBase64,
             DocumentSignatureCodec.payload(
                 DocumentSigningInput(
-                    document.documentRevision, document.checksum, document.createdAt,
-                    document.previousDocumentRevision, document.previousDocumentChecksum, document.documentJson,
+                    document.documentRevision,
+                    document.checksum,
+                    document.createdAt,
+                    document.previousDocumentRevision,
+                    document.previousDocumentChecksum,
+                    document.documentJson,
                 ),
             ),
         )
@@ -102,7 +108,9 @@ class StoredCatalogPairVerifier(private val signer: DocumentSigner) {
         check(entry.engine == "generic" && entry.checksum == artifact.checksum && HASH.matches(artifact.checksum))
         check(artifact.canonVersion == CanonicalJson.CANON_VERSION && artifact.checksum == Sha256.hexUtf8(artifact.canonicalJson))
         verifySignature(
-            signer.publicKeys(), entry.sourceSigningKeyId, entry.sourceSignature,
+            signer.publicKeys(),
+            entry.sourceSigningKeyId,
+            entry.sourceSignature,
             SourceCatalogSignatureCodec.sourcePayload(artifact.api, artifact.sourceRevision, artifact.checksum, artifact.canonicalJson),
         )
     }

@@ -251,8 +251,12 @@ class GenericV2CutoverControllerTest {
 
     @Test
     fun `reconciliation requires exact single confirmation before body or step up and bounds actual bytes`() {
-        listOf(emptyList(), listOf(""), listOf("${SourceCatalogReconciliationService.CONFIRMATION} "),
-            listOf(SourceCatalogReconciliationService.CONFIRMATION, SourceCatalogReconciliationService.CONFIRMATION)).forEach { values ->
+        listOf(
+            emptyList(),
+            listOf(""),
+            listOf("${SourceCatalogReconciliationService.CONFIRMATION} "),
+            listOf(SourceCatalogReconciliationService.CONFIRMATION, SourceCatalogReconciliationService.CONFIRMATION),
+        ).forEach { values ->
             val request = object : MockHttpServletRequest() {
                 override fun getInputStream(): ServletInputStream = error("unconfirmed body must not be read")
             }.apply { values.forEach { addHeader("X-Kira-Reconciliation-Confirmation", it) } }

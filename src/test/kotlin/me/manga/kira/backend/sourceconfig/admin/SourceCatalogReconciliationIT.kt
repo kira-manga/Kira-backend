@@ -7,6 +7,7 @@ import me.manga.kira.backend.sourceconfig.application.SourceCatalogReconciliatio
 import me.manga.kira.backend.sourceconfig.application.SourceCatalogReconciliationService
 import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogPhase
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
+import me.manga.kira.backend.sourceconfig.domain.PublishedSourceCatalog
 import me.manga.kira.backend.sourceconfig.domain.PublishedSourceCatalogRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceCatalogReconciliationReceipt
 import me.manga.kira.backend.sourceconfig.domain.model.SourceCatalogManifest
@@ -16,6 +17,7 @@ import me.manga.kira.backend.sourceconfig.signing.DocumentSigner
 import me.manga.kira.backend.sourceconfig.signing.DocumentSigningInput
 import me.manga.kira.backend.sourceconfig.signing.SourceCatalogSignatureCodec
 import me.manga.kira.backend.user.domain.Role
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.Timeout
 import org.springframework.aop.support.AopUtils
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.dao.InvalidDataAccessApiUsageException
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.post
 import org.springframework.transaction.PlatformTransactionManager
@@ -82,7 +85,7 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
         assertEquals(33, preV2.sources.count { it.engine == "legacy" })
         assertNull(documents.findByRevision(102), "a legitimately consumed sequence gap is not missing linked history")
         assertEquals(retained, retainedRows(), "no history, source, draft, pointer time or sequence rewrite")
-        assertPublicStateUnchanged(publicBefore)
+        assertPublicDeliveryUnchanged(publicBefore)
         assertEquals(oldAudits, rows("SELECT to_jsonb(a)::text FROM audit_log a WHERE action <> 'SOURCE_CATALOG_RECONCILED' ORDER BY id"))
         assertEquals(1L, reconciliationAudits())
         assertEquals(4L, count("source_configs", "status = 'disabled'"))
@@ -117,7 +120,8 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
         val before = allState()
         val text = raw.toString(Charsets.UTF_8)
         val invalid = listOf(
-            byteArrayOf(0x7b, 0xc3.toByte(), 0x28, 0x7d), ByteArray(4097),
+            byteArrayOf(0x7b, 0xc3.toByte(), 0x28, 0x7d),
+            ByteArray(4097),
             text.replace(SourceCatalogReconciliationService.POLICY_ID, "unsupported-policy").toByteArray(),
             text.replaceFirst("{", "{\"unrecognized\":true,").toByteArray(),
             text.replaceFirst("{", "{\"anchorRevision\":100,").toByteArray(),
@@ -169,82 +173,57 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
         val member = catalogs.findMembers(latest, 1).single()
         val document = checkNotNull(documents.findByRevision(101))
         val otherActor = users.create("other-${UUID.randomUUID()}@test.local", passwordEncoder.encode(ADMIN_PASSWORD), Role.ADMIN)
-        val badLink = checkNotNull(signer.sign(DocumentSigningInput(
-            101, document.checksum, document.createdAt, 100, "a".repeat(64), document.documentJson,
-        ))) // Valid signature over a false predecessor: must fail the actual retained-row binding.
+        val badLink = checkNotNull(
+            signer.sign(
+                DocumentSigningInput(
+                    101,
+                    document.checksum,
+                    document.createdAt,
+                    100,
+                    "a".repeat(64),
+                    document.documentJson,
+                ),
+            ),
+        ) // Valid signature over a false predecessor: must fail the actual retained-row binding.
         val mutations = listOf<() -> Unit>(
             { jdbcTemplate.update("DELETE FROM published_source_catalog_entries WHERE catalog_id = ? AND source_order = 0", pair.id) },
-            { jdbcTemplate.update(
-                "UPDATE source_config_revisions SET config_canonical_json = config_canonical_json || ' ' WHERE id = ?",
-                member.entry.sourceRevisionId,
-            ) },
+            {
+                jdbcTemplate.update(
+                    "UPDATE source_config_revisions SET config_canonical_json = config_canonical_json || ' ' WHERE id = ?",
+                    member.entry.sourceRevisionId,
+                )
+            },
             { jdbcTemplate.update("UPDATE source_configs SET status = 'active' WHERE id = ?", member.entry.sourceConfigId) },
             { jdbcTemplate.update("UPDATE source_configs SET status = 'withheld' WHERE api = ?", initialGenericApis[4]) },
             { jdbcTemplate.update("UPDATE published_source_catalogs SET created_by = ? WHERE id = ?", otherActor.id, pair.id) },
-            { jdbcTemplate.update(
-                "UPDATE published_documents SET signature_base64 = ? WHERE document_revision = 101",
-                Base64.getEncoder().encodeToString(ByteArray(64)),
-            ) },
-            { jdbcTemplate.update(
-                "UPDATE published_documents SET previous_document_checksum = ?, signature_base64 = ? WHERE document_revision = 101",
-                "a".repeat(64), badLink.signatureBase64,
-            ) },
+            {
+                jdbcTemplate.update(
+                    "UPDATE published_documents SET signature_base64 = ? WHERE document_revision = 101",
+                    Base64.getEncoder().encodeToString(ByteArray(64)),
+                )
+            },
+            {
+                jdbcTemplate.update(
+                    "UPDATE published_documents SET previous_document_checksum = ?, signature_base64 = ? WHERE document_revision = 101",
+                    "a".repeat(64),
+                    badLink.signatureBase64,
+                )
+            },
         )
         mutations.forEach { mutate ->
             TransactionTemplate(transactions).executeWithoutResult { status ->
                 try {
                     mutate()
                     assertThrows(SourceCatalogReconciliationRejected::class.java) { reconciliation.reconcile(raw, admin.id) }
-                } finally { status.setRollbackOnly() }
+                } finally {
+                    status.setRollbackOnly()
+                }
             }
             assertEquals(before, allState(), "failed proof may not leave a receipt or consume a document revision")
         }
-        TransactionTemplate(transactions).executeWithoutResult { status ->
-            try {
-                // Re-sign a synthetic manifest that omits a real removal, updating its intent pin too.
-                // Envelope/row agreement alone must not pass without historical/current-head completeness.
-                val model = SourceConfigParser.strictJson.decodeFromString(SourceCatalogManifest.serializer(), pair.manifestJson)
-                val json = CanonicalJson.canonicalize(SourceCatalogManifest.serializer(), model.copy(removedSources = emptyList()))
-                val checksum = CanonicalJson.checksum(json)
-                val signature = checkNotNull(signer.signDetached(SourceCatalogSignatureCodec.manifestPayload(
-                    latest, pair.previousCatalogRevision, pair.previousCatalogChecksum, checksum, pair.createdAt, json,
-                )))
-                jdbcTemplate.update("DELETE FROM published_source_catalog_removed WHERE catalog_id = ?", pair.id)
-                jdbcTemplate.update("UPDATE published_source_catalogs SET manifest_json = ?, checksum = ?, signature_base64 = ? WHERE id = ?",
-                    json, checksum, signature.signatureBase64, pair.id)
-                val changedPin = intent(101)
-                assertThrows(SourceCatalogReconciliationRejected::class.java) { reconciliation.reconcile(changedPin, admin.id) }
-            } finally { status.setRollbackOnly() }
-        }
+        assertMissingTombstoneRefused(latest, pair)
         assertEquals(before, allState())
-        // Read before the mutation transaction: do not let a JPA first-level cache hide the changed link.
-        val skippedPrevious = latest - 2
-        val latestDocument = checkNotNull(documents.findByRevision(latest))
-        val predecessor = checkNotNull(documents.findByRevision(skippedPrevious))
-        val previousCatalog = checkNotNull(catalogs.findByRevision(skippedPrevious))
-        val documentSignature = checkNotNull(signer.sign(DocumentSigningInput(
-            latest, latestDocument.checksum, latestDocument.createdAt,
-            skippedPrevious, predecessor.checksum, latestDocument.documentJson,
-        )))
-        val catalogSignature = checkNotNull(signer.signDetached(SourceCatalogSignatureCodec.manifestPayload(
-            latest, skippedPrevious, previousCatalog.checksum, pair.checksum, pair.createdAt, pair.manifestJson,
-        )))
-        TransactionTemplate(transactions).executeWithoutResult { status ->
-            try {
-                // Valid signatures and legal revision gaps are not authority to skip a retained pair.
-                jdbcTemplate.update(
-                    "UPDATE published_documents SET previous_document_revision = ?, previous_document_checksum = ?, " +
-                        "signature_base64 = ? WHERE document_revision = ?",
-                    skippedPrevious, predecessor.checksum, documentSignature.signatureBase64, latest,
-                )
-                jdbcTemplate.update(
-                    "UPDATE published_source_catalogs SET previous_catalog_revision = ?, previous_catalog_checksum = ?, " +
-                        "signature_base64 = ? WHERE catalog_revision = ?",
-                    skippedPrevious, previousCatalog.checksum, catalogSignature.signatureBase64, latest,
-                )
-                assertThrows(SourceCatalogReconciliationRejected::class.java) { reconciliation.reconcile(raw, admin.id) }
-            } finally { status.setRollbackOnly() }
-        }
+        assertSkippedRetainedPairRefused(raw, latest, pair)
         assertEquals(before, allState())
         reconciliation.reconcile(raw, admin.id)
         assertEquals(1L, reconciliationAudits())
@@ -267,7 +246,8 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
                 } else {
                     ""
                 }
-                jdbcTemplate.execute("""
+                jdbcTemplate.execute(
+                    """
                     CREATE FUNCTION reconciliation_test_fail() RETURNS trigger AS ${'$'}${'$'}
                     BEGIN
                       IF $condition THEN
@@ -278,7 +258,8 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
                       RETURN NEW;
                     END;
                     ${'$'}${'$'} LANGUAGE plpgsql
-                """.trimIndent())
+                    """.trimIndent(),
+                )
                 jdbcTemplate.execute(
                     "CREATE TRIGGER reconciliation_test_fail_trigger BEFORE ${if (lateAudit) "INSERT" else "UPDATE"} " +
                         "ON $table FOR EACH ROW EXECUTE FUNCTION reconciliation_test_fail()",
@@ -287,10 +268,14 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
                 assertEquals(true, jdbcTemplate.queryForObject("SELECT is_called FROM reconciliation_test_probe", Boolean::class.java))
                 assertEquals(before, allState(), "real late/CAS failure rolls back phase, receipt and audit; history remains exact")
             } finally {
-                try { jdbcTemplate.execute("DROP TRIGGER IF EXISTS reconciliation_test_fail_trigger ON $table") }
-                finally {
-                    try { jdbcTemplate.execute("DROP FUNCTION IF EXISTS reconciliation_test_fail()") }
-                    finally { jdbcTemplate.execute("DROP SEQUENCE IF EXISTS reconciliation_test_probe") }
+                try {
+                    jdbcTemplate.execute("DROP TRIGGER IF EXISTS reconciliation_test_fail_trigger ON $table")
+                } finally {
+                    try {
+                        jdbcTemplate.execute("DROP FUNCTION IF EXISTS reconciliation_test_fail()")
+                    } finally {
+                        jdbcTemplate.execute("DROP SEQUENCE IF EXISTS reconciliation_test_probe")
+                    }
                 }
             }
         }
@@ -335,15 +320,109 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
         TransactionTemplate(transactions).executeWithoutResult { status ->
             try {
                 jdbcTemplate.update("UPDATE published_source_catalogs SET checksum = ? WHERE catalog_revision = ?", "a".repeat(64), receipt.admittedRevision)
-                assertThrows(IllegalStateException::class.java) { documents.initialSourceCatalogState() }
-                assertThrows(IllegalStateException::class.java) { startup.validate() }
-            } finally { status.setRollbackOnly() }
+                assertReconciliationPairRefused { documents.initialSourceCatalogState() }
+                assertReconciliationPairRefused { startup.validate() }
+            } finally {
+                status.setRollbackOnly()
+            }
         }
         assertThrows(DataIntegrityViolationException::class.java) {
             jdbcTemplate.update("UPDATE document_publication_state SET bootstrap_payload_sha256 = ? WHERE id = 1", "a".repeat(64))
         }
         assertEquals(before, allState())
         startup.validate()
+    }
+
+    private fun assertMissingTombstoneRefused(latest: Long, pair: PublishedSourceCatalog) {
+        TransactionTemplate(transactions).executeWithoutResult { status ->
+            try {
+                // Re-sign a synthetic manifest that omits a real removal, updating its intent pin too.
+                // Envelope/row agreement alone must not pass without historical/current-head completeness.
+                val model = SourceConfigParser.strictJson.decodeFromString(SourceCatalogManifest.serializer(), pair.manifestJson)
+                val json = CanonicalJson.canonicalize(SourceCatalogManifest.serializer(), model.copy(removedSources = emptyList()))
+                val checksum = CanonicalJson.checksum(json)
+                val signature = checkNotNull(
+                    signer.signDetached(
+                        SourceCatalogSignatureCodec.manifestPayload(
+                            latest,
+                            pair.previousCatalogRevision,
+                            pair.previousCatalogChecksum,
+                            checksum,
+                            pair.createdAt,
+                            json,
+                        ),
+                    ),
+                )
+                jdbcTemplate.update("DELETE FROM published_source_catalog_removed WHERE catalog_id = ?", pair.id)
+                jdbcTemplate.update(
+                    "UPDATE published_source_catalogs SET manifest_json = ?, checksum = ?, signature_base64 = ? WHERE id = ?",
+                    json,
+                    checksum,
+                    signature.signatureBase64,
+                    pair.id,
+                )
+                val changedPin = intent(101)
+                assertThrows(SourceCatalogReconciliationRejected::class.java) { reconciliation.reconcile(changedPin, admin.id) }
+            } finally {
+                status.setRollbackOnly()
+            }
+        }
+    }
+
+    private fun assertSkippedRetainedPairRefused(raw: ByteArray, latest: Long, pair: PublishedSourceCatalog) {
+        // Read before the mutation transaction: do not let a JPA first-level cache hide the changed link.
+        val skippedPrevious = latest - 2
+        val latestDocument = checkNotNull(documents.findByRevision(latest))
+        val predecessor = checkNotNull(documents.findByRevision(skippedPrevious))
+        val previousCatalog = checkNotNull(catalogs.findByRevision(skippedPrevious))
+        val documentSignature = checkNotNull(
+            signer.sign(
+                DocumentSigningInput(
+                    latest,
+                    latestDocument.checksum,
+                    latestDocument.createdAt,
+                    skippedPrevious,
+                    predecessor.checksum,
+                    latestDocument.documentJson,
+                ),
+            ),
+        )
+        val catalogSignature = checkNotNull(
+            signer.signDetached(
+                SourceCatalogSignatureCodec.manifestPayload(
+                    latest,
+                    skippedPrevious,
+                    previousCatalog.checksum,
+                    pair.checksum,
+                    pair.createdAt,
+                    pair.manifestJson,
+                ),
+            ),
+        )
+        TransactionTemplate(transactions).executeWithoutResult { status ->
+            try {
+                // Valid signatures and legal revision gaps are not authority to skip a retained pair.
+                jdbcTemplate.update(
+                    "UPDATE published_documents SET previous_document_revision = ?, previous_document_checksum = ?, " +
+                        "signature_base64 = ? WHERE document_revision = ?",
+                    skippedPrevious,
+                    predecessor.checksum,
+                    documentSignature.signatureBase64,
+                    latest,
+                )
+                jdbcTemplate.update(
+                    "UPDATE published_source_catalogs SET previous_catalog_revision = ?, previous_catalog_checksum = ?, " +
+                        "signature_base64 = ? WHERE catalog_revision = ?",
+                    skippedPrevious,
+                    previousCatalog.checksum,
+                    catalogSignature.signatureBase64,
+                    latest,
+                )
+                assertThrows(SourceCatalogReconciliationRejected::class.java) { reconciliation.reconcile(raw, admin.id) }
+            } finally {
+                status.setRollbackOnly()
+            }
+        }
     }
 
     /** Use real production publication, then construct a receipt-less, signed pre-v2 history stand-in. */
@@ -381,16 +460,30 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
         jdbcTemplate.update(
             "UPDATE published_documents SET document_json = ?, checksum = ?, source_count = 45, " +
                 "signature_base64 = ? WHERE document_revision = 100",
-            legacyJson, legacyChecksum, legacySignature.signatureBase64,
+            legacyJson,
+            legacyChecksum,
+            legacySignature.signatureBase64,
         )
         val child = checkNotNull(documents.findByRevision(101))
         val childSignature = checkNotNull(signer.sign(DocumentSigningInput(101, child.checksum, child.createdAt, 100, legacyChecksum, child.documentJson)))
-        jdbcTemplate.update("UPDATE published_documents SET previous_document_checksum = ?, signature_base64 = ? WHERE document_revision = 101",
-            legacyChecksum, childSignature.signatureBase64)
+        jdbcTemplate.update(
+            "UPDATE published_documents SET previous_document_checksum = ?, signature_base64 = ? WHERE document_revision = 101",
+            legacyChecksum,
+            childSignature.signatureBase64,
+        )
         val first = checkNotNull(catalogs.findByRevision(101))
-        val signature = checkNotNull(signer.signDetached(SourceCatalogSignatureCodec.manifestPayload(
-            101, null, null, first.checksum, first.createdAt, first.manifestJson,
-        )))
+        val signature = checkNotNull(
+            signer.signDetached(
+                SourceCatalogSignatureCodec.manifestPayload(
+                    101,
+                    null,
+                    null,
+                    first.checksum,
+                    first.createdAt,
+                    first.manifestJson,
+                ),
+            ),
+        )
         jdbcTemplate.update(
             "DELETE FROM published_source_catalog_entries WHERE catalog_id = " +
                 "(SELECT id FROM published_source_catalogs WHERE catalog_revision = 100)",
@@ -405,26 +498,30 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
     }
 
     private fun markHeld() {
-        jdbcTemplate.update("""
+        jdbcTemplate.update(
+            """
             UPDATE document_publication_state SET bootstrap_phase = 'reconciliation_required',
                 bootstrap_policy_id = NULL, bootstrap_reference_sha256 = NULL, bootstrap_payload_sha256 = NULL,
                 bootstrap_document_revision = NULL, bootstrap_document_checksum = NULL,
                 bootstrap_catalog_revision = NULL, bootstrap_catalog_checksum = NULL,
                 bootstrap_completed_at = NULL, bootstrap_actor_id = NULL WHERE id = 1
-        """.trimIndent())
+            """.trimIndent(),
+        )
     }
 
     private fun intent(anchor: Long, latest: Long = checkNotNull(latestPointer())): ByteArray {
         val current = checkNotNull(latestPointer())
-        return objectMapper.writeValueAsBytes(linkedMapOf(
-            "policyId" to SourceCatalogReconciliationService.POLICY_ID,
-            "anchorRevision" to anchor,
-            "anchorDocumentChecksum" to checkNotNull(documents.findByRevision(anchor)).checksum,
-            "anchorCatalogChecksum" to checkNotNull(catalogs.findByRevision(anchor)).checksum,
-            "expectedLatestRevision" to latest,
-            "documentChecksum" to checkNotNull(documents.findByRevision(current)).checksum,
-            "catalogChecksum" to checkNotNull(catalogs.findByRevision(current)).checksum,
-        ))
+        return objectMapper.writeValueAsBytes(
+            linkedMapOf(
+                "policyId" to SourceCatalogReconciliationService.POLICY_ID,
+                "anchorRevision" to anchor,
+                "anchorDocumentChecksum" to checkNotNull(documents.findByRevision(anchor)).checksum,
+                "anchorCatalogChecksum" to checkNotNull(catalogs.findByRevision(anchor)).checksum,
+                "expectedLatestRevision" to latest,
+                "documentChecksum" to checkNotNull(documents.findByRevision(current)).checksum,
+                "catalogChecksum" to checkNotNull(catalogs.findByRevision(current)).checksum,
+            ),
+        )
     }
 
     private fun request(raw: ByteArray, proof: String?, token: String = adminToken) = mockMvc.post(PATH) {
@@ -441,9 +538,35 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
     )
     private fun reconciliationAudits() = count("audit_log", "action = 'SOURCE_CATALOG_RECONCILED'")
 
+    private fun assertPublicDeliveryUnchanged(before: PublicState) {
+        val after = publicState()
+        assertEquals(before.documentStatus, after.documentStatus, "public v1 availability must not change")
+        assertEquals(before.manifestStatus, after.manifestStatus, "public v2 availability must not change")
+        assertArrayEquals(before.document, after.document, "public v1 bytes must not change")
+        assertArrayEquals(before.manifest, after.manifest, "public v2 manifest bytes must not change")
+        assertEquals(before.pointer, after.pointer, "the shared latest pointer must not move")
+        assertEquals(before.snapshots, after.snapshots, "no new v1 snapshot")
+        assertEquals(before.catalogs, after.catalogs, "no new v2 catalog")
+        assertEquals(before.entries, after.entries, "no new public source entry")
+        assertEquals(before.removed, after.removed, "no new public removal")
+        // The new phase/receipt are asserted separately; every original bootstrap column stays unchanged.
+        val beforeOrigin = before.publicationState.filterKeys { it != "bootstrap_phase" && !it.startsWith("reconciliation_") }
+        val afterOrigin = after.publicationState.filterKeys { it != "bootstrap_phase" && !it.startsWith("reconciliation_") }
+        assertEquals(beforeOrigin, afterOrigin, "raw bootstrap receipt and pointer metadata must not change")
+        assertEquals(before.publishedPointers, after.publishedPointers, "published source revisions must not change")
+    }
+
+    private fun assertReconciliationPairRefused(read: () -> Unit) {
+        val failure = assertThrows(InvalidDataAccessApiUsageException::class.java) { read() }
+        assertTrue(failure.cause is IllegalStateException, "Spring repository translation must preserve the consistency refusal")
+        assertEquals("reconciliation receipt does not match retained artifact checksums", failure.cause?.message)
+    }
+
     private fun retainedRows(): Map<String, List<String>> = buildMap {
-        listOf("source_configs", "source_config_revisions", "source_validation_results", "source_editor_drafts", "source_changesets",
-            "published_documents", "published_source_catalogs", "published_source_catalog_entries", "published_source_catalog_removed").forEach { table ->
+        listOf(
+            "source_configs", "source_config_revisions", "source_validation_results", "source_editor_drafts", "source_changesets",
+            "published_documents", "published_source_catalogs", "published_source_catalog_entries", "published_source_catalog_removed",
+        ).forEach { table ->
             put(table, rows("SELECT to_jsonb(r)::text FROM $table r ORDER BY to_jsonb(r)::text"))
         }
         put("pointer", rows("SELECT json_build_array(id, latest_document_revision, updated_at)::text FROM document_publication_state"))

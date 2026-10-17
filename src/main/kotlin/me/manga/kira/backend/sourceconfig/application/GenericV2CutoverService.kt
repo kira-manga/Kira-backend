@@ -10,8 +10,8 @@ import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogPolicy
 import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogPolicyRejected
 import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogReceipt
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
-import me.manga.kira.backend.sourceconfig.domain.SourceConfigRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceCatalogReconciliationReceipt
+import me.manga.kira.backend.sourceconfig.domain.SourceConfigRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional

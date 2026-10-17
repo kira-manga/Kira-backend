@@ -57,11 +57,18 @@ class SourceCatalogReconciliationService(
             )
             documents.reconcileSourceCatalog(receipt)
             audit.recordAt(
-                AuditAction.SOURCE_CATALOG_RECONCILED, AuditService.ENTITY_DOCUMENT,
-                receipt.admittedRevision.toString(), receipt.approvedAt,
-                mapOf("policyId" to receipt.policyId, "requestSha256" to receipt.requestSha256,
-                    "anchorRevision" to receipt.anchorRevision, "documentRevision" to receipt.admittedRevision,
-                    "checksum" to receipt.documentChecksum, "catalogChecksum" to receipt.catalogChecksum),
+                AuditAction.SOURCE_CATALOG_RECONCILED,
+                AuditService.ENTITY_DOCUMENT,
+                receipt.admittedRevision.toString(),
+                receipt.approvedAt,
+                mapOf(
+                    "policyId" to receipt.policyId,
+                    "requestSha256" to receipt.requestSha256,
+                    "anchorRevision" to receipt.anchorRevision,
+                    "documentRevision" to receipt.admittedRevision,
+                    "checksum" to receipt.documentChecksum,
+                    "catalogChecksum" to receipt.catalogChecksum,
+                ),
                 actorId,
             )
             receipt
@@ -104,7 +111,8 @@ internal data class ReconciliationIntent(
     val catalogChecksum: String,
 )
 
-class SourceCatalogReconciliationRejected : ConflictException(
-    "source-catalog reconciliation refused; review the selected signed history and unchanged held state.",
-    code = "SOURCE_CATALOG_RECONCILIATION_REJECTED",
-)
+class SourceCatalogReconciliationRejected :
+    ConflictException(
+        "source-catalog reconciliation refused; review the selected signed history and unchanged held state.",
+        code = "SOURCE_CATALOG_RECONCILIATION_REJECTED",
+    )

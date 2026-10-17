@@ -58,7 +58,8 @@ class SourceCatalogReconciliationProof(
     }
 
     private fun readPair(revision: Long): StoredCatalogPair = StoredCatalogPair(
-        checkNotNull(documents.findByRevision(revision)), checkNotNull(catalogs.findByRevision(revision)),
+        checkNotNull(documents.findByRevision(revision)),
+        checkNotNull(catalogs.findByRevision(revision)),
     )
 
     private fun verifyPair(pair: StoredCatalogPair, budget: ProofBudget): List<PublishedCatalogMember> {
@@ -132,16 +133,27 @@ class SourceCatalogReconciliationProof(
     }
 
     private fun me.manga.kira.backend.sourceconfig.domain.PublishedCatalogEntry.toManifestEntry() = SourceCatalogEntry(
-        api, sourceRevision, checksum, order, lifecycle, engine, sourceSigningKeyId, sourceSignature,
+        api,
+        sourceRevision,
+        checksum,
+        order,
+        lifecycle,
+        engine,
+        sourceSigningKeyId,
+        sourceSignature,
     )
 
     private class ProofBudget {
         private var documents = 0
         private var remainingBytes = MAX_TOTAL_BYTES
 
-        fun document() { check(++documents <= MAX_HISTORY) }
+        fun document() {
+            check(++documents <= MAX_HISTORY)
+        }
 
-        fun requireCompleteHistory(retainedCount: Long) { check(retainedCount == documents.toLong()) }
+        fun requireCompleteHistory(retainedCount: Long) {
+            check(retainedCount == documents.toLong())
+        }
 
         fun bytes(value: String, limit: Int) {
             check(value.length <= limit)

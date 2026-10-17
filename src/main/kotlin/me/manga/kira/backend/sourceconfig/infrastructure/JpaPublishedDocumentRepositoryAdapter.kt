@@ -152,7 +152,10 @@ class JpaPublishedDocumentRepositoryAdapter(
             WHERE d.document_revision = ? AND d.checksum = ? AND c.checksum = ?
                 AND d.created_at = c.created_at AND d.created_by = c.created_by
             """.trimIndent(),
-            Long::class.javaObjectType, revision, documentChecksum, catalogChecksum,
+            Long::class.javaObjectType,
+            revision,
+            documentChecksum,
+            catalogChecksum,
         )
         check(matches == 1L) { "reconciliation retained artifact provenance differs" }
     }
@@ -256,8 +259,10 @@ class JpaPublishedDocumentRepositoryAdapter(
         check(rs.getString("${prefix}_document_checksum") == documentChecksum && rs.getString("${prefix}_catalog_checksum") == catalogChecksum) {
             "reconciliation receipt does not match retained artifact checksums"
         }
-        check(rs.getObject("${prefix}_document_at") == rs.getObject("${prefix}_catalog_at") &&
-            rs.getObject("${prefix}_document_actor") == rs.getObject("${prefix}_catalog_actor")) {
+        check(
+            rs.getObject("${prefix}_document_at") == rs.getObject("${prefix}_catalog_at") &&
+                rs.getObject("${prefix}_document_actor") == rs.getObject("${prefix}_catalog_actor"),
+        ) {
             "reconciliation retained artifact provenance differs"
         }
     }

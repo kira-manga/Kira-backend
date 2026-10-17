@@ -107,13 +107,16 @@ class JdbcPublishedSourceCatalogRepository(private val jdbc: JdbcTemplate) : Pub
                         sourceSigningKeyId = rs.getString("source_signing_key_id"), sourceSignature = rs.getString("source_signature"),
                     ),
                     PublishedSourceArtifact(
-                        api = rs.getString("actual_api"), sourceRevision = rs.getInt("actual_revision"),
-                        canonicalJson = rs.getString("config_canonical_json"), checksum = rs.getString("actual_checksum"),
+                        api = rs.getString("actual_api"),
+                        sourceRevision = rs.getInt("actual_revision"),
+                        canonicalJson = rs.getString("config_canonical_json"),
+                        checksum = rs.getString("actual_checksum"),
                         canonVersion = rs.getString("canon_version"),
                     ),
                 )
             },
-            revision, limit,
+            revision,
+            limit,
         )
     }
 
