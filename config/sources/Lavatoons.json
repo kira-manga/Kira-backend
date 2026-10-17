@@ -1,0 +1,291 @@
+{
+  "api": "Lavatoons",
+  "language": "(AR)",
+  "displayName": "Lava Scans",
+  "baseUrl": "https://lavascans.com",
+  "imageBase": "https://lavascans.com",
+  "engine": "generic",
+  "enabled": false,
+  "usesCapturedHeaders": true,
+  "headers": {
+    "Referer": "https://lavascans.com/"
+  },
+  "previousHosts": [
+    "lavatoons.com"
+  ],
+  "icon": {
+    "resourceKey": "lavatoons"
+  },
+  "pagination": {
+    "type": "page-number",
+    "param": "page",
+    "start": 1
+  },
+  "endpoints": {
+    "home": {
+      "url": "{baseUrl}/wp-admin/admin-ajax.php",
+      "method": "post-form",
+      "format": "html",
+      "listSelector": "article.legend-card",
+      "formBody": {
+        "action": "ts_homepage_load_more",
+        "page": "{page}",
+        "type": "all"
+      }
+    },
+    "featured": {
+      "url": "{baseUrl}/",
+      "format": "html",
+      "listSelector": ".legendary-hot-section .hot-card[data-rank]"
+    },
+    "search": {
+      "url": "{baseUrl}/?s={queryEncoded}&paged={page}",
+      "format": "html",
+      "listSelector": ".magma-grid article.legend-card"
+    },
+    "details": {
+      "url": "{itemUrl}",
+      "format": "html"
+    },
+    "pages": {
+      "url": "{chapterUrl}",
+      "format": "html",
+      "listSelector": "#readerarea img.ts-image-minimal"
+    }
+  },
+  "fields": {
+    "item.title": {
+      "selector": ".legend-title a"
+    },
+    "item.url": {
+      "selector": "a.legend-poster",
+      "attr": "abs:href"
+    },
+    "item.cover": {
+      "selector": "img.legend-img",
+      "attr": "src",
+      "lazyAttrChain": [
+        "data-src",
+        "data-lazy-src"
+      ]
+    },
+    "item.rating": {
+      "selector": ".legend-rating",
+      "transform": [
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "[^0-9.]",
+            "replacement": ""
+          }
+        },
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "^(\\d+)$",
+            "replacement": "$1.0"
+          }
+        },
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "^(\\d+)\\.(\\d)\\d*$",
+            "replacement": "$1$2"
+          }
+        },
+        {
+          "fn": "format-number"
+        }
+      ]
+    },
+    "item.recentChapters": {
+      "listSelector": ".legend-chapters a.legend-ch-link[data-coin=no]:not(.locked-chapter)"
+    },
+    "featured.item.title": {
+      "selector": ".hot-title a"
+    },
+    "featured.item.url": {
+      "selector": "a.hot-poster",
+      "attr": "abs:href"
+    },
+    "featured.item.cover": {
+      "selector": ".hot-img",
+      "attr": "style",
+      "transform": [
+        {
+          "fn": "regex-extract",
+          "args": {
+            "pattern": "url\\(['\"]?([^'\")\\s]+)['\"]?\\)",
+            "group": "1"
+          }
+        }
+      ]
+    },
+    "detail.title": {
+      "selector": ".lh-title"
+    },
+    "detail.cover": {
+      "selector": ".lh-poster img",
+      "attr": "src",
+      "lazyAttrChain": [
+        "data-src",
+        "data-lazy-src"
+      ]
+    },
+    "detail.description": {
+      "selector": ".lh-story-content",
+      "fallbackSelectors": [
+        "#manga-story"
+      ],
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.status": {
+      "selector": ".status-badge-lux",
+      "fallbackSelectors": [
+        ".lh-meta-item:has(i.fa-info-circle)"
+      ],
+      "transform": [
+        {
+          "fn": "trim"
+        },
+        {
+          "fn": "lowercase"
+        },
+        {
+          "fn": "enum-map",
+          "args": {
+            "مستمر": "مستمر",
+            "ongoing": "مستمر",
+            "مكتمل": "مكتمل",
+            "completed": "مكتمل",
+            "متوقف": "متوقف",
+            "hiatus": "متوقف",
+            "ملغي": "ملغي",
+            "dropped": "ملغي",
+            "__default__": "غير معروف"
+          }
+        }
+      ]
+    },
+    "detail.author": {
+      "selector": ".lh-author",
+      "fallbackSelectors": [
+        ".author-name",
+        ".lh-meta-item:contains(المؤلف)",
+        ".lh-meta-item:contains(Author)"
+      ],
+      "transform": [
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "المؤلف|Author|:",
+            "replacement": ""
+          }
+        },
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.rating": {
+      "selector": ".lh-meta-item:has(i.fa-star)",
+      "transform": [
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "[^0-9.]",
+            "replacement": ""
+          }
+        },
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "^(\\d+)$",
+            "replacement": "$1.0"
+          }
+        },
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "^(\\d+)\\.(\\d)\\d*$",
+            "replacement": "$1$2"
+          }
+        },
+        {
+          "fn": "format-number"
+        }
+      ]
+    },
+    "detail.genres": {
+      "listSelector": ".lh-genres .lh-genre-tag"
+    },
+    "detail.chapters": {
+      "listSelector": ".ch-list-grid .ch-item[data-coin=no]:not(.locked)"
+    },
+    "chapter.name": {
+      "selector": ".ch-num, .ch-txt",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "chapter.number": {
+      "selector": ".ch-num, .ch-txt",
+      "transform": [
+        {
+          "fn": "regex-extract",
+          "args": {
+            "pattern": "\\d+(?:\\.\\d+)?"
+          }
+        },
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "[^0-9.]",
+            "replacement": ""
+          }
+        },
+        {
+          "fn": "format-number"
+        }
+      ]
+    },
+    "chapter.url": {
+      "selector": "a[href]",
+      "attr": "abs:href"
+    },
+    "chapter.date": {
+      "selector": ".ch-date",
+      "dateStrategy": "iso",
+      "transform": [
+        {
+          "fn": "replace",
+          "args": {
+            "from": "/",
+            "to": "-"
+          }
+        }
+      ]
+    },
+    "chapter.locked": {
+      "attr": "data-coin"
+    },
+    "page.image": {
+      "attr": "src",
+      "lazyAttrChain": [
+        "data-src",
+        "data-lazy-src"
+      ],
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    }
+  }
+}

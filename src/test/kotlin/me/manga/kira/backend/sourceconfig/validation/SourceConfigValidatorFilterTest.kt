@@ -161,10 +161,12 @@ class SourceConfigValidatorFilterTest {
             ValidationCodes.FILTER_PARAM_INVALID in
                 codes(gen(filter(id = "x", type = "select", options = listOf("a"), default = "a", target = "path", param = "bad-param"))),
         )
-        assertTrue(
-            ValidationCodes.FILTER_PARAM_RESERVED in
-                codes(gen(filter(id = "x", type = "select", options = listOf("a"), default = "a", target = "path", param = "page"))),
-        )
+        for (reserved in listOf("page", "chapterId")) {
+            assertTrue(
+                ValidationCodes.FILTER_PARAM_RESERVED in
+                    codes(gen(filter(id = "x", type = "select", options = listOf("a"), default = "a", target = "path", param = reserved))),
+            )
+        }
         assertTrue(
             ValidationCodes.FILTER_PATH_REQUIRES_DEFAULT in codes(gen(filter(id = "x", type = "select", options = listOf("a"), target = "path", param = "p"))),
         )

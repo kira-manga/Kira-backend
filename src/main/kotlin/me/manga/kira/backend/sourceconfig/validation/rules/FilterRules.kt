@@ -26,7 +26,7 @@ object FilterRules {
     private val RESERVED_VARS =
         setOf(
             "baseUrl", "imageBase", "page", "pageOffset", "query",
-            "queryEncoded", "queryJson", "itemUrl", "chapterUrl", "id",
+            "queryEncoded", "queryJson", "itemUrl", "chapterUrl", "chapterId", "id",
         )
 
     /** Standard ids that must be select-or-multiselect (PLAN §8 rule 19). */

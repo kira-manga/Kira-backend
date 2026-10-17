@@ -1,0 +1,231 @@
+{
+  "api": "Mangatuk",
+  "language": "(AR)",
+  "displayName": "Mangatuk",
+  "baseUrl": "https://mangatuk.com",
+  "imageBase": "https://content.mangatuk.com",
+  "engine": "generic",
+  "enabled": false,
+  "usesCapturedHeaders": false,
+  "icon": {
+    "resourceKey": "mangatuk"
+  },
+  "pagination": {
+    "type": "page-number",
+    "param": "page",
+    "start": 1
+  },
+  "blacklistGenres": [
+    "ناضج",
+    "للبالغين"
+  ],
+  "endpoints": {
+    "home": {
+      "url": "https://api.mangatuk.com/api/catalog/series?limit=10&offset={pageOffset}0&sort=latest_updates&order=desc",
+      "format": "json",
+      "root": "data",
+      "listFilters": [
+        {
+          "path": "hasAdultChapters",
+          "op": "equals",
+          "value": "true",
+          "mode": "exclude"
+        }
+      ]
+    },
+    "featured": {
+      "url": "https://api.mangatuk.com/api/catalog/series?limit=10&offset={pageOffset}0&sort=popular&order=desc",
+      "format": "json",
+      "root": "data",
+      "listFilters": [
+        {
+          "path": "hasAdultChapters",
+          "op": "equals",
+          "value": "true",
+          "mode": "exclude"
+        }
+      ]
+    },
+    "search": {
+      "url": "https://api.mangatuk.com/api/catalog/search?q={queryEncoded}&limit=10&offset={pageOffset}0",
+      "format": "json",
+      "root": "data",
+      "listFilters": [
+        {
+          "path": "hasAdultChapters",
+          "op": "equals",
+          "value": "true",
+          "mode": "exclude"
+        }
+      ]
+    },
+    "details": {
+      "url": "https://api.mangatuk.com/api/catalog/series/by-slug/{id}",
+      "format": "json"
+    },
+    "pages": {
+      "url": "https://api.mangatuk.com/api/catalog/chapters/by-slug/{id}/{chapterId}",
+      "format": "json",
+      "root": "pages"
+    }
+  },
+  "fields": {
+    "item.title": {
+      "path": "title",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "item.url": {
+      "template": "{baseUrl}/manga/{slug}/",
+      "vars": {
+        "slug": "slug"
+      }
+    },
+    "item.cover": {
+      "path": "coverImage",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "item.rating": {
+      "path": "ratingAvg",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "item.recentChapters": {
+      "listPath": "recentChapters"
+    },
+    "search.item.genres": {
+      "listPath": "genreNames[*]",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.title": {
+      "path": "title",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.cover": {
+      "path": "coverImage",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.description": {
+      "path": "description",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.author": {
+      "path": "author",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.status": {
+      "path": "status",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.rating": {
+      "path": "ratingAvg",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.genres": {
+      "listPath": "genres[*].name",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.chapters": {
+      "listPath": "chapters"
+    },
+    "chapter.name": {
+      "path": "title",
+      "template": "الفصل {number}",
+      "vars": {
+        "number": "number|format-number"
+      },
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "chapter.number": {
+      "path": "number",
+      "transform": [
+        {
+          "fn": "format-number"
+        }
+      ]
+    },
+    "chapter.url": {
+      "template": "{baseUrl}/manga/{seriesSlug}/{chapterSlug}/",
+      "vars": {
+        "seriesSlug": "root:slug",
+        "chapterSlug": "slug"
+      }
+    },
+    "chapter.date": {
+      "path": "publishedAt",
+      "fallbackPath": "createdAt",
+      "dateStrategy": "iso",
+      "transform": [
+        {
+          "fn": "regex-extract",
+          "args": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}"
+          }
+        }
+      ]
+    },
+    "chapter.locked": {
+      "path": "coinAccess.locked"
+    },
+    "chapter.order": {
+      "path": "number"
+    },
+    "page.image": {
+      "path": "imageUrl",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "page.order": {
+      "path": "number"
+    }
+  }
+}

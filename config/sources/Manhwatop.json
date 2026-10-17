@@ -1,0 +1,297 @@
+{
+  "api": "Manhwatop",
+  "language": "(EN)",
+  "displayName": "Manhwatop",
+  "baseUrl": "https://manhwatop.com",
+  "engine": "generic",
+  "enabled": false,
+  "usesCapturedHeaders": false,
+  "pagination": {
+    "type": "page-number",
+    "param": "page",
+    "start": 1
+  },
+  "blacklistGenres": [
+    "Smut",
+    "Yaoi",
+    "Doujinshi",
+    "Lolicon",
+    "Adult",
+    "Yuri",
+    "Soft Yuri",
+    "Soft Yaoi",
+    "Shoujo Ai",
+    "Shounen Ai"
+  ],
+  "endpoints": {
+    "home": {
+      "url": "{baseUrl}/wp-admin/admin-ajax.php",
+      "method": "post-form",
+      "format": "html",
+      "listSelector": ".page-item-detail",
+      "formBody": {
+        "action": "madara_load_more",
+        "page": "{pageOffset}",
+        "template": "madara-core/content/content-archive",
+        "vars[orderby]": "meta_value_num",
+        "vars[paged]": "1",
+        "vars[posts_per_page]": "20",
+        "vars[post_type]": "wp-manga",
+        "vars[post_status]": "publish",
+        "vars[meta_key]": "_latest_update",
+        "vars[order]": "desc",
+        "vars[sidebar]": "right",
+        "vars[manga_archives_item_layout]": "big_thumbnail"
+      }
+    },
+    "featured": {
+      "url": "{baseUrl}/wp-admin/admin-ajax.php",
+      "method": "post-form",
+      "format": "html",
+      "listSelector": ".page-item-detail",
+      "formBody": {
+        "action": "madara_load_more",
+        "page": "{pageOffset}",
+        "template": "madara-core/content/content-archive",
+        "vars[orderby]": "meta_value_num",
+        "vars[paged]": "1",
+        "vars[posts_per_page]": "20",
+        "vars[post_type]": "wp-manga",
+        "vars[post_status]": "publish",
+        "vars[meta_key]": "_wp_manga_views",
+        "vars[order]": "desc",
+        "vars[sidebar]": "right",
+        "vars[manga_archives_item_layout]": "big_thumbnail"
+      }
+    },
+    "search": {
+      "url": "{baseUrl}/?s={queryEncoded}&post_type=wp-manga&paged={page}",
+      "format": "html",
+      "listSelector": "div.row.c-tabs-item__content"
+    },
+    "details": {
+      "url": "{itemUrl}",
+      "format": "html"
+    },
+    "chapters": {
+      "url": "{baseUrl}/manga/{id}/ajax/chapters",
+      "method": "post-form",
+      "format": "html",
+      "listSelector": "li.wp-manga-chapter:not(.premium-block)"
+    },
+    "pages": {
+      "url": "{chapterUrl}",
+      "format": "html",
+      "listSelector": "img.wp-manga-chapter-img"
+    }
+  },
+  "fields": {
+    "item.title": {
+      "selector": ".item-summary .post-title a",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "item.url": {
+      "selector": ".item-summary .post-title a",
+      "attr": "abs:href",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "item.cover": {
+      "selector": ".item-thumb img",
+      "attr": "data-src",
+      "lazyAttrChain": [
+        "data-lazy-src",
+        "data-original",
+        "src"
+      ],
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "item.rating": {
+      "selector": ".item-summary .total_votes",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "item.recentChapters": {
+      "listSelector": ".list-chapter .chapter-item"
+    },
+    "search.item.title": {
+      "selector": ".post-title h2.h5 a",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "search.item.url": {
+      "selector": ".post-title h2.h5 a",
+      "attr": "abs:href",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "search.item.cover": {
+      "selector": ".tab-thumb a img",
+      "attr": "data-src",
+      "lazyAttrChain": [
+        "data-lazy-src",
+        "data-original",
+        "src"
+      ],
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "search.item.rating": {
+      "selector": ".total_votes",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "search.item.genres": {
+      "listSelector": ".post-content_item.mg_genres .summary-content a",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.title": {
+      "selector": "div.post-title h1",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.cover": {
+      "selector": "div.summary_image img",
+      "attr": "data-src",
+      "lazyAttrChain": [
+        "data-lazy-src",
+        "data-original",
+        "src"
+      ],
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.rating": {
+      "selector": "div.post-total-rating span.score",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.description": {
+      "selector": "div.description-summary div.summary__content",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.author": {
+      "selector": "div.author-content",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.status": {
+      "selector": "div.summary-content.mg_status",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.genres": {
+      "listSelector": "div.genres-content a",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "chapter.name": {
+      "selector": "a",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "chapter.number": {
+      "selector": "a",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        },
+        {
+          "fn": "regex-extract",
+          "args": {
+            "pattern": "\\d+(\\.\\d+)?"
+          }
+        }
+      ]
+    },
+    "chapter.url": {
+      "selector": "a",
+      "attr": "abs:href",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "page.image": {
+      "selector": "",
+      "attr": "data-src",
+      "lazyAttrChain": [
+        "data-lazy-src",
+        "data-original",
+        "src"
+      ],
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    }
+  }
+}

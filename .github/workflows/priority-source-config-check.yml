@@ -1,0 +1,78 @@
+name: Priority source configuration verification
+
+on:
+  push:
+    branches: [remediation/priority-source-configs-20261017]
+    paths:
+      - config/sources/**
+      - src/main/kotlin/me/manga/kira/backend/sourceconfig/**
+      - src/test/kotlin/me/manga/kira/backend/sourceconfig/**
+      - .github/workflows/priority-source-config-check.yml
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: priority-source-config-check
+  cancel-in-progress: false
+
+jobs:
+  authoring:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GRADLE_USER_HOME: ${{ runner.temp }}/priority-source-gradle
+      EVIDENCE: ${{ runner.temp }}/priority-source-evidence
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Verify authored configurations and reserved request tokens
+        env:
+          KIRA_PACKAGES_USER: ${{ github.actor }}
+          KIRA_PACKAGES_READ_TOKEN: ${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KIRA_PACKAGES_READ_TOKEN"
+          mkdir -p "$EVIDENCE"
+          printf 'Source commit: %s\n' "$GITHUB_SHA" > "$EVIDENCE/source.txt"
+          ./gradlew --no-daemon --no-parallel --max-workers=1 --no-build-cache --no-configuration-cache \
+            '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' \
+            -Pkotlin.compiler.execution.strategy=in-process test \
+            --tests me.manga.kira.backend.sourceconfig.parsing.AuthoredSourceConfigTest \
+            --tests me.manga.kira.backend.sourceconfig.validation.SourceConfigValidatorFilterTest \
+            -x jacocoTestReport
+      - name: Stop owned Gradle, preserve results and remove disposable outputs
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() { rm -rf -- build .gradle .kotlin "$GRADLE_USER_HOME"; }
+          trap cleanup EXIT
+          status=0
+          mkdir -p "$EVIDENCE"
+          if [[ -d "$GRADLE_USER_HOME/daemon" ]]; then
+            timeout 60s ./gradlew --stop || status=1
+          fi
+          if [[ -d build/test-results/test ]]; then
+            find build/test-results/test -maxdepth 1 -name '*.xml' -type f -exec cp -t "$EVIDENCE" '{}' + || status=1
+          fi
+          df -h .
+          free -h
+          exit "$status"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: priority-source-authoring-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Remove uploaded job evidence copy
+        if: always()
+        run: rm -rf -- "$EVIDENCE"
