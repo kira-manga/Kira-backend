@@ -32,7 +32,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Verify authored configurations and reserved request tokens
+      - name: Verify authored configurations and reader capability admission
         env:
           KIRA_PACKAGES_USER: ${{ github.actor }}
           KIRA_PACKAGES_READ_TOKEN: ${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
@@ -46,8 +46,7 @@ jobs:
             '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' \
             -Pkotlin.compiler.execution.strategy=in-process test \
             --tests me.manga.kira.backend.sourceconfig.parsing.AuthoredSourceConfigTest \
-            --tests me.manga.kira.backend.sourceconfig.parsing.ManhwatopPublishedEngineTest \
-            --tests me.manga.kira.backend.sourceconfig.validation.SourceConfigValidatorFilterTest \
+            --tests me.manga.kira.backend.sourceconfig.validation.SourceConfigValidatorReaderCapabilityTest \
             -x jacocoTestReport
       - name: Stop owned Gradle, preserve results and remove disposable outputs
         if: always()

@@ -1,0 +1,170 @@
+{
+  "api": "Dilar",
+  "language": "(AR)",
+  "displayName": "Dilar",
+  "baseUrl": "https://dilar.tube",
+  "imageBase": "https://dilar.tube/uploads",
+  "previousHosts": [
+    "dilar.tube",
+    "golden.rest"
+  ],
+  "engine": "generic",
+  "enabled": false,
+  "usesCapturedHeaders": false,
+  "headers": {},
+  "icon": {
+    "resourceKey": "dilar"
+  },
+  "pagination": {
+    "type": "page-number",
+    "param": "page",
+    "start": 1
+  },
+  "endpoints": {
+    "home": {
+      "url": "{baseUrl}/api/series/?page={page}",
+      "format": "json",
+      "root": "series",
+      "listFilters": [
+        { "path": "seriesType.name", "op": "equals", "value": "Novel", "mode": "exclude" },
+        { "path": "seriesType.title", "op": "equals", "value": "رواية", "mode": "exclude" },
+        { "path": "over17", "op": "equals", "value": "true", "mode": "exclude" },
+        { "path": "lock", "op": "equals", "value": "true", "mode": "exclude" },
+        { "path": "mobile_exclusive", "op": "equals", "value": "true", "mode": "exclude" },
+        { "path": "deleted_at", "op": "isNull", "mode": "include" }
+      ]
+    },
+    "featured": {
+      "url": "{baseUrl}/api/series/featured",
+      "format": "json",
+      "root": "[*].series",
+      "singlePage": true,
+      "listFilters": [
+        { "path": "seriesType.name", "op": "equals", "value": "Novel", "mode": "exclude" },
+        { "path": "seriesType.title", "op": "equals", "value": "رواية", "mode": "exclude" },
+        { "path": "over17", "op": "equals", "value": "true", "mode": "exclude" },
+        { "path": "lock", "op": "equals", "value": "true", "mode": "exclude" },
+        { "path": "mobile_exclusive", "op": "equals", "value": "true", "mode": "exclude" },
+        { "path": "deleted_at", "op": "isNull", "mode": "include" }
+      ]
+    },
+    "search": {
+      "url": "{baseUrl}/api/search/quick_search",
+      "method": "post-json",
+      "jsonBody": "{\"query\":\"{queryJson}\",\"includes\":[\"Manga\"]}",
+      "format": "json",
+      "root": "[*].data[*]",
+      "singlePage": true,
+      "listFilters": [
+        { "path": "class", "op": "equals", "value": "Manga", "mode": "include" },
+        { "path": "series_type.name", "op": "equals", "value": "Novel", "mode": "exclude" },
+        { "path": "series_type.title", "op": "equals", "value": "رواية", "mode": "exclude" },
+        { "path": "over17", "op": "equals", "value": "true", "mode": "exclude" },
+        { "path": "lock", "op": "equals", "value": "true", "mode": "exclude" },
+        { "path": "mobile_exclusive", "op": "equals", "value": "true", "mode": "exclude" },
+        { "path": "deleted_at", "op": "isNull", "mode": "include" }
+      ]
+    },
+    "details": {
+      "url": "{baseUrl}/api/series/{id}",
+      "format": "json"
+    },
+    "chapters": {
+      "url": "{baseUrl}/api/series/{id}/chapters",
+      "format": "json",
+      "root": "chapters"
+    },
+    "pages": {
+      "url": "{baseUrl}/api/chapters/{chapterId}",
+      "format": "dilar-ecies-v16",
+      "root": "pages"
+    }
+  },
+  "fields": {
+    "item.title": {
+      "path": "title",
+      "transform": [{ "fn": "trim" }]
+    },
+    "item.url": {
+      "template": "{baseUrl}/api/mangas/{id}",
+      "vars": { "id": "id" }
+    },
+    "item.cover": {
+      "template": "{imageBase}/manga/cover/{id}/{cover}",
+      "vars": { "id": "id", "cover": "cover" }
+    },
+    "item.rating": {
+      "path": "rating"
+    },
+    "item.genres": {
+      "listPath": "categories[*].name",
+      "transform": [{ "fn": "trim" }]
+    },
+    "detail.title": {
+      "path": "title",
+      "transform": [{ "fn": "trim" }]
+    },
+    "detail.cover": {
+      "template": "{imageBase}/manga/cover/{id}/{cover}",
+      "vars": { "id": "id", "cover": "cover" }
+    },
+    "detail.description": {
+      "path": "summary",
+      "transform": [{ "fn": "trim" }]
+    },
+    "detail.rating": {
+      "path": "rating"
+    },
+    "detail.status": {
+      "path": "translation_status",
+      "transform": [{
+        "fn": "enum-map",
+        "args": {
+          "ongoing": "Ongoing",
+          "completed": "Completed",
+          "hiatus": "Hiatus",
+          "__default__": "Unknown"
+        }
+      }]
+    },
+    "detail.genres": {
+      "listPath": "categories[*].name",
+      "transform": [{ "fn": "trim" }]
+    },
+    "chapter.entries": {
+      "listPath": "releases"
+    },
+    "chapter.number": {
+      "template": "{number}",
+      "vars": { "number": "root:chapter" },
+      "transform": [{ "fn": "format-number" }]
+    },
+    "chapter.name": {
+      "template": "{title}",
+      "vars": { "title": "root:title" },
+      "transform": [{ "fn": "trim" }]
+    },
+    "chapter.url": {
+      "template": "{baseUrl}/r/{releaseId}",
+      "vars": { "releaseId": "id" }
+    },
+    "chapter.date": {
+      "path": "created_at",
+      "dateStrategy": "iso"
+    },
+    "chapter.locked": {
+      "template": "{locked}",
+      "vars": { "locked": "root:lock" }
+    },
+    "chapter.order": {
+      "template": "{number}",
+      "vars": { "number": "root:chapter" }
+    },
+    "page.image": {
+      "path": "url"
+    },
+    "page.order": {
+      "path": "order"
+    }
+  }
+}

@@ -15,7 +15,7 @@ import me.manga.kira.backend.sourceconfig.validation.sourcePath
  */
 object EndpointRules {
 
-    private val FORMATS = setOf("json", "html", "script-json")
+    private val FORMATS = setOf("json", "html", "script-json", "dilar-ecies-v16")
     private val LIST_FILTER_OPS = setOf("equals", "notEquals", "contains", "notNull", "isNull")
     private val LIST_FILTER_MODES = setOf("include", "exclude")
 
@@ -39,6 +39,19 @@ object EndpointRules {
         // Rule 14 — per-endpoint shape for every declared verb.
         for ((verb, endpoint) in endpoints) {
             checkEndpoint(verb, endpoint, "$base.endpoints[$verb]", findings)
+            if (endpoint.format == "dilar-ecies-v16" && (
+                    verb != "pages" || endpoint.method.lowercase() !in setOf("", "get") ||
+                        endpoint.url != "{baseUrl}/api/chapters/{chapterId}" || source.baseUrl != "https://dilar.tube" ||
+                        source.usesCapturedHeaders || source.headers.isNotEmpty() ||
+                        endpoint.formBody.isNotEmpty() || endpoint.jsonBody.isNotEmpty()
+                )
+            ) {
+                findings.error(
+                    ValidationCodes.ENDPOINT_ENCRYPTED_READER_INVALID,
+                    "$base.endpoints[$verb]",
+                    "encrypted reader requires its compiled HTTPS endpoint and private header-free transport",
+                )
+            }
         }
     }
 
@@ -49,6 +62,13 @@ object EndpointRules {
     }
 
     private fun checkEndpoint(verb: String, endpoint: EndpointSpec, path: String, findings: Findings) {
+        if (endpoint.singlePage && verb !in setOf("home", "featured", "search")) {
+            findings.error(
+                ValidationCodes.ENDPOINT_SINGLE_PAGE_UNSUPPORTED,
+                "$path.singlePage",
+                "singlePage is only supported for home, featured and search feeds",
+            )
+        }
         if (endpoint.url.isBlank()) {
             findings.error(ValidationCodes.ENDPOINT_URL_BLANK, "$path.url", "endpoint '$verb' url must be non-blank.")
         }

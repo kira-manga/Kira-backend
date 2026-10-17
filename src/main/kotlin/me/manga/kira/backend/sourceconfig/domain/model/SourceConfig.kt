@@ -85,7 +85,7 @@ data class PaginationSpec(val type: String = "page-number", val param: String = 
 data class EndpointSpec(
     val url: String,
     val method: String = "get",
-    /** `json` | `html` | `script-json` | `""` (PLAN §7 / §8 rule 14). */
+    /** `json` | `html` | `script-json` | `dilar-ecies-v16` (pages only) | `""`. */
     val format: String = "",
     val scriptId: String = "",
     /** JSONPath; may be comma-separated coalesce candidates (PLAN §7). */
@@ -97,6 +97,8 @@ data class EndpointSpec(
     val listFilters: List<FilterSpec> = emptyList(),
     val pageParam: String = "",
     val lastPageLocator: String = "",
+    /** Finite home/featured/search: only pagination.start is requested; other pages are empty. */
+    val singlePage: Boolean = false,
 )
 
 /** List-item predicate (PLAN §7 / §8 rule 14). `op` and `mode` are validated per the whitelists. */

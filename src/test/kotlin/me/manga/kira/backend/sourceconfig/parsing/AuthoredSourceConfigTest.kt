@@ -13,7 +13,7 @@ class AuthoredSourceConfigTest {
     @Test
     fun `authored sources strictly parse validate and preserve their model through canonicalization`() {
         val validator = SourceConfigValidator()
-        for (api in listOf("Lavatoons", "Manhwatop", "Mangatuk")) {
+        for (api in listOf("Lavatoons", "Manhwatop", "Mangatuk", "Dilar")) {
             val source = SourceConfigParser.parseStrictSource(Files.readString(Path.of("config", "sources", "$api.json")))
             assertEquals(api, source.api)
             assertEquals("generic", source.engine)
