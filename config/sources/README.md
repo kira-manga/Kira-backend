@@ -27,7 +27,8 @@ Keeps API `Lavatoons` and the existing manga/chapter path identities. The curren
 `lavascans.com`; the former `lavatoons.com` host is an explicit alias, not a path migration.
 Uses public HTML/form endpoints and the current-origin Referer. Unknown chapter numbers stay
 blank rather than being invented from URL digits. Carousel duplicates are removed by the newer
-engine's stable featured-URL deduplication. Captured-header support does not authorize broader
+engine's stable featured-URL deduplication. The homepage carousel is a single-page featured feed;
+later pages return empty without another request. Captured-header support does not authorize broader
 image credential forwarding.
 
 ## Mangatuk

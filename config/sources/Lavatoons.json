@@ -36,6 +36,7 @@
     "featured": {
       "url": "{baseUrl}/",
       "format": "html",
+      "singlePage": true,
       "listSelector": ".legendary-hot-section .hot-card[data-rank]"
     },
     "search": {
