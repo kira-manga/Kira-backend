@@ -46,6 +46,7 @@ jobs:
             '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' \
             -Pkotlin.compiler.execution.strategy=in-process test \
             --tests me.manga.kira.backend.sourceconfig.parsing.AuthoredSourceConfigTest \
+            --tests me.manga.kira.backend.sourceconfig.parsing.ManhwatopPublishedEngineTest \
             --tests me.manga.kira.backend.sourceconfig.validation.SourceConfigValidatorFilterTest \
             -x jacocoTestReport
       - name: Stop owned Gradle, preserve results and remove disposable outputs
