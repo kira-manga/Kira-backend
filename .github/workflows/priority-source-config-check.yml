@@ -5,6 +5,7 @@ on:
     branches: [remediation/priority-source-configs-20261017]
     paths:
       - config/sources/**
+      - src/main/kotlin/me/manga/kira/backend/config/KiraClientCatalogProperties.kt
       - src/main/kotlin/me/manga/kira/backend/sourceconfig/**
       - src/test/kotlin/me/manga/kira/backend/sourceconfig/**
       - .github/workflows/priority-source-config-check.yml
@@ -32,7 +33,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Verify authored configurations and reader capability admission
+      - name: Verify signed client selection and conditional delivery
         env:
           KIRA_PACKAGES_USER: ${{ github.actor }}
           KIRA_PACKAGES_READ_TOKEN: ${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
@@ -45,8 +46,10 @@ jobs:
           ./gradlew --no-daemon --no-parallel --max-workers=1 --no-build-cache --no-configuration-cache \
             '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' \
             -Pkotlin.compiler.execution.strategy=in-process test \
-            --tests me.manga.kira.backend.sourceconfig.parsing.AuthoredSourceConfigTest \
-            --tests me.manga.kira.backend.sourceconfig.validation.SourceConfigValidatorReaderCapabilityTest \
+            --tests me.manga.kira.backend.sourceconfig.application.ClientCatalogQueryServiceTest \
+            --tests me.manga.kira.backend.sourceconfig.api.ClientCatalogDeliveryTest \
+            --tests me.manga.kira.backend.sourceconfig.infrastructure.ClientCatalogStartupTest \
+            --tests me.manga.kira.backend.sourceconfig.api.SourceConfigConditionalResponseTest \
             -x jacocoTestReport
       - name: Stop owned Gradle, preserve results and remove disposable outputs
         if: always()

@@ -40,7 +40,7 @@ in 404/409 details. Typed-exception → status mapping:
 | 415 | unsupported request media type | `UNSUPPORTED_MEDIA_TYPE` |
 | 422 | `ValidationFailedException` | `VALIDATION_FAILED` (+ `errors[]`) |
 | 429 | `TooManyRequestsException` | `TOO_MANY_REQUESTS` |
-| 503 | `ServiceUnavailableException` | `SERVICE_UNAVAILABLE` |
+| 503 | `ServiceUnavailableException` | `SERVICE_UNAVAILABLE`, `CLIENT_CATALOG_UNAVAILABLE` |
 | 500 | unexpected (stack trace logged server-side only) | — |
 
 ## Cross-cutting HTTP contract
@@ -66,6 +66,31 @@ in 404/409 details. Typed-exception → status mapping:
 ---
 
 ## 1. App-facing (public, read-only, no auth)
+
+### Signed client snapshot selection
+
+The optional, **disabled-by-default** `kira.client-catalog` policy selects an existing signed v1/v2
+pair for `/api/v1/source-config/document`, `/api/v1/source-config/document/meta`, and
+`/api/v2/source-config/manifest`. Disabled means the previous latest-pointer behavior, **not rollout
+protection**. See [configuration and operational admission](SOURCE_CONFIG_LIFECYCLE.md#client-only-signed-snapshot-selection).
+
+When enabled, exactly one raw decoded `appVersion` query value must equal an explicitly admitted
+canonical `major.minor.patch` string to select current or its configured pinned pair. Missing, blank,
+unknown, duplicate (even equal), whitespace-padded, comma-joined, suffixed, noncanonical or >64-character
+values select the independently hash-bound baseline, never current. No trimming, comma splitting,
+numeric/range comparison or submitted-version logging occurs. This is compatibility routing, not
+authentication: clients can claim any version.
+
+Selection and stored-pair integrity checks precede conditional ETag handling. The selected original
+bytes/signatures/chain metadata are unchanged; a newer cohort's ETag cannot suppress a different
+baseline response. Missing/corrupt configured selected state or current pointer pair returns content-free
+**503 `CLIENT_CATALOG_UNAVAILABLE`**, including for `If-None-Match: *`; there is no recovery fallback to
+latest. Separate requests may still straddle a concurrent publication. Shared caches must key by the
+full request target, including query parameters; do not collapse different `appVersion` requests.
+
+Internal/admin latest queries, `/api/v1/sources/**`, signing-key discovery and immutable v2 source
+revision paths are unchanged. The unsigned source-list/stanza routes are **not** part of this signed
+compatibility-routing guarantee. There is no arbitrary public `revision` selector.
 
 ### Source catalog v2
 
@@ -105,11 +130,11 @@ unknown, and guessed revisions all return 404. Source signatures use `kira-sourc
 are carried by the signed manifest.
 
 ### `GET /api/v1/source-config/document`
-The app document — the **latest** published snapshot, served as the exact stored canonical
+The app document — the selected published snapshot (latest when the policy is disabled), served as exact stored canonical
 `SourceConfigDocument` bytes (never re-serialized).
 
-- Query: `appVersion` (optional; validated semver-ish `\d+(\.\d+){0,3}([-+]…)?`, max 64 chars;
-  recorded/logged, **no filtering in v1**; invalid → 400 `INVALID_APP_VERSION`).
+- Query: `appVersion` as above. With the policy disabled only, retain the previous bounded semver-ish
+  validation (`\d+(\.\d+){0,3}([-+]…)?`, max 64 chars); malformed input → 400 `INVALID_APP_VERSION`.
 - Request header: `If-None-Match` (optional; see [ETag semantics](#etag-semantics)).
 - **200** with body + headers: `ETag: "<sha256-hex>"` (strong, quoted, = document checksum),
   `Cache-Control: public, max-age=300, no-transform`, `X-Content-Type-Options: nosniff`,
@@ -120,6 +145,8 @@ The app document — the **latest** published snapshot, served as the exact stor
 ### `GET /api/v1/source-config/document/meta`
 Cheap poll — is there anything newer, without the body.
 
+- Optional `appVersion` selects the same v1 snapshot as `/document` when the policy is enabled;
+  it is ignored when disabled. Active reads verify the original pair, not only a cached metadata row.
 - **200** `{ "revision": <long>, "schemaVersion": <int>, "checksum": "<sha256>", "publishedAt": "<instant>" }`
   (plus `Cache-Control`/nosniff headers). **404** when nothing published.
 

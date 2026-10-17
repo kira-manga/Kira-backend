@@ -55,6 +55,58 @@ empty catalogs. Current reference loading is PENDING-only: a missing/changed ref
 admission, not a coherent retained origin replay/read. See [API receipt/bytes](API.md#initial-catalog-bootstrap)
 and [reference/rollout](MIGRATION_BUNDLED_TO_REMOTE.md#exact-initial-bootstrap).
 
+## Client-only signed snapshot selection
+
+`kira.client-catalog` is a read-only, disabled-by-default compatibility selector, not a publication
+phase or an authorization mechanism. It never changes the pointer, creates/signs artifacts, rewrites
+history, grants COMPLETE or changes admin/internal latest queries. No operational versions or pins
+are provisioned in committed defaults. **Disabled is not rollout protection.**
+
+Explicit configuration keys (all values require separate operational admission):
+
+| Key under `kira.client-catalog` | Contract |
+|---|---|
+| `enabled` | Default `false`; `true` requires the full baseline. |
+| `baseline.revision` | Positive existing paired v1/v2 revision. |
+| `baseline.document-checksum` / `baseline.manifest-checksum` | Independently selected lowercase SHA-256 of the two distinct original stored artifacts. |
+| `current-versions[index]` | Exact canonical wire version selecting the current pointer. |
+| `pinned-versions[index].app-version` | Exact canonical wire version retaining a specifically admitted pair. |
+| `pinned-versions[index].snapshot.revision` / `.document-checksum` / `.manifest-checksum` | Same pair contract as baseline. |
+
+There are at most 32 version names in total (and thus at most 33 configured pairs including baseline).
+Names must be disjoint, unique, <=64-character `major.minor.patch` strings with ASCII nonnegative
+components and no leading zeros except `0`. No ranges, suffixes, trimming or dynamic discovery.
+Same-revision pins must have identical hashes. Every pin must be >= baseline and <= the actual
+pointer; invalid enabled configuration fails startup. Unknown configuration keys are rejected.
+
+Startup preserves the existing floor/publication-state checks first, then verifies current and every
+configured pair. Every active client read uses one read-only REPEATABLE_READ transaction to read the
+pointer, verify its actual v1/v2 pair and verify the selected pinned pair if different; it does not
+scan unrelated cohorts. A current pair equal to a configured pin must also match its pinned hashes.
+Verification checks original UTF-8 SHA-256, paired identity/time/schema, chain metadata and both
+original Ed25519 envelopes with the existing signature codecs and configured **public verification
+keys only**. It never reserializes or resigns bytes. Retain all keys needed for admitted history.
+Missing/corrupt/ahead-of-pointer state refuses with content-free 503, never latest fallback, including
+conditional requests. Startup runners do not provide the only protection: each active read rechecks.
+
+Before enabling or changing a selection, independently admit compatible original v1/v2 contents,
+signatures/hashes and every referenced immutable member's availability. Do not infer compatibility
+from a revision number or signature. Compare against all revisions already served to every affected
+cohort: configuration bounds cannot prove historical monotonicity. When moving a newer version to
+current, explicitly retain the prior version at an admitted pair rather than accidentally returning
+it to baseline. The same rule applies to unknown/missing-version clients and baseline changes.
+
+Frozen cohorts do not automatically receive later emergency disables. Advancing their compatible
+signed pairs requires a separate reviewed operational decision. Qualify actual released wire-version
+strings and full-query cache keys; clients must not use unsigned summary/stanza routes as a substitute
+for signed selection. This narrow whole-pair routing does not implement `minAppVersion` filtering,
+percentage targeting, client identity, automatic rollback floors or a general rollout lifecycle.
+
+Deploying this source is still subject to the existing migration/history gates: older installed
+backends require separate V13.1/V13.2 qualification, writer/credential cutover and populated-state
+reconciliation. Selector validation neither bypasses `RECONCILIATION_REQUIRED` nor authorizes a
+publication, migration, deployment, configuration change or cohort rollback.
+
 ## Server states (6), v1 mapping, and v2 mapping
 
 Authoring truth is **per-source** (`source_configs` head + immutable `source_config_revisions`); the

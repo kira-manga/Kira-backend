@@ -1,9 +1,9 @@
 package me.manga.kira.backend.sourceconfig.api
 
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.sourceconfig.application.ClientCatalogQueryService
 import me.manga.kira.backend.sourceconfig.application.SourceAdminService
 import me.manga.kira.backend.sourceconfig.application.SourceCatalogQueryService
-import me.manga.kira.backend.sourceconfig.application.SourceQueryService
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocument
 import me.manga.kira.backend.sourceconfig.domain.PublishedSourceArtifact
 import me.manga.kira.backend.sourceconfig.domain.PublishedSourceCatalog
@@ -32,7 +32,7 @@ import java.util.UUID
 
 /** Servlet delivery only: actual controllers/writers, without Boot, security filters or a database. */
 class SourceConfigConditionalResponseTest {
-    private val documentQuery = mock(SourceQueryService::class.java)
+    private val clientQuery = mock(ClientCatalogQueryService::class.java)
     private val admin = mock(SourceAdminService::class.java)
     private val catalogQuery = mock(SourceCatalogQueryService::class.java)
     private val signer = mock(DocumentSigner::class.java)
@@ -49,16 +49,16 @@ class SourceConfigConditionalResponseTest {
 
     @BeforeEach
     fun setUp() {
-        `when`(documentQuery.latestDocument()).thenReturn(latest)
+        `when`(clientQuery.documentForClient(listOf("1.2.3"))).thenReturn(latest)
         `when`(admin.getDocument(historical.documentRevision)).thenReturn(historical)
-        `when`(catalogQuery.latestManifest()).thenReturn(manifest)
+        `when`(clientQuery.manifestForClient(null)).thenReturn(manifest)
         `when`(catalogQuery.publishedArtifact(artifact.api, artifact.sourceRevision)).thenReturn(artifact)
         val documents = DocumentResponseWriter()
         mockMvc =
             MockMvcBuilders.standaloneSetup(
-                SourceDocumentController(documentQuery, documents, signer),
+                SourceDocumentController(clientQuery, documents, signer),
                 AdminDocumentsController(admin, documents),
-                SourceCatalogV2Controller(catalogQuery, SourceCatalogV2ResponseWriter()),
+                SourceCatalogV2Controller(catalogQuery, SourceCatalogV2ResponseWriter(), clientQuery),
             ).build()
     }
 

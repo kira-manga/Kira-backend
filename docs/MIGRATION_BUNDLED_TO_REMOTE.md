@@ -237,7 +237,9 @@ envelope after restart. Any failure preserves the last verified cache or bundled
 
 ## 7. Deliberately deferred product features
 - **`minAppVersion` filtering** — the field is stored and served today but the app engine does not
-  enforce it yet; per-version response variants (which complicate ETag) are deferred.
+  enforce it yet. Optional [whole signed-pair selection](SOURCE_CONFIG_LIFECYCLE.md#client-only-signed-snapshot-selection)
+  is a separate, explicitly configured compatibility route, not per-source filtering or automatic rollout.
 - **Staged rollout / percentage targeting** — requires stable client identity + bucketing; not built.
-- **Public historical retrieval** — the public API serves only the latest document; historical snapshots
-  stay admin-only (`GET /admin/documents/{revision}`).
+- **Arbitrary public historical retrieval** — no public revision selector exists. Only explicitly
+  configured client cohorts may receive pinned signed history; arbitrary history stays admin-only
+  (`GET /admin/documents/{revision}`).
