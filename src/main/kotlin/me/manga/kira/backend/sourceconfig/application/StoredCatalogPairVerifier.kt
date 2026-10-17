@@ -3,6 +3,7 @@ package me.manga.kira.backend.sourceconfig.application
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.config.KiraClientCatalogProperties.SnapshotPin
+import me.manga.kira.backend.sourceconfig.domain.PublishedCatalogMember
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocument
 import me.manga.kira.backend.sourceconfig.domain.PublishedSourceCatalog
 import me.manga.kira.backend.sourceconfig.signing.DocumentSignatureCodec
@@ -75,6 +76,35 @@ class StoredCatalogPairVerifier(private val signer: DocumentSigner) {
         verifier.initVerify(key)
         verifier.update(payload)
         check(verifier.verify(bytes))
+    }
+
+    /** Pre-v2 signed documents are retained lineage, not fabricated document/catalog pairs. */
+    internal fun verifyRetainedDocument(document: PublishedDocument) {
+        check(document.documentRevision > 0 && document.schemaVersion == 1 && document.canonVersion == CanonicalJson.CANON_VERSION)
+        check(document.checksum == Sha256.hexUtf8(document.documentJson))
+        check(document.signatureFormat == DocumentSignatureCodec.FORMAT && document.signatureAlgorithm == DocumentSignatureCodec.ALGORITHM)
+        checkChain(document.documentRevision, document.previousDocumentRevision, document.previousDocumentChecksum)
+        verifySignature(
+            signer.publicKeys(), document.signingKeyId, document.signatureBase64,
+            DocumentSignatureCodec.payload(
+                DocumentSigningInput(
+                    document.documentRevision, document.checksum, document.createdAt,
+                    document.previousDocumentRevision, document.previousDocumentChecksum, document.documentJson,
+                ),
+            ),
+        )
+    }
+
+    /** Compare the exact selected mapping to actual referenced bytes before checking its detached signature. */
+    internal fun verifyMember(member: PublishedCatalogMember) {
+        val (entry, artifact) = member
+        check(entry.api == artifact.api && entry.sourceRevision == artifact.sourceRevision && entry.sourceRevision > 0)
+        check(entry.engine == "generic" && entry.checksum == artifact.checksum && HASH.matches(artifact.checksum))
+        check(artifact.canonVersion == CanonicalJson.CANON_VERSION && artifact.checksum == Sha256.hexUtf8(artifact.canonicalJson))
+        verifySignature(
+            signer.publicKeys(), entry.sourceSigningKeyId, entry.sourceSignature,
+            SourceCatalogSignatureCodec.sourcePayload(artifact.api, artifact.sourceRevision, artifact.checksum, artifact.canonicalJson),
+        )
     }
 
     private fun checkChain(revision: Long, previous: Long?, checksum: String?) {

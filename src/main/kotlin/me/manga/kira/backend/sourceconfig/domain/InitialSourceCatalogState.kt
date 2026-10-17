@@ -8,6 +8,7 @@ enum class InitialSourceCatalogPhase(val wire: String) {
     PENDING("pending"),
     COMPLETE("complete"),
     RECONCILIATION_REQUIRED("reconciliation_required"),
+    RECONCILED("reconciled"),
     ;
 
     companion object {
@@ -42,8 +43,18 @@ data class InitialSourceCatalogReceipt(
     }
 }
 
-data class InitialSourceCatalogState(val phase: InitialSourceCatalogPhase, val latestDocumentRevision: Long?, val receipt: InitialSourceCatalogReceipt?) {
+data class InitialSourceCatalogState(
+    val phase: InitialSourceCatalogPhase,
+    val latestDocumentRevision: Long?,
+    val receipt: InitialSourceCatalogReceipt?,
+    val reconciliationReceipt: SourceCatalogReconciliationReceipt? = null,
+) {
+    val publicationAdmitted: Boolean get() = phase == InitialSourceCatalogPhase.COMPLETE || phase == InitialSourceCatalogPhase.RECONCILED
+
     init {
+        check(phase == InitialSourceCatalogPhase.RECONCILED || reconciliationReceipt == null) {
+            "unreconciled catalog has an unexpected reconciliation receipt"
+        }
         when (phase) {
             InitialSourceCatalogPhase.PENDING ->
                 check(latestDocumentRevision == null && receipt == null) {
@@ -58,6 +69,14 @@ data class InitialSourceCatalogState(val phase: InitialSourceCatalogPhase, val l
             InitialSourceCatalogPhase.RECONCILIATION_REQUIRED ->
                 check(receipt == null) {
                     "unreconciled source-catalog bootstrap state has an unexpected receipt"
+                }
+
+            InitialSourceCatalogPhase.RECONCILED ->
+                check(
+                    receipt == null && reconciliationReceipt != null && latestDocumentRevision != null &&
+                        latestDocumentRevision >= reconciliationReceipt.admittedRevision,
+                ) {
+                    "reconciled source-catalog state is inconsistent"
                 }
         }
     }

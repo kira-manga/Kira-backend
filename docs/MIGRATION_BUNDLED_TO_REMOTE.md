@@ -69,12 +69,12 @@ The fixture correction changes raw request bytes and their `payloadSha256`. It c
 previous COMPLETE origin's original file, even when a semantic correction is wanted. Preserve that
 original request/receipt for exact-byte retry; use a separately reviewed later publication for repair.
 
-## 2. Ordinary `import-bundled` contract — after COMPLETE
+## 2. Ordinary `import-bundled` contract — after COMPLETE or RECONCILED
 
 `POST /api/v1/admin/sources/import-bundled` (ADMIN; body ≤ 5 MiB) is a compatibility re-import path,
-**not initial seeding**. It requires durable bootstrap COMPLETE before staging, even for a no-op;
+**not initial seeding**. It requires coherent COMPLETE or RECONCILED before staging, even for a no-op;
 PENDING and RECONCILIATION_REQUIRED refuse with the cutover 409. Ordinary materialization, including
-republish, is also COMPLETE-gated. Once admitted, existing semantics remain all-or-nothing:
+republish, is also admission-gated. Once admitted, existing semantics remain all-or-nothing:
 
 1. **Parse** the whole document with the COMPATIBILITY parser (lenient, unknown-key-tolerant — mirrors
    the app's own parser). Unknown keys encountered are surfaced in `warnings[]`, not silently dropped.
@@ -126,7 +126,7 @@ First inspect the actual installed phase, source head/content, signed catalog/ch
 and trusted keys. Source defaults and this repository's corrected fixture do not prove which content
 an installed backend or App accepted.
 
-- **COMPLETE:** start from the CURRENT published Azora config, not the bundled/test fixture. Review
+- **COMPLETE or RECONCILED:** start from the CURRENT published Azora config, not the bundled/test fixture. Review
   only the required details-request correction (`{itemUrl}&includeChapters=true` for the matching
   stale descriptor), preserving all legitimate unrelated fields, source identity, lifecycle/order
   and other-source edits. Use the existing [draft → validate → publish workflow](USAGE.md#7-edit-and-publish-a-source)
@@ -139,7 +139,9 @@ an installed backend or App accepted.
 - **RECONCILIATION_REQUIRED:** stop at the publication hold. Existing reads remain, but even an Azora
   correction needs a separately owner-reviewed reconciliation/upgrade plan, real Flyway-history/
   checksum eligibility and old-writer drain. Matching inventory, keys or a test result does not
-  establish COMPLETE, and this change adds no reconciliation/adoption API or migration.
+  establish COMPLETE. V13.3 and the explicit [reconciliation operation](API.md#explicit-retained-catalog-reconciliation)
+  can admit verified signed history as the distinct RECONCILED phase; they never invent a raw
+  origin receipt, re-import an old bundle or automatically adopt a populated installation.
 
 Do not blind-reimport the historical fixture, overwrite immutable artifacts, reset receipt/pointer/
 sequence/client floors or caches, or force bundled fallback. Restart/outage cannot repair a previously
@@ -201,14 +203,17 @@ envelope after restart. Any failure preserves the last verified cache or bundled
 ## 6. Cutover checklist
 
 1. **Establish owner rollout eligibility.** Verify the actual installed schema/Flyway history and
-   checksums for V13.2 (after 13.1, before reserved V14), and stop/drain old writers that ignore the
+   checksums for V13.1/13.2/13.3 (before reserved V14), and stop/drain old writers that ignore the
    gate. V13.2 classifies only a null-pointer, source-authoring/history-empty catalog as PENDING;
    populated state, including changeset-only state, becomes RECONCILIATION_REQUIRED. Users/auth
    history is unrelated. See [phase rules](SOURCE_CONFIG_LIFECYCLE.md#durable-initial-publication-phase).
    Existing coherent reads remain available, but matching roster/signatures/revisions do not prove
-   COMPLETE. Already-beyond-insertion schemas and populated-state reconciliation/adoption need
-   separately reviewed owner decisions, not out-of-order/repair/baseline, backfill or pointer/sequence
-   resets. No deployment eligibility is established by a local source review.
+   COMPLETE. For eligible populated signed history, independently inspect/pin its first-v2 and current
+   paired artifacts, review the bounded lineage/member proof, then use the explicit ADMIN/step-up
+   reconciliation operation after the migration/new-writer cutover. Verify its receipt, unchanged
+   public bytes and preserved authoring state before any ordinary publication. Already-beyond-insertion
+   schemas need a separate upgrade plan, never out-of-order/repair/baseline, backfill or pointer/sequence
+   resets. No deployed eligibility, approval or client-compatible activation is established by source review.
 2. **Re-verify the live bundled revision and configured backend floor.** The accepted public App
    source uses bundled revision 6, aligned with the backend source default 6. Confirm the actual shipped binary
    and deployed configuration at each re-bundle, then separately verify signed-bootstrap/activation

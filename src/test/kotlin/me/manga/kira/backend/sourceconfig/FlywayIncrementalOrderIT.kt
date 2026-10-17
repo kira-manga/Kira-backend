@@ -53,9 +53,9 @@ class FlywayIncrementalOrderIT {
 
             flyway(database, MigrationVersion.LATEST).migrate()
             assertEquals(
-                listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "13.1", "13.2"),
+                listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "13.1", "13.2", "13.3"),
                 historyVersions(database),
-                "V4 through V13.2 apply on top, in order",
+                "V4 through V13.3 apply on top, in order",
             )
         }
     }
@@ -68,9 +68,9 @@ class FlywayIncrementalOrderIT {
 
             flyway(database, MigrationVersion.LATEST).migrate()
             assertEquals(
-                listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "13.1", "13.2"),
+                listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "13.1", "13.2", "13.3"),
                 historyVersions(database),
-                "V5 through V13.2 apply on top, in order",
+                "V5 through V13.3 apply on top, in order",
             )
         }
     }
@@ -201,6 +201,38 @@ class FlywayIncrementalOrderIT {
                 ).isEmpty(),
                 "the failed migration must not leave its new columns behind",
             )
+        }
+    }
+
+    @Test
+    fun `V13_3 preserves populated held history sequence and all old columns without adopting it`() {
+        withFreshDatabase("flyway_reconciliation_receipt") { database ->
+            flyway(database, MigrationVersion.fromVersion("13.1")).migrate()
+            seedBootstrapMigrationHistory(database, "v2_history")
+            rows(database, "SELECT setval('seq_document_revision', 157, true)")
+            flyway(database, MigrationVersion.fromVersion("13.2")).migrate()
+            val prior = bootstrapMigrationState(database)
+            val oldState = rows(database, "SELECT to_jsonb(s)::text FROM document_publication_state s")
+            val oldHistory = historyRows(database)
+            val upgrade = flyway(database, MigrationVersion.fromVersion("13.3"))
+
+            assertFalse(upgrade.configuration.isOutOfOrder)
+            assertEquals(1, upgrade.migrate().migrationsExecuted)
+            upgrade.validate()
+            assertEquals(prior, bootstrapMigrationState(database))
+            assertEquals(oldHistory, historyRows(database).take(oldHistory.size))
+            assertEquals("13.3", historyVersions(database).last())
+            assertEquals(listOf(listOf("reconciliation_required")), rows(database, "SELECT bootstrap_phase FROM document_publication_state"))
+            val columns = rows(
+                database,
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'document_publication_state' " +
+                    "AND column_name LIKE 'reconciliation_%' ORDER BY column_name",
+            )
+                .map { requireNotNull(it.single()) }
+            assertEquals(10, columns.size)
+            val names = columns.joinToString(",") { "'$it'" }
+            assertEquals(oldState, rows(database, "SELECT (to_jsonb(s) - ARRAY[$names])::text FROM document_publication_state s"))
+            assertTrue(rows(database, "SELECT ${columns.joinToString(",")} FROM document_publication_state").single().all { it == null })
         }
     }
 

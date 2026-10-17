@@ -62,7 +62,12 @@ abstract class AbstractIntegrationTest {
                 bootstrap_payload_sha256 = NULL, bootstrap_document_revision = NULL,
                 bootstrap_document_checksum = NULL, bootstrap_catalog_revision = NULL,
                 bootstrap_catalog_checksum = NULL, bootstrap_completed_at = NULL,
-                bootstrap_actor_id = NULL
+                bootstrap_actor_id = NULL,
+                reconciliation_policy_id = NULL, reconciliation_request_sha256 = NULL,
+                reconciliation_anchor_revision = NULL, reconciliation_anchor_document_checksum = NULL,
+                reconciliation_anchor_catalog_checksum = NULL, reconciliation_admitted_revision = NULL,
+                reconciliation_document_checksum = NULL, reconciliation_catalog_checksum = NULL,
+                reconciliation_approved_at = NULL, reconciliation_actor_id = NULL
             WHERE id = 1
             """.trimIndent(),
         )

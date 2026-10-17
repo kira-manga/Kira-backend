@@ -9,7 +9,7 @@ import java.time.Instant
 /**
  * Spring Data JPA repository for the [DocumentPublicationStateEntity] singleton (id = 1), seeded by V3.
  * The adapter reads/locks phase and receipt via transaction-bound JDBC, never a managed singleton
- * that could shadow native updates. [updatePointer] is the ordinary COMPLETE-only native update
+ * that could shadow native updates. [updatePointer] is the ordinary admitted-state native update
  * (PLAN §9 step 9), after both artifacts exist; its count must be exactly one. Initial completion uses
  * the adapter's separate pending-state CAS to finalize phase, receipt and pointer together.
  */
@@ -19,7 +19,7 @@ interface SpringDataDocumentPublicationStateRepository : JpaRepository<DocumentP
     @Query(
         value =
         "UPDATE document_publication_state SET latest_document_revision = :revision, " +
-            "updated_at = :at WHERE id = 1 AND bootstrap_phase = 'complete'",
+            "updated_at = :at WHERE id = 1 AND bootstrap_phase IN ('complete', 'reconciled')",
         nativeQuery = true,
     )
     fun updatePointer(@Param("revision") revision: Long, @Param("at") at: Instant): Int

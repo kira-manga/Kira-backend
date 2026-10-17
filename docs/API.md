@@ -333,10 +333,10 @@ Tier-1 checks still run before finalization or publication.
 | `GET /admin/documents` | Bounded snapshot metadata window; optional `size` / `beforeRevision`. | 200 · 400 |
 | `GET /admin/documents/{revision}` | Raw stored canonical bytes of that snapshot (metadata in headers). | 200 · 404 |
 | `POST /admin/documents/validate` | Validate the candidate document without publishing. | 200 `{valid, errors[]}` |
-| `POST /admin/documents/republish` | After bootstrap `COMPLETE`, force-materialize a new snapshot from current state (always a new revision). | 200 · 409 |
-| `POST /admin/sources/import-bundled` | Ordinary re-import after bootstrap `COMPLETE` — see [4. Import](#4-import-bundled). | 200 · 400 · 409 · 413 · 422 |
+| `POST /admin/documents/republish` | After `COMPLETE` or `RECONCILED`, force-materialize a new snapshot from current state (always a new revision). | 200 · 409 |
+| `POST /admin/sources/import-bundled` | Ordinary re-import after `COMPLETE` or `RECONCILED` — see [4. Import](#4-import-bundled). | 200 · 400 · 409 · 413 · 422 |
 
-Ordinary materialization requires bootstrap `COMPLETE`; ordinary import checks that phase before
+Ordinary materialization requires coherent `COMPLETE` or `RECONCILED`; ordinary import checks admission before
 staging, **even for a no-op**. Bootstrap before ordinary authoring on a fresh catalog: draft authoring
 may remain available in `PENDING`, but conflicting source heads are not silently adopted.
 
@@ -423,7 +423,7 @@ including a valid empty catalog, remains legal and is not undone by replay.
 
 `GET /api/v1/admin/source-catalog-v2/cutover` retains `ready`, `applied`, `approvedActiveSources`,
 `legacySourcesToWithhold`, `alreadyWithheldSources`, `problems`, and `documentRevision`, adding
-`phase` and a nullable origin `receipt`. **Phase JSON is uppercase**, unlike source lifecycle wire
+`phase`, a nullable origin `receipt`, and a separate nullable `reconciliationReceipt`. **Phase JSON is uppercase**, unlike source lifecycle wire
 values; `applied` is always `false`:
 
 | Phase | Advisory `ready` | `documentRevision` |
@@ -432,11 +432,60 @@ values; `applied` is always `false`:
 | `PENDING`, source heads present | `false` | null |
 | `COMPLETE` | `true`, regardless of later inventory changes | Origin receipt revision, not necessarily latest |
 | `RECONCILIATION_REQUIRED` | `false` | Current pointer, possibly null |
+| `RECONCILED` | `true`, regardless of later inventory changes | Current pointer; admitted revision remains in `reconciliationReceipt` |
 
 GET neither reserves admission nor proves deployment/approval. The old confirmation-only POST
 always returns a nonmutating controlled 409 at controller dispatch, even with its former JSON,
 malformed input or no body; pre-controller security/body limits still apply. It never stages or
 bootstraps anything.
+
+### Explicit retained-catalog reconciliation
+
+`POST /api/v1/admin/source-catalog-v2/cutover/reconcile` is a distinct **ADMIN** operation for
+coherent `RECONCILIATION_REQUIRED` history. It does not import, publish, sign, repair, or backdate
+bootstrap provenance. Require exactly one
+`X-Kira-Reconciliation-Confirmation: ADMIT_EXISTING_SIGNED_CATALOG` and one fresh
+`X-Kira-Admin-Step-Up` proof from the existing password-step-up route, including on exact replay.
+The proof is consumed before the application transaction; failed admission requires a new proof.
+
+The JSON body is at most **4,096 actual bytes**, strict UTF-8/JSON, with no unknown or duplicate
+keys/trailing input. Supply these seven fields, using independently reviewed stored-artifact pins:
+
+```json
+{
+  "policyId": "signed-catalog-history-reconciliation-v1",
+  "anchorRevision": 101,
+  "anchorDocumentChecksum": "<first-v2-pair-document-sha256>",
+  "anchorCatalogChecksum": "<first-v2-pair-manifest-sha256>",
+  "expectedLatestRevision": 120,
+  "documentChecksum": "<current-document-sha256>",
+  "catalogChecksum": "<current-manifest-sha256>"
+}
+```
+
+Revisions above are illustrative, not provisioned authority; all checksums must be lowercase
+64-character SHA-256. The fixed policy verifies the exact selected v1/v2 chain and member bytes,
+signatures, mapping, and current authoring view under the global lock. The signed document walk
+must cover all retained snapshots (not merely skip valid intermediate pairs). Latest tombstones
+must exactly account for previously v2-public but now absent members and their terminal REMOVED
+heads; never-v2 legacy removals are not invented as v2 membership. Signed pre-v2 document
+ancestors are allowed without fabricated catalogs. Fixed proof bounds are 256 historical documents,
+256 members/removals per catalog, 5 MiB/document, 1 MiB/manifest or source, 32 MiB aggregate bytes;
+the caller cannot raise them. Missing keys, invalid bytes/signatures, stale pointers, nonterminal
+anchors, mapping differences, incomplete/beyond-bound proof, or non-held state refuse.
+
+Success is **200** with a distinct ten-field receipt: `policyId`, `requestSha256`, `anchorRevision`,
+`anchorDocumentChecksum`, `anchorCatalogChecksum`, `admittedRevision`, `documentChecksum`,
+`catalogChecksum`, `approvedAt`, `actorId`. The request hash covers exact original request bytes;
+approval time/actor are new, not origin data. Only phase/new receipt and a new bounded audit change.
+Pointer/time, sequence, prior audits, artifacts, source histories, lifecycle and drafts stay intact.
+An exact-byte replay returns this receipt after later publication, before stale-pointer/current
+policy checks; changed bytes refuse. Raw bootstrap still refuses `RECONCILED`.
+
+Refusal is content-free **409 `SOURCE_CATALOG_RECONCILIATION_REJECTED`**; missing/used/duplicate
+step-up proof is **401**, non-ADMIN is **403**, oversize is **413**, non-JSON is **415**. Existing
+pre-MVC security/body limits retain precedence. This API does not authorize deployment, old-writer
+overlap, a compatibility-selector rollout or source publication.
 
 ### Admin history windows
 
@@ -475,7 +524,7 @@ content always goes through `rollback`.
 
 ### 4. import-bundled
 
-`POST /api/v1/admin/sources/import-bundled` is **ordinary re-import after `COMPLETE`**, not initial
+`POST /api/v1/admin/sources/import-bundled` is **ordinary re-import after `COMPLETE` or `RECONCILED`**, not initial
 bootstrap. It requires that phase before staging, even on the no-op path (otherwise cutover **409**).
 Body = bundled document JSON (max **5 MiB**, parsed with the **COMPATIBILITY** parser). It validates
 the whole document (any error → **422**, nothing persisted), applies per-source create/update/no-op

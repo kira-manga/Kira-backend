@@ -50,6 +50,9 @@ interface PublishedDocumentRepository {
      */
     fun completeInitialSourceCatalog(receipt: InitialSourceCatalogReceipt)
 
+    /** Under G, admit exactly one held singleton at the pinned pointer; never move it or rewrite history. */
+    fun reconcileSourceCatalog(receipt: SourceCatalogReconciliationReceipt)
+
     /** Consume the next monotonic `document_revision` from `seq_document_revision` (PLAN §5/§9 step 8). */
     fun nextDocumentRevision(): Long
 

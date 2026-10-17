@@ -222,7 +222,7 @@ Unicode, not a broader Unicode validator or a promise of JVM/database casing equ
 
 ### 4.3 Admin — source management (all `ROLE_ADMIN`; every mutation writes `audit_log`)
 
-Ordinary materialization and ordinary import require bootstrap COMPLETE; import checks before
+Ordinary materialization and ordinary import require coherent COMPLETE or RECONCILED; import checks before
 staging even for a no-op. Draft authoring may remain available in PENDING but is not publication or
 bootstrap authority. See the [raw bootstrap API](API.md#initial-catalog-bootstrap) for exact receipt,
 confirmation, replay and advisory GET semantics.
@@ -324,9 +324,10 @@ V12__admin_step_up_grants.sql
 V13__source_changesets.sql
 V13_1__user_credential_version.sql
 V13_2__source_catalog_bootstrap_state.sql
+V13_3__source_catalog_reconciliation.sql
 ```
 
-**Migration order matches build order (deliberate):** the phased build (§15) creates audit in Phase 6 and completions in Phase 9 — audit therefore MUST have the lower version number, or a fresh environment migrated mid-campaign would see V5 applied before V4 exists (Flyway out-of-order hazard). `outOfOrder` stays **false** (default); versions advance in Flyway numeric order. The inventory includes normalized versions `13.1` and `13.2`.
+**Migration order matches build order (deliberate):** the phased build (§15) creates audit in Phase 6 and completions in Phase 9 — audit therefore MUST have the lower version number, or a fresh environment migrated mid-campaign would see V5 applied before V4 exists (Flyway out-of-order hazard). `outOfOrder` stays **false** (default); versions advance in Flyway numeric order. The inventory includes normalized versions `13.1`, `13.2` and `13.3`.
 
 V13.1 is a new forward migration after 13 and before reserved 14, not a rewrite of V13 or a placeholder
 for 14. Before deployment, prove the actual installed history/checksums and absence of a collision.
@@ -343,6 +344,16 @@ artifact, pointer or sequence rewrites or automatic COMPLETE adoption. Actual in
 eligibility, old-writer drain, and reconciliation/adoption remain external owner rollout gates;
 already beyond this insertion point requires a separately reviewed upgrade path, never out-of-order,
 repair/baseline or a pointer/sequence reset to force eligibility.
+
+V13.3 adds a distinct RECONCILED admission/receipt without updating existing data or weakening the
+PENDING-only bootstrap/COMPLETE raw-byte replay. The bounded ADMIN/one-use-step-up
+`POST /api/v1/admin/source-catalog-v2/cutover/reconcile` verifies independently pinned retained
+pair/member/lineage signatures and current mapping under G, then changes only phase/new receipt
+and audit, with unchanged pointer/time/sequence/history. Raw-bootstrap fields remain null. Exact
+intent-byte replay is independent of later evolution. See [API](API.md#explicit-retained-catalog-reconciliation)
+and [lifecycle](SOURCE_CONFIG_LIFECYCLE.md#explicit-reconciliation-not-initial-bootstrap) for the
+fixed proof bounds and deployment prerequisites; no generic repair, automatic adoption, signing
+or client-selection change is authorized by this source capability.
 
 **Document-vs-per-source decision (justified):** authoring truth is **per-source revisions** (`source_configs` + `source_config_revisions`) because every admin operation (draft, validate, publish, rollback, lifecycle) is per-source and needs per-source history; the served artifact is a **materialized whole-document snapshot** (`published_documents`) because (a) the app consumes one `SourceConfigDocument` with one monotonic `revision` and one checksum → stable strong ETag requires stable bytes, (b) serving stored canonical bytes makes what-the-app-got auditable and reproducible per revision, (c) whole-document anti-rollback (`revision` must only grow — the app's `RemoteSourceConfigManager` rejects any document with `revision <` accepted floor) becomes a single DB sequence. Assembling on the fly from per-source rows would make ETag/checksum recomputed-per-request and history unreproducible.
 

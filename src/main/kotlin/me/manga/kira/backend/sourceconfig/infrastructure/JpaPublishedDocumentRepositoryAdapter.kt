@@ -8,6 +8,7 @@ import me.manga.kira.backend.sourceconfig.domain.NewPublishedDocument
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocument
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentSummary
+import me.manga.kira.backend.sourceconfig.domain.SourceCatalogReconciliationReceipt
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
@@ -117,6 +118,45 @@ class JpaPublishedDocumentRepositoryAdapter(
         "nextval('$SEQUENCE_NAME') returned null"
     }
 
+    override fun reconcileSourceCatalog(receipt: SourceCatalogReconciliationReceipt) {
+        lockPublicationState()
+        val state = initialSourceCatalogState()
+        check(state.phase == InitialSourceCatalogPhase.RECONCILIATION_REQUIRED && state.latestDocumentRevision == receipt.admittedRevision) {
+            "reconciliation requires the unchanged held publication pointer"
+        }
+        requireReconciliationPair(receipt.anchorRevision, receipt.anchorDocumentChecksum, receipt.anchorCatalogChecksum)
+        requireReconciliationPair(receipt.admittedRevision, receipt.documentChecksum, receipt.catalogChecksum)
+        val updated = jdbcTemplate.update(
+            """
+            UPDATE document_publication_state SET bootstrap_phase = 'reconciled',
+                reconciliation_policy_id = ?, reconciliation_request_sha256 = ?, reconciliation_anchor_revision = ?,
+                reconciliation_anchor_document_checksum = ?, reconciliation_anchor_catalog_checksum = ?,
+                reconciliation_admitted_revision = ?, reconciliation_document_checksum = ?, reconciliation_catalog_checksum = ?,
+                reconciliation_approved_at = ?, reconciliation_actor_id = ?
+            WHERE id = 1 AND bootstrap_phase = 'reconciliation_required' AND latest_document_revision = ?
+            """.trimIndent(),
+            receipt.policyId, receipt.requestSha256, receipt.anchorRevision,
+            receipt.anchorDocumentChecksum, receipt.anchorCatalogChecksum,
+            receipt.admittedRevision, receipt.documentChecksum, receipt.catalogChecksum,
+            receipt.approvedAt.atOffset(ZoneOffset.UTC), receipt.actorId, receipt.admittedRevision,
+        )
+        check(updated == 1) { "reconciliation must update exactly one held singleton" }
+        check(initialSourceCatalogState().reconciliationReceipt == receipt) { "reconciliation receipt was not persisted coherently" }
+    }
+
+    private fun requireReconciliationPair(revision: Long, documentChecksum: String, catalogChecksum: String) {
+        val matches = jdbcTemplate.queryForObject(
+            """
+            SELECT count(*) FROM published_documents d
+            JOIN published_source_catalogs c ON c.catalog_revision = d.document_revision
+            WHERE d.document_revision = ? AND d.checksum = ? AND c.checksum = ?
+                AND d.created_at = c.created_at AND d.created_by = c.created_by
+            """.trimIndent(),
+            Long::class.javaObjectType, revision, documentChecksum, catalogChecksum,
+        )
+        check(matches == 1L) { "reconciliation retained artifact provenance differs" }
+    }
+
     override fun insertSnapshot(spec: NewPublishedDocument): PublishedDocument {
         val entity =
             PublishedDocumentEntity(
@@ -187,7 +227,39 @@ class JpaPublishedDocumentRepositoryAdapter(
             phase = phase,
             latestDocumentRevision = rs.getObject("latest_document_revision", Long::class.javaObjectType),
             receipt = receipt,
+            reconciliationReceipt = readReconciliationReceipt(rs, phase),
         )
+    }
+
+    private fun readReconciliationReceipt(rs: ResultSet, phase: InitialSourceCatalogPhase): SourceCatalogReconciliationReceipt? {
+        if (phase != InitialSourceCatalogPhase.RECONCILED) {
+            check(RECONCILIATION_COLUMNS.all { rs.getObject(it) == null }) { "unexpected reconciliation receipt" }
+            return null
+        }
+        check(RECONCILIATION_COLUMNS.all { rs.getObject(it) != null }) { "incomplete reconciliation receipt" }
+        val receipt = SourceCatalogReconciliationReceipt(
+            policyId = rs.getString("reconciliation_policy_id"), requestSha256 = rs.getString("reconciliation_request_sha256"),
+            anchorRevision = rs.getLong("reconciliation_anchor_revision"),
+            anchorDocumentChecksum = rs.getString("reconciliation_anchor_document_checksum"),
+            anchorCatalogChecksum = rs.getString("reconciliation_anchor_catalog_checksum"),
+            admittedRevision = rs.getLong("reconciliation_admitted_revision"),
+            documentChecksum = rs.getString("reconciliation_document_checksum"), catalogChecksum = rs.getString("reconciliation_catalog_checksum"),
+            approvedAt = rs.getObject("reconciliation_approved_at", OffsetDateTime::class.java).toInstant(),
+            actorId = rs.getObject("reconciliation_actor_id", UUID::class.java),
+        )
+        checkReconciliationPair(rs, "anchor", receipt.anchorDocumentChecksum, receipt.anchorCatalogChecksum)
+        checkReconciliationPair(rs, "admitted", receipt.documentChecksum, receipt.catalogChecksum)
+        return receipt
+    }
+
+    private fun checkReconciliationPair(rs: ResultSet, prefix: String, documentChecksum: String, catalogChecksum: String) {
+        check(rs.getString("${prefix}_document_checksum") == documentChecksum && rs.getString("${prefix}_catalog_checksum") == catalogChecksum) {
+            "reconciliation receipt does not match retained artifact checksums"
+        }
+        check(rs.getObject("${prefix}_document_at") == rs.getObject("${prefix}_catalog_at") &&
+            rs.getObject("${prefix}_document_actor") == rs.getObject("${prefix}_catalog_actor")) {
+            "reconciliation retained artifact provenance differs"
+        }
     }
 
     private fun readReceipt(rs: ResultSet): InitialSourceCatalogReceipt {
@@ -266,11 +338,26 @@ class JpaPublishedDocumentRepositoryAdapter(
             """
             SELECT s.*, d.checksum AS origin_document_checksum, c.checksum AS origin_catalog_checksum,
                 d.created_at AS origin_document_created_at, c.created_at AS origin_catalog_created_at,
-                d.created_by AS origin_document_created_by, c.created_by AS origin_catalog_created_by
+                d.created_by AS origin_document_created_by, c.created_by AS origin_catalog_created_by,
+                ad.checksum AS anchor_document_checksum, ac.checksum AS anchor_catalog_checksum,
+                ad.created_at AS anchor_document_at, ac.created_at AS anchor_catalog_at,
+                ad.created_by AS anchor_document_actor, ac.created_by AS anchor_catalog_actor,
+                rd.checksum AS admitted_document_checksum, rc.checksum AS admitted_catalog_checksum,
+                rd.created_at AS admitted_document_at, rc.created_at AS admitted_catalog_at,
+                rd.created_by AS admitted_document_actor, rc.created_by AS admitted_catalog_actor
             FROM document_publication_state s
             LEFT JOIN published_documents d ON d.document_revision = s.bootstrap_document_revision
             LEFT JOIN published_source_catalogs c ON c.catalog_revision = s.bootstrap_catalog_revision
+            LEFT JOIN published_documents ad ON ad.document_revision = s.reconciliation_anchor_revision
+            LEFT JOIN published_source_catalogs ac ON ac.catalog_revision = s.reconciliation_anchor_revision
+            LEFT JOIN published_documents rd ON rd.document_revision = s.reconciliation_admitted_revision
+            LEFT JOIN published_source_catalogs rc ON rc.catalog_revision = s.reconciliation_admitted_revision
             """.trimIndent()
+        val RECONCILIATION_COLUMNS = listOf(
+            "reconciliation_policy_id", "reconciliation_request_sha256", "reconciliation_anchor_revision",
+            "reconciliation_anchor_document_checksum", "reconciliation_anchor_catalog_checksum", "reconciliation_admitted_revision",
+            "reconciliation_document_checksum", "reconciliation_catalog_checksum", "reconciliation_approved_at", "reconciliation_actor_id",
+        )
         val SUMMARY_MAPPER =
             RowMapper { rs, _ ->
                 PublishedDocumentSummary(

@@ -66,7 +66,7 @@ class DocumentAssemblyService(
     fun materialize(actorId: UUID): PublishedDocument {
         // MANDATORY proves a transaction, not G ownership. Reassert the exact-one singleton lock.
         publishedDocuments.lockPublicationState()
-        if (publishedDocuments.initialSourceCatalogState().phase != InitialSourceCatalogPhase.COMPLETE) {
+        if (!publishedDocuments.initialSourceCatalogState().publicationAdmitted) {
             throw GenericV2CutoverRejected("initial catalog bootstrap must be complete before ordinary publication")
         }
         val assemblySources = sources.findSourcesForAssembly()

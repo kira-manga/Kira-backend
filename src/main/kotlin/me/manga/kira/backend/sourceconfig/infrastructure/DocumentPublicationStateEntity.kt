@@ -17,6 +17,7 @@ import java.util.UUID
  */
 @Entity
 @Table(name = "document_publication_state")
+@Suppress("LongParameterList") // Explicit mapping of the single row's two mutually exclusive receipt families.
 class DocumentPublicationStateEntity(
     @Id
     @Column(name = "id", nullable = false)
@@ -49,4 +50,29 @@ class DocumentPublicationStateEntity(
     var bootstrapCompletedAt: Instant? = null,
     @Column(name = "bootstrap_actor_id")
     var bootstrapActorId: UUID? = null,
+    @Column(name = "reconciliation_policy_id", length = 128)
+    var reconciliationPolicyId: String? = null,
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "reconciliation_request_sha256", columnDefinition = "char(64)")
+    var reconciliationRequestSha256: String? = null,
+    @Column(name = "reconciliation_anchor_revision")
+    var reconciliationAnchorRevision: Long? = null,
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "reconciliation_anchor_document_checksum", columnDefinition = "char(64)")
+    var reconciliationAnchorDocumentChecksum: String? = null,
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "reconciliation_anchor_catalog_checksum", columnDefinition = "char(64)")
+    var reconciliationAnchorCatalogChecksum: String? = null,
+    @Column(name = "reconciliation_admitted_revision")
+    var reconciliationAdmittedRevision: Long? = null,
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "reconciliation_document_checksum", columnDefinition = "char(64)")
+    var reconciliationDocumentChecksum: String? = null,
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "reconciliation_catalog_checksum", columnDefinition = "char(64)")
+    var reconciliationCatalogChecksum: String? = null,
+    @Column(name = "reconciliation_approved_at")
+    var reconciliationApprovedAt: Instant? = null,
+    @Column(name = "reconciliation_actor_id")
+    var reconciliationActorId: UUID? = null,
 )

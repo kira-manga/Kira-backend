@@ -5,6 +5,9 @@ interface PublishedSourceCatalogRepository {
 
     fun findByRevision(revision: Long): PublishedSourceCatalog?
 
+    /** Exact selected-catalog mapping, ordered by source_order, with one bounded lookahead row. */
+    fun findMembers(revision: Long, limit: Int): List<PublishedCatalogMember>
+
     /** Every api that has appeared in any public v2 catalog entry. */
     fun previouslyPublishedApis(): Set<String>
 

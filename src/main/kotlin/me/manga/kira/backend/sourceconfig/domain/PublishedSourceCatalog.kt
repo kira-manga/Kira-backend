@@ -55,3 +55,6 @@ data class NewPublishedSourceCatalog(
 )
 
 data class PublishedSourceArtifact(val api: String, val sourceRevision: Int, val canonicalJson: String, val checksum: String, val canonVersion: String)
+
+/** Selected catalog mapping together with the actual referenced source identity/revision bytes. */
+data class PublishedCatalogMember(val entry: PublishedCatalogEntry, val artifact: PublishedSourceArtifact)

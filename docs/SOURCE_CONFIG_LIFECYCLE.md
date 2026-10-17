@@ -16,6 +16,7 @@ establishes completion:
 | `PENDING` | Eligible for the raw initial-bootstrap transaction; no ordinary publication/import. |
 | `COMPLETE` | Successful bootstrap has an immutable origin receipt; ordinary evolution is permitted. |
 | `RECONCILIATION_REQUIRED` | Retain coherent existing reads, but refuse bootstrap and ordinary publication/import pending separately authorized reconciliation. |
+| `RECONCILED` | Explicit new approval of verified retained history; separate immutable receipt, no claimed raw-bootstrap origin; ordinary evolution is permitted. |
 
 V13.2 requires exactly one existing singleton with id 1; missing/multiple state fails, never seeds a
 replacement. At migration, `PENDING` requires a null pointer and empty source heads, revisions,
@@ -54,6 +55,30 @@ stage/revalidate/allocate/audit again, and never undo later additions, edits, li
 empty catalogs. Current reference loading is PENDING-only: a missing/changed reference refuses new
 admission, not a coherent retained origin replay/read. See [API receipt/bytes](API.md#initial-catalog-bootstrap)
 and [reference/rollout](MIGRATION_BUNDLED_TO_REMOTE.md#exact-initial-bootstrap).
+
+### Explicit reconciliation, not initial bootstrap
+
+V13.3 adds nullable reconciliation receipt fields/constraints to the existing singleton, preserving
+all old values and classification. It never admits a row automatically. The explicit
+[`/cutover/reconcile` operation](API.md#explicit-retained-catalog-reconciliation) requires ADMIN,
+exact confirmation, fresh one-use password step-up and bounded pinned intent. Under G, it verifies
+the current v1/v2 pair, selected first-v2 anchor and intervening signed predecessor rows, every
+selected member's exact identity/revision/body/signature, and the current assembly mapping. A
+signed pre-v2 v1 chain need not have v2 catalogs. The walk count must match all retained v1 snapshots,
+so an orphan/skipped pair cannot silently influence later publication. Numeric gaps are legal.
+Latest tombstones exactly match formerly v2-public absent members and current REMOVED heads;
+never-v2 legacy removals do not acquire fabricated v2 membership. Missing/mismatched proof refuses.
+It preserves legitimate disabled/retired/withheld/draft evolution rather than imposing the initial
+12/33 roster, loading today's bootstrap reference, or adopting unfinished work.
+
+One unchanged-pointer CAS transitions only `RECONCILIATION_REQUIRED` to `RECONCILED`, records a new
+request hash/policy/approval actor/time and retained anchor/current pair hashes, and emits one audit
+inside the same transaction. Pointer/updated-at, sequence, immutable bytes, old audits and authoring
+rows do not change. Failure rolls admission/audit back. Raw bootstrap fields remain null; its old
+PENDING/COMPLETE algorithm/replay is untouched. Exact reconciliation replay returns the original
+receipt even after later publication; any changed bytes refuse. Every coherent state read checks
+the retained anchor/admitted pair checksum/time/actor bindings and pointer floor, without rerunning
+the entire historical proof. This is not arbitrary historical-corruption repair or rollout approval.
 
 ## Client-only signed snapshot selection
 
@@ -253,8 +278,9 @@ At boot, fail-fast validators assert (never silently repaired):
    non-NULL ⇒ references a snapshot AND equals `MAX(document_revision)` (nothing above the pointer);
    sequence-next `>` the pointer.
 5. exactly one coherent phase/receipt singleton exists. COMPLETE requires matching immutable origin
-   artifacts/checksums/time/actor and a latest pointer at or above the origin revision; other phases
-   have no receipt. Missing/incoherent state fails closed, not as an empty catalog. This check does
+   artifacts/checksums/time/actor and a latest pointer at or above the origin revision. RECONCILED
+   requires its distinct complete receipt, retained anchor/admitted pair bindings and a latest
+   pointer at or above the admitted revision; other phases have no receipt. Missing/incoherent state fails closed, not as an empty catalog. This check does
    not load today's initial reference policy.
 
 The `document_publication_state.latest_document_revision` singleton pointer is **the** authoritative
@@ -268,8 +294,8 @@ path (it survives only inside the startup comparison).
 ## The 10-step publication sequence (globally serialized)
 
 Every ordinary state-visible document mutation — publish, operational-mode change, disable, enable,
-retire, remove, rollback, bundled import, and `republish` — requires bootstrap **COMPLETE** for
-materialization and runs this sequence inside **one** transaction. Ordinary import checks COMPLETE
+retire, remove, rollback, bundled import, and `republish` — requires coherent **COMPLETE or RECONCILED** for
+materialization and runs this sequence inside **one** transaction. Ordinary import checks that admission
 before staging, even for a no-op. Initial bootstrap uses the separate admission/finalization above,
 not a bypass of the ordinary guard. The per-mutation transaction alone is not enough: without global
 ordering, two concurrent mutations each assemble a candidate from a snapshot that predates the
@@ -277,7 +303,7 @@ other's commit, and the later revision silently loses the earlier change (a lost
 does not prevent).
 
 1. Lock the singleton `document_publication_state` row `FOR UPDATE` — the **global publication lock**;
-   concurrent mutators queue here. Ordinary materialization reasserts this exact-one lock and COMPLETE.
+   concurrent mutators queue here. Ordinary materialization reasserts this exact-one lock and admission.
 2. Lock the affected `source_configs` row(s) `FOR UPDATE` (always global lock first, then source rows —
    no deadlock is possible because every writer takes the global lock first).
 3. Apply the mutation (revision insert / status change / import batch).
@@ -307,7 +333,7 @@ substitute for the singleton lock when serializing creators with bootstrap.
 
 ## Empty document
 
-After **COMPLETE**, publishing a document with **zero** active sources is legal — the initial 12/33
+After **COMPLETE or RECONCILED**, publishing a document with **zero** active sources is legal — the initial 12/33
 roster is an origin admission rule, not a permanent inventory requirement. Zero active sources alone
 is not a Store-release block, and empty publication is not a way around PENDING bootstrap.
 Whole-document validation accepts zero sources;
@@ -318,7 +344,7 @@ validation, download, or persistence, the complete previous tier remains active.
 
 ## `republish`
 
-After bootstrap **COMPLETE**, `POST /admin/documents/republish` force-materializes a new snapshot from
+After **COMPLETE or RECONCILED**, `POST /admin/documents/republish` force-materializes a new snapshot from
 current state, **always** creating a new `document_revision` even when the canonical content is
 unchanged. That is its purpose: a deliberate recovery tool (e.g. after a `canon_version` algorithm
 change). `canon_version` (`kcj-1` in v1) is stored on every revision and snapshot so a future
@@ -331,10 +357,10 @@ refuses startup. Coherent `RECONCILIATION_REQUIRED` is instead a publication hol
 retained; restarting or matching the initial roster does not qualify it as COMPLETE.
 
 Inspect the actual installed schema/Flyway history and checksums, source authoring/history, both
-artifact families, origin receipt, pointer and sequence without rewriting them. V13.2 follows 13.1
+artifact families, origin/reconciliation receipt, pointer and sequence without rewriting them. V13.3 follows 13.2 and 13.1
 and precedes reserved V14; an installation already beyond that insertion point needs a separately
 reviewed upgrade path, not out-of-order/repair/baseline flags or edited old SQL. Drain/stop old writers
-that ignore the gate before rollout. Reconciliation, adoption or corruption recovery requires an
-owner-approved plan and separate verification; no automatic reset/backfill or new repair API is
-provided. **Do not reset pointers/sequences or fabricate a receipt to force bootstrap eligibility.**
+that ignore the gate before rollout. Explicit signed-history reconciliation requires its reviewed
+pins and fresh approval; arbitrary corruption recovery still requires a separate plan. No automatic
+reset/backfill or general repair API is provided. **Do not reset pointers/sequences or fabricate a receipt to force bootstrap eligibility.**
 See the [cutover checklist](MIGRATION_BUNDLED_TO_REMOTE.md#6-cutover-checklist) for the external gates.

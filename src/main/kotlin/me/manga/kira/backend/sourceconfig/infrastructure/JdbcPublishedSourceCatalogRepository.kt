@@ -1,6 +1,8 @@
 package me.manga.kira.backend.sourceconfig.infrastructure
 
 import me.manga.kira.backend.sourceconfig.domain.NewPublishedSourceCatalog
+import me.manga.kira.backend.sourceconfig.domain.PublishedCatalogEntry
+import me.manga.kira.backend.sourceconfig.domain.PublishedCatalogMember
 import me.manga.kira.backend.sourceconfig.domain.PublishedSourceArtifact
 import me.manga.kira.backend.sourceconfig.domain.PublishedSourceCatalog
 import me.manga.kira.backend.sourceconfig.domain.PublishedSourceCatalogRepository
@@ -81,6 +83,39 @@ class JdbcPublishedSourceCatalogRepository(private val jdbc: JdbcTemplate) : Pub
 
     override fun previouslyPublishedApis(): Set<String> =
         jdbc.queryForList("SELECT DISTINCT api FROM published_source_catalog_entries", String::class.java).toSet()
+
+    override fun findMembers(revision: Long, limit: Int): List<PublishedCatalogMember> {
+        require(limit in 1..257)
+        return jdbc.query(
+            """
+            SELECT e.*, s.api AS actual_api, r.revision_number AS actual_revision,
+                r.config_canonical_json, r.checksum AS actual_checksum, r.canon_version
+            FROM published_source_catalog_entries e
+            JOIN published_source_catalogs c ON c.id = e.catalog_id
+            JOIN source_config_revisions r ON r.id = e.source_revision_id AND r.source_config_id = e.source_config_id
+            JOIN source_configs s ON s.id = r.source_config_id
+            WHERE c.catalog_revision = ? ORDER BY e.source_order LIMIT ?
+            """.trimIndent(),
+            { rs, _ ->
+                PublishedCatalogMember(
+                    PublishedCatalogEntry(
+                        sourceConfigId = rs.getObject("source_config_id", UUID::class.java),
+                        sourceRevisionId = rs.getObject("source_revision_id", UUID::class.java),
+                        api = rs.getString("api"), sourceRevision = rs.getInt("source_revision"),
+                        checksum = rs.getString("checksum"), order = rs.getInt("source_order"),
+                        lifecycle = rs.getString("lifecycle"), engine = rs.getString("engine"),
+                        sourceSigningKeyId = rs.getString("source_signing_key_id"), sourceSignature = rs.getString("source_signature"),
+                    ),
+                    PublishedSourceArtifact(
+                        api = rs.getString("actual_api"), sourceRevision = rs.getInt("actual_revision"),
+                        canonicalJson = rs.getString("config_canonical_json"), checksum = rs.getString("actual_checksum"),
+                        canonVersion = rs.getString("canon_version"),
+                    ),
+                )
+            },
+            revision, limit,
+        )
+    }
 
     override fun removedApis(revision: Long): Set<String> = jdbc
         .queryForList(

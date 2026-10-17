@@ -91,7 +91,7 @@ class BundledImportService(
 
         // §9 step 1 — global publication lock FIRST (serialize with publishes; no deadlock, PLAN §9).
         publishedDocuments.lockPublicationState()
-        if (publishedDocuments.initialSourceCatalogState().phase != InitialSourceCatalogPhase.COMPLETE) {
+        if (!publishedDocuments.initialSourceCatalogState().publicationAdmitted) {
             throw GenericV2CutoverRejected("initial catalog bootstrap must be complete before ordinary import")
         }
 

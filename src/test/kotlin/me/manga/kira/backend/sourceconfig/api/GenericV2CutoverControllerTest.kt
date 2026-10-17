@@ -5,9 +5,12 @@ import com.fasterxml.jackson.databind.SerializationFeature
 import jakarta.servlet.ServletInputStream
 import me.manga.kira.backend.common.GlobalExceptionHandler
 import me.manga.kira.backend.common.exception.PayloadTooLargeException
+import me.manga.kira.backend.security.AdminStepUpService
 import me.manga.kira.backend.security.AuthenticatedUser
 import me.manga.kira.backend.sourceconfig.application.GenericV2CutoverRejected
 import me.manga.kira.backend.sourceconfig.application.GenericV2CutoverService
+import me.manga.kira.backend.sourceconfig.application.SourceCatalogReconciliationRejected
+import me.manga.kira.backend.sourceconfig.application.SourceCatalogReconciliationService
 import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogReceipt
 import me.manga.kira.backend.user.domain.Role
 import org.junit.jupiter.api.AfterEach
@@ -37,7 +40,9 @@ import java.util.UUID
 /** Boundary tests only: actual ADMIN security and durable replay belong to connected ITs. */
 class GenericV2CutoverControllerTest {
     private val cutover = mock(GenericV2CutoverService::class.java)
-    private val controller = GenericV2CutoverController(cutover)
+    private val reconciliation = mock(SourceCatalogReconciliationService::class.java)
+    private val stepUp = mock(AdminStepUpService::class.java)
+    private val controller = GenericV2CutoverController(cutover, reconciliation, stepUp)
     private val mapper = ObjectMapper().findAndRegisterModules().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
     private val admin = AuthenticatedUser(
         UUID.fromString("00000000-0000-0000-0000-000000000001"),
@@ -242,6 +247,24 @@ class GenericV2CutoverControllerTest {
             assertFalse(response.contentAsString.contains("private-body-sentinel"))
         }
         verifyNoInteractions(cutover)
+    }
+
+    @Test
+    fun `reconciliation requires exact single confirmation before body or step up and bounds actual bytes`() {
+        listOf(emptyList(), listOf(""), listOf("${SourceCatalogReconciliationService.CONFIRMATION} "),
+            listOf(SourceCatalogReconciliationService.CONFIRMATION, SourceCatalogReconciliationService.CONFIRMATION)).forEach { values ->
+            val request = object : MockHttpServletRequest() {
+                override fun getInputStream(): ServletInputStream = error("unconfirmed body must not be read")
+            }.apply { values.forEach { addHeader("X-Kira-Reconciliation-Confirmation", it) } }
+            assertThrows(SourceCatalogReconciliationRejected::class.java) { controller.reconcile(request, admin) }
+        }
+        listOf(-1L, 1L, SourceCatalogReconciliationService.MAX_REQUEST_BYTES + 1L).forEach { length ->
+            val request = bodyRequest(ByteArray(SourceCatalogReconciliationService.MAX_REQUEST_BYTES + 2), length).apply {
+                addHeader("X-Kira-Reconciliation-Confirmation", SourceCatalogReconciliationService.CONFIRMATION)
+            }
+            assertThrows(PayloadTooLargeException::class.java) { controller.reconcile(request, admin) }
+        }
+        verifyNoInteractions(cutover, reconciliation, stepUp)
     }
 
     private fun unreadableRequest(confirmation: String, declaredLength: Long) = object : MockHttpServletRequest("POST", BOOTSTRAP_PATH) {

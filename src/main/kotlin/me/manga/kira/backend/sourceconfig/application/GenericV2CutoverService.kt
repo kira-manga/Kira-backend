@@ -11,6 +11,7 @@ import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogPolicyRejec
 import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogReceipt
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceConfigRepository
+import me.manga.kira.backend.sourceconfig.domain.SourceCatalogReconciliationReceipt
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -44,7 +45,7 @@ class GenericV2CutoverService(
         val problems =
             when (state.phase) {
                 InitialSourceCatalogPhase.PENDING -> if (heads.isEmpty()) emptyList() else listOf("pending catalog contains source heads")
-                InitialSourceCatalogPhase.COMPLETE -> emptyList()
+                InitialSourceCatalogPhase.COMPLETE, InitialSourceCatalogPhase.RECONCILED -> emptyList()
                 InitialSourceCatalogPhase.RECONCILIATION_REQUIRED -> listOf("existing catalog requires separately authorized reconciliation")
             }
         val withheld = heads.filter { it.status == SourceLifecycleStatus.WITHHELD }.mapTo(hashSetOf()) { it.api }
@@ -58,6 +59,7 @@ class GenericV2CutoverService(
             documentRevision = state.receipt?.documentRevision ?: state.latestDocumentRevision,
             phase = state.phase,
             receipt = state.receipt,
+            reconciliationReceipt = state.reconciliationReceipt,
         )
     }
 
@@ -85,6 +87,9 @@ class GenericV2CutoverService(
 
             InitialSourceCatalogPhase.RECONCILIATION_REQUIRED ->
                 throw GenericV2CutoverRejected("existing catalog requires separately authorized reconciliation")
+
+            InitialSourceCatalogPhase.RECONCILED ->
+                throw GenericV2CutoverRejected("reconciled history has no raw initial-bootstrap receipt")
 
             InitialSourceCatalogPhase.PENDING -> Unit
         }
@@ -183,4 +188,5 @@ data class GenericV2CutoverResult(
     val documentRevision: Long?,
     val phase: InitialSourceCatalogPhase,
     val receipt: InitialSourceCatalogReceipt?,
+    val reconciliationReceipt: SourceCatalogReconciliationReceipt? = null,
 )
