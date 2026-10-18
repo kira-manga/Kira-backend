@@ -23,24 +23,85 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Allocate only this job's Gradle home
+        id: gradle_home
+        shell: bash
+        run: |
+          set -euo pipefail
+          GRADLE_USER_HOME="$RUNNER_TEMP/kira-backend-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          mkdir --mode=700 -- "$GRADLE_USER_HOME"
+          printf 'GRADLE_USER_HOME=%s\n' "$GRADLE_USER_HOME" >> "$GITHUB_ENV"
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+        with:
+          cache-read-only: true
+          # Restore into the exclusively allocated empty home, never a shared directory.
+          cache-overwrite-existing: true
       - name: Full Gradle verification
-        run: ./gradlew --no-daemon clean check
+        run: |
+          ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process \
+            clean check
+      - name: Stop only this job's Gradle and in-process compiler
+        id: stop_gradle
+        if: ${{ always() && steps.gradle_home.outcome == 'success' }}
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GRADLE_USER_HOME" = "$RUNNER_TEMP/kira-backend-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          test -O "$GRADLE_USER_HOME" && test ! -L "$GRADLE_USER_HOME"
+          test ! -L "$GRADLE_USER_HOME/daemon"
+          if [[ ! -d "$GRADLE_USER_HOME/daemon" ]]; then
+            echo 'No owned Gradle daemon registry was created'
+            exit 0
+          fi
+          # Use only the installed wrapper distribution; cleanup must never download it.
+          shopt -s nullglob
+          bins=("$GRADLE_USER_HOME"/wrapper/dists/gradle-8.14.5-bin/*/gradle-8.14.5/bin/gradle)
+          test "${#bins[@]}" -eq 1
+          gradle="$(realpath -e -- "${bins[0]}")"
+          [[ "$gradle" == "$GRADLE_USER_HOME/"* ]] && test -f "$gradle" && test -x "$gradle"
+          timeout --kill-after=5s 60s "$gradle" --stop
       - name: Offline image promotion, shared receiver and selected backup contracts
         run: python3 -B -m unittest discover -s scripts/ci -p 'test_*.py' -v
       - name: Upload test and coverage reports
+        id: reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: verification-reports
           path: |
+            build/test-results/**/*.xml
             build/reports/tests
             build/reports/jacoco
             build/reports/detekt
+            build/reports/ktlint
+      - name: Remove only settled, preserved job outputs
+        if: ${{ always() && steps.gradle_home.outcome == 'success' }}
+        timeout-minutes: 2
+        env:
+          STOP_OUTCOME: ${{ steps.stop_gradle.outcome }}
+          REPORTS_OUTCOME: ${{ steps.reports.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(pwd -P)" = "$GITHUB_WORKSPACE"
+          test "$GRADLE_USER_HOME" = "$RUNNER_TEMP/kira-backend-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          test -O "$GRADLE_USER_HOME" && test ! -L "$GRADLE_USER_HOME"
+          if [[ "$STOP_OUTCOME" != success || "$REPORTS_OUTCOME" != success ]]; then
+            echo '::error::Retaining outputs: worker shutdown or evidence preservation failed'
+            exit 1
+          fi
+          for path in build .gradle .kotlin; do
+            test ! -L "$path"
+            tracked="$(git ls-files -- "$path")"
+            test -z "$tracked"
+          done
+          rm -rf -- build .gradle .kotlin "$GRADLE_USER_HOME"
+          test ! -e "$GRADLE_USER_HOME"
 
   supply-chain:
     runs-on: ubuntu-latest
@@ -49,13 +110,48 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+      - name: Allocate only this job's Gradle home
+        id: gradle_home
+        shell: bash
+        run: |
+          set -euo pipefail
+          GRADLE_USER_HOME="$RUNNER_TEMP/kira-backend-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          mkdir --mode=700 -- "$GRADLE_USER_HOME"
+          printf 'GRADLE_USER_HOME=%s\n' "$GRADLE_USER_HOME" >> "$GITHUB_ENV"
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+        with:
+          cache-read-only: true
+          # Restore into the exclusively allocated empty home, never a shared directory.
+          cache-overwrite-existing: true
       - name: Generate SBOM
-        run: ./gradlew --no-daemon cyclonedxBom
+        run: |
+          ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process \
+            cyclonedxBom
+      - name: Stop only this job's Gradle and in-process compiler
+        id: stop_gradle
+        if: ${{ always() && steps.gradle_home.outcome == 'success' }}
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GRADLE_USER_HOME" = "$RUNNER_TEMP/kira-backend-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          test -O "$GRADLE_USER_HOME" && test ! -L "$GRADLE_USER_HOME"
+          test ! -L "$GRADLE_USER_HOME/daemon"
+          if [[ ! -d "$GRADLE_USER_HOME/daemon" ]]; then
+            echo 'No owned Gradle daemon registry was created'
+            exit 0
+          fi
+          # Use only the installed wrapper distribution; cleanup must never download it.
+          shopt -s nullglob
+          bins=("$GRADLE_USER_HOME"/wrapper/dists/gradle-8.14.5-bin/*/gradle-8.14.5/bin/gradle)
+          test "${#bins[@]}" -eq 1
+          gradle="$(realpath -e -- "${bins[0]}")"
+          [[ "$gradle" == "$GRADLE_USER_HOME/"* ]] && test -f "$gradle" && test -x "$gradle"
+          timeout --kill-after=5s 60s "$gradle" --stop
       - name: Fail-closed dependency vulnerability scan
         run: |
           mkdir -p build/reports
@@ -68,22 +164,51 @@ jobs:
         run: |
           gitleaks_version=8.30.1
           gitleaks_sha256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
-          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          work="$(mktemp -d "${RUNNER_TEMP:?}/kira-gitleaks.XXXXXXXX")"
+          trap 'rm -rf -- "$work"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          archive="$work/gitleaks.tar.gz"
           curl --fail --silent --show-error --location \
             "https://github.com/gitleaks/gitleaks/releases/download/v${gitleaks_version}/gitleaks_${gitleaks_version}_linux_x64.tar.gz" \
             --output "$archive"
           echo "$gitleaks_sha256  $archive" | sha256sum --check --strict
-          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP" gitleaks
-          "$RUNNER_TEMP/gitleaks" git --no-banner --redact \
+          tar --extract --gzip --file "$archive" --directory "$work" gitleaks
+          "$work/gitleaks" git --no-banner --redact \
             --report-format json --report-path build/reports/gitleaks.json .
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: reports
         if: always()
         with:
           name: supply-chain-reports
           path: |
             build/reports/cyclonedx.*
+            build/reports/cyclonedx/
             build/reports/osv.json
             build/reports/gitleaks.json
+      - name: Remove only settled, preserved job outputs
+        if: ${{ always() && steps.gradle_home.outcome == 'success' }}
+        timeout-minutes: 2
+        env:
+          STOP_OUTCOME: ${{ steps.stop_gradle.outcome }}
+          REPORTS_OUTCOME: ${{ steps.reports.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(pwd -P)" = "$GITHUB_WORKSPACE"
+          test "$GRADLE_USER_HOME" = "$RUNNER_TEMP/kira-backend-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          test -O "$GRADLE_USER_HOME" && test ! -L "$GRADLE_USER_HOME"
+          if [[ "$STOP_OUTCOME" != success || "$REPORTS_OUTCOME" != success ]]; then
+            echo '::error::Retaining outputs: worker shutdown or evidence preservation failed'
+            exit 1
+          fi
+          for path in build .gradle .kotlin; do
+            test ! -L "$path"
+            tracked="$(git ls-files -- "$path")"
+            test -z "$tracked"
+          done
+          rm -rf -- build .gradle .kotlin "$GRADLE_USER_HOME"
+          test ! -e "$GRADLE_USER_HOME"
 
   observability-rules:
     runs-on: ubuntu-latest
