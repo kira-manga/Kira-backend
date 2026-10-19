@@ -72,6 +72,19 @@ remain independent repositories and builds.
 
 ---
 
+### Owner-authorized Boot 4.0 migration (2026-10-19)
+
+The owner explicitly approved the separate Boot 4 migration to use supported public security fixes.
+This supersedes the former Boot 3.5-only pin, not any security, persistence or release requirement.
+The candidate uses Boot 4.0.8 / Spring Framework 7.0.9 with its coherent Security/Hibernate/Tomcat
+BOM; Kotlin 2.2.21 and serialization 1.9.0 remain aligned with Engine 0.2.6. Jackson 2 stays on the
+official transition module and separately patched 2.x BOM to preserve API and strict-authoring
+semantics; canonical publication still uses the existing kotlinx pipeline, not Jackson.
+Flyway is explicitly included after Boot modularization, with `ddl-auto=validate` unchanged.
+No historical migration, signed golden bytes, authentication policy or validation assertion may be
+rewritten merely to make the upgrade pass. Actual full runtime/security/image verification and the
+existing backup/drain/reconciliation cutover are required; pinned versions alone are not acceptance.
+
 ## 1. Overview & goals
 
 kira-backend is a Spring Boot / Kotlin / PostgreSQL service that is the remote authority for the Kira
@@ -179,7 +192,7 @@ kira-backend/
                               # bundled-full.json (historical 45-source migration input — §7 / §11)
 ```
 
-**Stack pins:** Spring Boot **3.5.x line** (do NOT auto-switch to 4.x just because it is newer — any major upgrade is a deliberate separate change with a full test pass), Kotlin **2.1+** (with `kotlin("plugin.spring")` and `kotlin("plugin.jpa")`), Java **21 toolchain**, kotlinx-serialization-json **1.7+** (+ `kotlin("plugin.serialization")`), springdoc-openapi-starter-webmvc-ui **2.x**, Flyway (`flyway-core` + `flyway-database-postgresql`), PostgreSQL driver, Spring Data JPA, spring-boot-starter-security + **spring-security-oauth2-resource-server + oauth2-jose** (Nimbus — JWT without a third-party lib), spring-boot-starter-validation, **spring-boot-starter-actuator** (health/liveness/readiness — §6), Testcontainers (postgresql + junit-jupiter), spring-security-test.
+**Stack pins:** Spring Boot **4.0.x line** (owner-authorized separate migration on 2026-10-19; full runtime/security verification remains required), Kotlin **2.1+** (with `kotlin("plugin.spring")` and `kotlin("plugin.jpa")`), Java **21 toolchain**, kotlinx-serialization-json **1.7+** (+ `kotlin("plugin.serialization")`), springdoc-openapi-starter-webmvc-ui **3.0.x**, Flyway (`flyway-core` + `flyway-database-postgresql`), PostgreSQL driver, Spring Data JPA, spring-boot-starter-security + **spring-security-oauth2-resource-server + oauth2-jose** (Nimbus — JWT without a third-party lib), spring-boot-starter-validation, **spring-boot-starter-actuator** (health/liveness/readiness — §6), Testcontainers (postgresql + junit-jupiter), spring-security-test.
 
 **Version pinning rule (Phase 1 deliverable):** the ranges above exist only to *select* versions once. During scaffold the implementation agent verifies mutual compatibility, then records the **exact** chosen versions (Gradle wrapper, Spring Boot, Kotlin, kotlinx-serialization, springdoc, Testcontainers, PostgreSQL Docker image tag — e.g. `postgres:17.5-alpine`, optionally by digest — and the Java toolchain version) in `gradle/libs.versions.toml` + README so builds are reproducible. After Phase 1, versions change only as deliberate commits, never by floating ranges.
 

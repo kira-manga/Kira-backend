@@ -21,18 +21,15 @@ springBoot {
 }
 
 // Force the Spring Boot BOM's Kotlin stdlib/reflect to match the compiler version above.
-// Boot 3.5.x's BOM pins an older Kotlin; overriding this BOM property keeps the runtime
-// stdlib aligned with the compiler (PLAN §3: Kotlin 2.1+).
+// Keep runtime alignment explicit for the shared Engine ABI even when the BOM agrees.
 extra["kotlin.version"] = libs.versions.kotlin.get()
 // The shared Engine's generated serializers require its matching runtime, including JVM/core.
 // An explicit JSON root dependency alone does not override Boot's imported serialization BOM.
 extra["kotlin-serialization.version"] = libs.versions.kotlinxSerialization.get()
-extra["jackson-bom.version"] = libs.versions.jackson.get()
+// Boot 4 manages Jackson 3 separately; preserve the supported Jackson 2 API/parser contract.
+extra["jackson-2-bom.version"] = libs.versions.jackson.get()
 extra["commons-lang3.version"] = libs.versions.commonsLang3.get()
 extra["log4j2.version"] = libs.versions.log4j2.get()
-extra["netty.version"] = "4.1.137.Final"
-extra["postgresql.version"] = "42.7.12"
-extra["tomcat.version"] = "10.1.61"
 
 java {
     toolchain {
@@ -61,18 +58,23 @@ repositories {
 
 dependencies {
     // --- Spring Boot starters (versions from the Boot BOM) ---
-    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-security")
-    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server") // pulls spring-security-oauth2-jose (Nimbus)
+    implementation("org.springframework.boot:spring-boot-starter-security-oauth2-resource-server") // pulls spring-security-oauth2-jose (Nimbus)
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("io.micrometer:micrometer-registry-prometheus")
 
-    // --- Migrations ---
-    implementation("org.flywaydb:flyway-core")
+    // --- Migrations (Boot 4 auto-configuration is an explicit module) ---
+    implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.flywaydb:flyway-database-postgresql")
+
+    // --- Supported Jackson 2 transition: preserve existing strict parsers and API DTOs ---
+    implementation("org.springframework.boot:spring-boot-jackson2")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
 
     // --- Kotlin ---
     implementation("org.jetbrains.kotlin:kotlin-reflect")
@@ -87,17 +89,17 @@ dependencies {
     runtimeOnly("org.postgresql:postgresql")
 
     // --- Test ---
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation("org.springframework.security:spring-security-test")
     testImplementation("me.manga.kira.source:source-testkit:0.2.6")
-    testImplementation("org.testcontainers:junit-jupiter")
-    testImplementation("org.testcontainers:postgresql")
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+    testImplementation("org.testcontainers:testcontainers-postgresql")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
     constraints {
         testImplementation(libs.commons.compress) {
-            because("Testcontainers 1.21.4 requests a Commons Compress release with known vulnerabilities")
+            because("retain the verified security floor for test archive handling")
         }
     }
 }

@@ -1,0 +1,85 @@
+name: Backend Boot 4 migration compile
+
+on:
+  push:
+    branches: [remediation/backend-boot4-20261019]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: backend-boot4-migration
+  cancel-in-progress: false
+
+jobs:
+  compile:
+    if: github.repository_id == '1304735394' && github.ref == 'refs/heads/remediation/backend-boot4-20261019'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GRADLE_USER_HOME: ${{ runner.temp }}/kira-boot4-gradle-${{ github.run_id }}-${{ github.run_attempt }}
+      EVIDENCE: ${{ runner.temp }}/kira-boot4-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Resolve locks and compile migrated source (no release)
+        env:
+          KIRA_PACKAGES_USER: ${{ github.actor }}
+          KIRA_PACKAGES_READ_TOKEN: ${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KIRA_PACKAGES_READ_TOKEN"
+          mkdir --mode=700 "$GRADLE_USER_HOME" "$EVIDENCE"
+          printf '%s\n' "$GITHUB_SHA" > "$EVIDENCE/source.txt"
+          ./gradlew --no-daemon --no-parallel --max-workers=2 --no-build-cache --no-configuration-cache \
+            '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' \
+            -Pkotlin.compiler.execution.strategy=in-process dependencies --write-locks compileTestKotlin \
+            2>&1 | tee "$EVIDENCE/gradle.log"
+      - name: Stop owned Gradle and preserve generated locks
+        id: stop
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GRADLE_USER_HOME" = "$RUNNER_TEMP/kira-boot4-gradle-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$EVIDENCE"
+          if [[ -d "$GRADLE_USER_HOME/daemon" ]]; then
+            test -O "$GRADLE_USER_HOME" && test ! -L "$GRADLE_USER_HOME"
+            shopt -s nullglob
+            bins=("$GRADLE_USER_HOME"/wrapper/dists/gradle-8.14.5-bin/*/gradle-8.14.5/bin/gradle)
+            test "${#bins[@]}" -eq 1
+            timeout --kill-after=5s 60s "${bins[0]}" --stop
+          fi
+          cp -- gradle.lockfile "$EVIDENCE/gradle.lockfile"
+          git diff -- gradle.lockfile > "$EVIDENCE/locks.diff"
+          df -h .
+          free -h
+      - name: Preserve compilation evidence
+        id: reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: boot4-migration-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}
+          retention-days: 1
+          if-no-files-found: error
+      - name: Remove only owned disposable outputs
+        if: always() && steps.stop.outcome == 'success' && steps.reports.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(pwd -P)" = "$GITHUB_WORKSPACE"
+          test "$GRADLE_USER_HOME" = "$RUNNER_TEMP/kira-boot4-gradle-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test "$EVIDENCE" = "$RUNNER_TEMP/kira-boot4-evidence-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          for path in build .gradle .kotlin "$GRADLE_USER_HOME" "$EVIDENCE"; do
+            test ! -L "$path"
+          done
+          test -z "$(git ls-files -- build .gradle .kotlin)"
+          rm -rf -- build .gradle .kotlin "$GRADLE_USER_HOME" "$EVIDENCE"

@@ -63,30 +63,31 @@ infrastructure JPA entities, Spring Data repos, port adapters, entity↔domain m
 
 Verified mutually compatible once at scaffold and now **reproducible** — builds resolve exactly these
 versions. After scaffold they change only via deliberate commits, never floating ranges.
-**Spring Boot stays on the 3.5.x line — do NOT auto-switch to 4.x** (a major upgrade is a separate,
-fully-tested change).
+The owner authorized a separate **Spring Boot 4.0.x migration on 2026-10-19**. The pins below
+describe that candidate; full runtime/security checks and the existing production cutover remain
+required before claiming release acceptance. This is not permission to weaken dependency scanning.
 
 | Component | Version | Pinned in |
 |---|---|---|
 | Gradle wrapper | **8.14.5** | `gradle/wrapper/gradle-wrapper.properties` |
 | Java toolchain | **21** (built/tested on Homebrew OpenJDK 21.0.11) | `build.gradle.kts` |
 | Kotlin (jvm/spring/jpa/serialization plugins + stdlib) | **2.2.21** | `gradle/libs.versions.toml` (+ `extra["kotlin.version"]` BOM override in `build.gradle.kts`) |
-| Spring Boot | **3.5.16** | `gradle/libs.versions.toml` |
+| Spring Boot | **4.0.8** | `gradle/libs.versions.toml` |
 | io.spring.dependency-management | **1.1.7** | `gradle/libs.versions.toml` |
 | kotlinx-serialization (JSON/JVM/core/BOM) | **1.9.0** | `gradle/libs.versions.toml` (+ `extra["kotlin-serialization.version"]` BOM override) |
-| springdoc-openapi-starter-webmvc-ui | **2.8.17** | `gradle/libs.versions.toml` |
-| Jackson BOM / Commons Lang / Commons Compress / Log4j security overrides | **2.21.5 / 3.20.0 / 1.28.0 / 2.25.5** | `gradle/libs.versions.toml` + dependency locks |
+| springdoc-openapi-starter-webmvc-ui | **3.0.3** | `gradle/libs.versions.toml` |
+| Jackson BOM / Commons Lang / Commons Compress / Log4j security overrides | **2.21.7 / 3.20.0 / 1.28.0 / 2.25.5** | `gradle/libs.versions.toml` + dependency locks |
 | PostgreSQL Docker image | **`postgres:17.6-alpine`** (digest `sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94`) | `docker-compose.yml`, test base class |
 
-**BOM-managed** (versions supplied by the Spring Boot 3.5.16 dependency BOM — recorded for
+**BOM-managed** (versions supplied by the Spring Boot 4.0.8 dependency BOM — recorded for
 provenance, not separately pinned):
 
 | Component | Resolved version |
 |---|---|
-| Testcontainers (postgresql, junit-jupiter, core) | **1.21.4** |
-| PostgreSQL JDBC driver | **42.7.11** |
-| Flyway (flyway-core, flyway-database-postgresql) | **11.7.2** |
-| spring-security-oauth2-jose (Nimbus, via oauth2-resource-server) | **6.5.11** |
+| Testcontainers (postgresql, junit-jupiter, core) | **2.0.5** |
+| PostgreSQL JDBC driver | **42.7.13** |
+| Flyway (flyway-core, flyway-database-postgresql) | **11.14.1** |
+| spring-security-oauth2-jose (Nimbus, via oauth2-resource-server) | **7.0.7** |
 
 > Note: `./gradlew --version` reports "Kotlin: 2.0.21" — that is the Kotlin runtime *embedded in
 > Gradle 8.14.5* for `.gradle.kts` script compilation, **not** the project's Kotlin. Project sources
@@ -97,6 +98,13 @@ pinning only the multiplatform JSON root leaves Boot's older JVM/core runtime se
 and ktlint keep their isolated locked Kotlin/serialization versions. Runtime changes still require
 ordinary CI dependency-lock resolution and the existing canonical-byte golden tests; configured
 versions alone are not release acceptance.
+
+Jackson 2 is retained through Boot 4's official transition module and its separate
+`jackson-2-bom.version` override. The MVC converter is explicitly selected as Jackson 2 so strict
+parsers, existing DTOs and error rendering retain their contract; Jackson 3's managed BOM is not
+replaced with a 2.x BOM. Flyway is an explicit starter after Boot's module split. Tomcat 11,
+Spring Framework 7, Security 7, Hibernate 7 and Testcontainers 2 follow the coherent Boot 4.0 BOM.
+Existing migration files and signed canonical golden bytes must remain unchanged.
 
 ## Quick start
 

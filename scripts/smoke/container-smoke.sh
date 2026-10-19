@@ -15,6 +15,7 @@ media_volume="kira-release-smoke-media-$suffix"
 smoke_temp_root=${KIRA_SMOKE_TEMP_ROOT:-"$PWD/build/tmp"}
 postgres_image="postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
 failure_stage=initialization
+printf 'KIRA_SMOKE_PHASE:initialization\n'
 mkdir -p "$smoke_temp_root"
 temporary_directory=$(mktemp -d "$smoke_temp_root/kira-release-smoke.XXXXXX")
 
@@ -58,9 +59,12 @@ report_failure() {
 trap 'report_failure "$?" "$LINENO"' ERR
 
 failure_stage="ephemeral TLS and signing material generation"
+printf 'KIRA_SMOKE_PHASE:tls-material\n'
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
   -keyout "$temporary_directory/ca.key" -out "$temporary_directory/ca.crt" \
   -subj "/CN=Kira release smoke CA" >/dev/null 2>&1
+# The parent uses umask077; only this public trust certificate must be readable by the image UID.
+chmod 0644 "$temporary_directory/ca.crt"
 openssl req -newkey rsa:2048 -nodes \
   -keyout "$temporary_directory/server.key" -out "$temporary_directory/server.csr" \
   -subj "/CN=$database" >/dev/null 2>&1
@@ -79,6 +83,7 @@ database_password=$(openssl rand -hex 24)
 jdbc_url="jdbc:postgresql://$database:5432/kira?sslmode=verify-full&sslrootcert=/run/kira-smoke/ca.crt"
 
 failure_stage="disposable PostgreSQL startup"
+printf 'KIRA_SMOKE_PHASE:postgres-startup\n'
 docker network create "$network" >/dev/null
 docker run --detach --name "$database" --network "$network" \
   --env POSTGRES_DB=kira --env POSTGRES_USER=kira --env "POSTGRES_PASSWORD=$database_password" \
@@ -107,6 +112,7 @@ if [[ $database_ready != true ]]; then
 fi
 
 failure_stage="database migration"
+printf 'KIRA_SMOKE_PHASE:database-migration\n'
 docker run --rm --network "$network" --entrypoint java \
   --volume "$temporary_directory/ca.crt:/run/kira-smoke/ca.crt:ro" \
   --env "KIRA_MIGRATION_DB_URL=$jdbc_url" --env KIRA_MIGRATION_DB_USERNAME=kira \
@@ -116,6 +122,7 @@ docker run --rm --network "$network" --entrypoint java \
   > "$temporary_directory/migration.log" 2>&1
 
 failure_stage="production application startup"
+printf 'KIRA_SMOKE_PHASE:application-startup\n'
 image_user=$(docker image inspect --format '{{.Config.User}}' "$image")
 if [[ ! $image_user =~ ^([0-9]+):([0-9]+)$ ]]; then
   echo "production image must declare a numeric uid:gid" >&2
@@ -153,6 +160,7 @@ docker run --detach --name "$application" --network "$network" \
   "$image" >/dev/null
 
 failure_stage="readiness, liveness, and metrics probes"
+printf 'KIRA_SMOKE_PHASE:health-probes\n'
 for _ in $(seq 1 60); do
   if docker exec "$application" wget -q -O /dev/null http://127.0.0.1:9090/actuator/health/readiness; then
     docker exec "$application" wget -q -O /dev/null http://127.0.0.1:9090/actuator/health/liveness

@@ -2,8 +2,8 @@ package me.manga.kira.backend.observability
 
 import me.manga.kira.backend.config.KiraCompletionProperties
 import me.manga.kira.backend.config.KiraSecurityProperties
-import org.springframework.boot.actuate.health.Health
-import org.springframework.boot.actuate.health.HealthIndicator
+import org.springframework.boot.health.contributor.Health
+import org.springframework.boot.health.contributor.HealthIndicator
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Component
 

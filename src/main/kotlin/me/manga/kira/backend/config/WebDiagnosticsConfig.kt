@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import me.manga.kira.backend.common.web.RequestBodySizeLimitFilter
 import me.manga.kira.backend.common.web.RequestDiagnosticsFilter
 import me.manga.kira.backend.security.AuthenticatedMdcFilter
-import org.springframework.boot.autoconfigure.security.SecurityProperties
+import org.springframework.boot.security.autoconfigure.SecurityProperties
 import org.springframework.boot.web.servlet.FilterRegistrationBean
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration

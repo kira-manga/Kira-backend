@@ -9,15 +9,14 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.boot.autoconfigure.AutoConfigurations
 import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration
-import org.springframework.boot.autoconfigure.web.ServerProperties
-import org.springframework.boot.autoconfigure.web.embedded.EmbeddedWebServerFactoryCustomizerAutoConfiguration
-import org.springframework.boot.autoconfigure.web.servlet.ServletWebServerFactoryAutoConfiguration
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
-import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory
+import org.springframework.boot.tomcat.autoconfigure.servlet.TomcatServletWebServerAutoConfiguration
+import org.springframework.boot.tomcat.servlet.TomcatServletWebServerFactory
 import org.springframework.boot.web.server.WebServer
+import org.springframework.boot.web.server.autoconfigure.ServerProperties
+import org.springframework.boot.web.server.servlet.context.AnnotationConfigServletWebServerApplicationContext
 import org.springframework.boot.web.servlet.ServletContextInitializer
-import org.springframework.boot.web.servlet.context.AnnotationConfigServletWebServerApplicationContext
 import org.springframework.core.env.MapPropertySource
 import org.springframework.core.env.StandardEnvironment
 import org.springframework.core.env.SystemEnvironmentPropertySource
@@ -113,8 +112,7 @@ class Server3IngressBindingTest {
             .withConfiguration(
                 AutoConfigurations.of(
                     ConfigurationPropertiesAutoConfiguration::class.java,
-                    ServletWebServerFactoryAutoConfiguration::class.java,
-                    EmbeddedWebServerFactoryCustomizerAutoConfiguration::class.java,
+                    TomcatServletWebServerAutoConfiguration::class.java,
                 ),
             )
             .withUserConfiguration(Server3IngressConfiguration::class.java)
