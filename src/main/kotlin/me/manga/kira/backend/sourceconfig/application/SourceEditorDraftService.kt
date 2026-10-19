@@ -2,7 +2,9 @@ package me.manga.kira.backend.sourceconfig.application
 
 import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.audit.domain.AuditAction
+import me.manga.kira.backend.common.ApiFieldError
 import me.manga.kira.backend.common.exception.PayloadTooLargeException
+import me.manga.kira.backend.common.exception.ValidationFailedException
 import me.manga.kira.backend.sourceconfig.domain.NewSourceEditorDraft
 import me.manga.kira.backend.sourceconfig.domain.RevisionRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceConfigRepository
@@ -98,6 +100,9 @@ class SourceEditorDraftService(
         val draft = get(api)
         if (draft.version != expectedVersion) throw SourceDraftVersionConflictException()
         val created = sourceAdmin.createRevision(api, draft.contentJson, actorId)
+        if (!created.validation.isValid) {
+            throw ValidationFailedException(created.validation.errors.map { ApiFieldError(it.code, it.path, it.message) })
+        }
         val revision = sourceAdmin.getRevision(api, created.revisionNumber).revision
         val updated =
             drafts.updateBaseline(
