@@ -500,6 +500,25 @@ class ProvenanceTests(unittest.TestCase):
                                  'Image produce boundary: smoke\nImage smoke last phase: ' + phase + '\n')
                 self.assertEqual(list(failed.iterdir()), [])
 
+    def test_server3_pins_both_ingress_members_without_expanding_trust(self):
+        compose = (ROOT / 'deploy/server3/compose.yaml').read_text()
+        backend = compose.split('\n  backend:\n', 1)[1].split('\n  web:\n', 1)[0]
+        web = compose.split('\n  web:\n', 1)[1].split('\n  admin:\n', 1)[0]
+        admin = compose.split('\n  admin:\n', 1)[1].split('\nnetworks:\n', 1)[0]
+        for service, member in ((backend, 'BACKEND'), (admin, 'ADMIN')):
+            key = 'KIRA_SERVER3_' + member + '_ADDRESS'
+            networks = service.split('    networks:\n', 1)[1].split('    depends_on:\n', 1)[0]
+            self.assertEqual(networks, ('      database: {}\n      proxy: {}\n' if member == 'BACKEND' else '')
+                             + '      admin-ingress:\n        ipv4_address: ${' + key + ':?' + key + ' is required}\n')
+        self.assertIn('    networks: [proxy]\n', web)
+        self.assertNotIn('admin-ingress', web)
+        self.assertNotIn('KIRA_SERVER3_BACKEND_ADDRESS', backend.split('    ports:\n', 1)[0])
+        self.assertIn('      KIRA_SERVER3_ADMIN_ADDRESS: ${KIRA_SERVER3_ADMIN_ADDRESS:?', backend)
+        self.assertIn('      KIRA_SERVER3_HOST_PEER: ${KIRA_SERVER3_HOST_PEER:?', backend)
+        example = (ROOT / 'deploy/server3/ingress.env.example').read_text().splitlines()
+        self.assertEqual([line for line in example if line.startswith('KIRA_SERVER3_BACKEND_ADDRESS=')],
+                         ['KIRA_SERVER3_BACKEND_ADDRESS='])
+
     def test_workflow_has_no_deployment_build_and_keeps_all_gates(self):
         producer = (ROOT / release.CI).read_text(); consumer = (ROOT / release.DEPLOY).read_text()
         for forbidden in ('docker/', 'docker save', 'build-push', 'packages:', 'KIRA_PACKAGES', 'head_sha }}\n          persist'):

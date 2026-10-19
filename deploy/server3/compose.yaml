@@ -76,7 +76,11 @@ services:
     volumes:
       - ./tls/ca.crt:/run/kira-db-ca/ca.crt:ro
       - tutorial-media:/var/lib/kira/tutorial-media
-    networks: [database, proxy, admin-ingress]
+    networks:
+      database: {}
+      proxy: {}
+      admin-ingress:
+        ipv4_address: ${KIRA_SERVER3_BACKEND_ADDRESS:?KIRA_SERVER3_BACKEND_ADDRESS is required}
     depends_on:
       postgres:
         condition: service_healthy

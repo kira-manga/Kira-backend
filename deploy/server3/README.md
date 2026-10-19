@@ -237,7 +237,11 @@ Copy the example to `/opt/kira/ingress.env` and provision **all** values; no add
 | `KIRA_SERVER3_ADMIN_SUBNET` | Collision-free IPv4 CIDR for the dedicated `kira-admin-ingress` bridge. |
 | `KIRA_SERVER3_ADMIN_GATEWAY` | Provisioned gateway within that subnet. |
 | `KIRA_SERVER3_ADMIN_ADDRESS` | Available, pinned Admin IPv4 address within the subnet, distinct from the gateway. |
+| `KIRA_SERVER3_BACKEND_ADDRESS` | Available, pinned Backend IPv4 address within the same subnet, distinct from both Admin and the gateway. |
 | `KIRA_SERVER3_HOST_PEER` | Exact numeric peer observed by Backend for host Nginx's loopback connection, distinct from the Admin address; never a guessed gateway or a CIDR. |
+
+Both bridge members require explicit addresses: Backend starts before Admin and must not dynamically
+claim Admin's reserved address. The Backend address is topology only, not an additional trusted peer.
 
 The deployment helper passes `images.env` then `ingress.env` to Compose without sourcing either
 file as shell code. Compose also injects both peer variables explicitly into Backend's environment;
