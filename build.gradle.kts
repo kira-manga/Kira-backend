@@ -74,7 +74,7 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
     implementation(libs.kotlinx.serialization.json)
-    implementation("me.manga.kira.source:source-engine:0.2.1")
+    implementation("me.manga.kira.source:source-engine:0.2.2")
 
     // --- API docs ---
     implementation(libs.springdoc.openapi.starter.webmvc.ui)
