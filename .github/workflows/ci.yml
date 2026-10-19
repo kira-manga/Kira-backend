@@ -42,7 +42,7 @@ jobs:
           cache-overwrite-existing: true
       - name: Full Gradle verification
         run: |
-          ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process \
+          ./gradlew --no-daemon --continue -Pkotlin.compiler.execution.strategy=in-process \
             clean check
       - name: Stop only this job's Gradle and in-process compiler
         id: stop_gradle

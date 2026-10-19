@@ -117,9 +117,18 @@ class ClientCatalogStartupTest {
     }
 
     private fun observeTransactions() {
-        doAnswer { assertTransaction(); fixture.pointer }.`when`(fixture.documents).latestPointer()
-        doAnswer { assertTransaction(); fixture.documentRows[it.getArgument<Long>(0)] }.`when`(fixture.documents).findByRevision(anyLong())
-        doAnswer { assertTransaction(); fixture.manifestRows[it.getArgument<Long>(0)] }.`when`(fixture.catalogs).findByRevision(anyLong())
+        doAnswer {
+            assertTransaction()
+            fixture.pointer
+        }.`when`(fixture.documents).latestPointer()
+        doAnswer {
+            assertTransaction()
+            fixture.documentRows[it.getArgument<Long>(0)]
+        }.`when`(fixture.documents).findByRevision(anyLong())
+        doAnswer {
+            assertTransaction()
+            fixture.manifestRows[it.getArgument<Long>(0)]
+        }.`when`(fixture.catalogs).findByRevision(anyLong())
     }
 
     private fun assertTransaction() {

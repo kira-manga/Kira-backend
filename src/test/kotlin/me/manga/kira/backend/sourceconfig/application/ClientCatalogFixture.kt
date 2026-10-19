@@ -98,7 +98,13 @@ internal class ClientCatalogFixture {
 
     private fun manifest(document: PublishedDocument, previous: PublishedSourceCatalog?): PublishedSourceCatalog {
         val entry = SourceCatalogEntry(
-            source.api, 1, artifact.checksum, 0, "active", "generic", KEY_ID,
+            source.api,
+            1,
+            artifact.checksum,
+            0,
+            "active",
+            "generic",
+            KEY_ID,
             sign(SourceCatalogSignatureCodec.sourcePayload(source.api, 1, artifact.checksum, sourceJson)),
         )
         val body = CanonicalJson.canonicalize(
@@ -122,7 +128,12 @@ internal class ClientCatalogFixture {
             signingKeyId = KEY_ID,
             signatureBase64 = sign(
                 SourceCatalogSignatureCodec.manifestPayload(
-                    document.documentRevision, previous?.catalogRevision, previous?.checksum, checksum, document.createdAt, body,
+                    document.documentRevision,
+                    previous?.catalogRevision,
+                    previous?.checksum,
+                    checksum,
+                    document.createdAt,
+                    body,
                 ),
             ),
             previousCatalogRevision = previous?.catalogRevision,

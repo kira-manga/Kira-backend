@@ -161,18 +161,20 @@ class RedisCompletionAdmissionPolicyIT : CompletionAdmissionPolicyContract() {
             val start = CountDownLatch(1)
             try {
                 val attempts = (0 until 16).map { index ->
-                    pool.submit(Callable {
-                        ready.countDown()
-                        assertTrue(start.await(3, TimeUnit.SECONDS))
-                        val admission = if (index % 2 == 0) test.first else test.second
-                        try {
-                            admission.acquire(USER).close()
-                            true
-                        } catch (failure: TooManyRequestsException) {
-                            assertEquals("COMPLETION_USER_RATE_LIMIT", failure.code)
-                            false
-                        }
-                    })
+                    pool.submit(
+                        Callable {
+                            ready.countDown()
+                            assertTrue(start.await(3, TimeUnit.SECONDS))
+                            val admission = if (index % 2 == 0) test.first else test.second
+                            try {
+                                admission.acquire(USER).close()
+                                true
+                            } catch (failure: TooManyRequestsException) {
+                                assertEquals("COMPLETION_USER_RATE_LIMIT", failure.code)
+                                false
+                            }
+                        },
+                    )
                 }
                 assertTrue(ready.await(3, TimeUnit.SECONDS))
                 start.countDown()

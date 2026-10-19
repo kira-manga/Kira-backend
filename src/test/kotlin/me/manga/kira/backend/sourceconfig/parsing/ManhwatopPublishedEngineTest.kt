@@ -1,7 +1,5 @@
 package me.manga.kira.backend.sourceconfig.parsing
 
-import java.nio.file.Files
-import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
 import me.manga.kira.source.contracts.SourceChapterRef
 import me.manga.kira.source.contracts.SourceEngineError
@@ -20,6 +18,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.nio.file.Files
+import java.nio.file.Path
 import me.manga.kira.source.contracts.SourceConfigParser as SharedSourceConfigParser
 
 /**

@@ -1,12 +1,12 @@
 package me.manga.kira.backend.sourceconfig.parsing
 
-import java.nio.file.Files
-import java.nio.file.Path
 import me.manga.kira.backend.sourceconfig.validation.SourceConfigValidator
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.nio.file.Files
+import java.nio.file.Path
 
 /** Authoring/serialization safety, not provider operations or publication acceptance. */
 class AuthoredSourceConfigTest {
