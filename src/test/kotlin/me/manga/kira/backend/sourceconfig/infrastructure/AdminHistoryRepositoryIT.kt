@@ -11,6 +11,7 @@ import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
 import me.manga.kira.backend.sourceconfig.domain.SourceRevisionSummary
 import me.manga.kira.backend.user.domain.Role
 import org.hibernate.SessionFactory
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -36,6 +37,13 @@ class AdminHistoryRepositoryIT : AbstractAdminSourceIT() {
 
     @Autowired
     private lateinit var entityManagerFactory: EntityManagerFactory
+
+    @AfterEach
+    fun removeSyntheticHistory() {
+        // Direct history fixtures intentionally bypass publication and its sequence. Remove them
+        // before another cached context starts and checks the shared database's revision floor.
+        resetState()
+    }
 
     @Test
     fun `growing TOAST histories keep query columns row consumption and deep seek bounded`() {
