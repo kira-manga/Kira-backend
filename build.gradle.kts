@@ -150,6 +150,7 @@ configurations.matching { it.name in kotlinAnalysisConfigurations }.configureEac
                 useVersion(toolKotlinVersion)
                 because("preserve the isolated static-analysis Kotlin runtime")
             }
+
             requested.group == "org.jetbrains.kotlinx" && requested.name.startsWith("kotlinx-serialization-") -> {
                 useVersion("1.6.3")
                 because("preserve the isolated static-analysis serialization runtime")

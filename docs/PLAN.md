@@ -454,7 +454,7 @@ Index: `idx_revisions_source (source_config_id, revision_number DESC)`.
 | valid | boolean | NOT NULL |
 | errors | jsonb | NOT NULL default `'[]'` — array of `{code, path, message}` |
 | warnings | jsonb | NOT NULL default `'[]'` — array of `{code, path, message}` (advisory, §8 rule 33 — never blocks publish) |
-| rules_version | varchar(32) | NOT NULL (current `"schema1/rules-2026.09-hdr"` — identifies the rules used for this stored finding) |
+| rules_version | varchar(32) | NOT NULL (current `"schema1/rules-2026.10-decl"` — identifies the rules used for this stored finding) |
 | validated_at | timestamptz | NOT NULL |
 
 Index: `idx_validation_revision (revision_id, validated_at DESC)`. (History kept; publish always re-validates live.)
