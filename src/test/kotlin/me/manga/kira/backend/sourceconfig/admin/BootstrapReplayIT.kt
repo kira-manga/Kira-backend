@@ -64,7 +64,7 @@ class BootstrapReplayIT : AbstractAdminSourceIT() {
         assertEquals("disabled", sourceStatus("Mangamello"))
         assertTrue(requireNotNull(latestPointer()) > origin.documentRevision)
 
-        val retryActor = users.create("bootstrap-retry-${UUID.randomUUID()}@test.local", passwordEncoder.encode(ADMIN_PASSWORD), Role.ADMIN)
+        val retryActor = users.create("bootstrap-retry-${UUID.randomUUID()}@test.local", checkNotNull(passwordEncoder.encode(ADMIN_PASSWORD)), Role.ADMIN)
         val retryToken = jwtService.issue(retryActor).value
         assertNotEquals(admin.id, retryActor.id)
         val evolved = publicState()

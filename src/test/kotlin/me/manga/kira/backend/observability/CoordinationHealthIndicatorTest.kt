@@ -5,7 +5,7 @@ import me.manga.kira.backend.config.KiraSecurityProperties
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
-import org.springframework.boot.actuate.health.Status
+import org.springframework.boot.health.contributor.Status
 import org.springframework.data.redis.core.StringRedisTemplate
 
 class CoordinationHealthIndicatorTest {

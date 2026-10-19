@@ -1,6 +1,7 @@
 package me.manga.kira.backend.sourceconfig.validation
 
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
+import me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidator
 import me.manga.kira.backend.sourceconfig.domain.model.FilterConditionSpec
 import me.manga.kira.backend.sourceconfig.domain.model.FilterDefinition
 import me.manga.kira.backend.sourceconfig.domain.model.FilterRequestSpec
@@ -11,7 +12,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class SourceConfigValidatorComplexityTest {
-    private val validator = SourceConfigValidator()
+    private val validator = SourceConfigValidator(declarations = SharedSourceDeclarationValidator())
 
     @Test
     fun `oversized documents fail before semantic traversal`() {

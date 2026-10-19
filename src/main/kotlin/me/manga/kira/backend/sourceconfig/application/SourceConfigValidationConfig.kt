@@ -19,13 +19,14 @@ class SourceConfigValidationConfig {
 
     @Bean
     fun sourceConfigValidator(properties: KiraValidationProperties): SourceConfigValidator = SourceConfigValidator(
+        declarations = SharedSourceDeclarationValidator(),
         strategies = ServerStrategyCatalog(),
         iconCatalog = PackagedIconCatalog(),
         publicHeaderPlaceholderValues = properties.publicHeaderPlaceholderValues.toSet(),
     )
 
     companion object {
-        /** Lets a stored "valid" be recognized as stale after a rule change (PLAN §5 `rules_version`). */
-        const val RULES_VERSION = "schema1/rules-2026.09-hdr"
+        /** Identifies changed rules for stored findings; must fit the existing rules_version varchar(32). */
+        const val RULES_VERSION = "schema1/rules-2026.10-decl"
     }
 }

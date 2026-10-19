@@ -39,13 +39,7 @@ object EndpointRules {
         // Rule 14 — per-endpoint shape for every declared verb.
         for ((verb, endpoint) in endpoints) {
             checkEndpoint(verb, endpoint, "$base.endpoints[$verb]", findings)
-            if (endpoint.format == "dilar-ecies-v16" && (
-                    verb != "pages" || endpoint.method.lowercase() !in setOf("", "get") ||
-                        endpoint.url != "{baseUrl}/api/chapters/{chapterId}" || source.baseUrl != "https://dilar.tube" ||
-                        source.usesCapturedHeaders || source.headers.isNotEmpty() ||
-                        endpoint.formBody.isNotEmpty() || endpoint.jsonBody.isNotEmpty()
-                )
-            ) {
+            if (endpoint.format == "dilar-ecies-v16" && !isValidEncryptedReader(source, verb, endpoint)) {
                 findings.error(
                     ValidationCodes.ENDPOINT_ENCRYPTED_READER_INVALID,
                     "$base.endpoints[$verb]",
@@ -53,6 +47,15 @@ object EndpointRules {
                 )
             }
         }
+    }
+
+    private fun isValidEncryptedReader(source: SourceConfig, verb: String, endpoint: EndpointSpec): Boolean {
+        val compiledEndpoint = verb == "pages" &&
+            endpoint.url == "{baseUrl}/api/chapters/{chapterId}" && source.baseUrl == "https://dilar.tube"
+        val readOnly = endpoint.method.lowercase() in setOf("", "get") &&
+            endpoint.formBody.isEmpty() && endpoint.jsonBody.isEmpty()
+        val headerFree = !source.usesCapturedHeaders && source.headers.isEmpty()
+        return compiledEndpoint && readOnly && headerFree
     }
 
     private fun requireVerb(endpoints: Map<String, EndpointSpec>, verb: String, code: String, base: String, findings: Findings) {

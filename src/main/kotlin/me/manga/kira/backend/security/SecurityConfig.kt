@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.env.Environment
 import org.springframework.http.HttpMethod
+import org.springframework.security.authorization.AuthorizationManager
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
@@ -24,6 +25,7 @@ import org.springframework.security.oauth2.jwt.JwtIssuerValidator
 import org.springframework.security.oauth2.jwt.JwtTimestampValidator
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
 import org.springframework.security.web.SecurityFilterChain
+import org.springframework.security.web.access.intercept.RequestAuthorizationContext
 import org.springframework.web.cors.CorsConfiguration
 import org.springframework.web.cors.CorsConfigurationSource
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource
@@ -127,7 +129,7 @@ class SecurityConfig(private val environment: Environment) {
                 authorize("/api/v1/admin/**", hasRole("ADMIN"))
 
                 // OpenAPI: open in dev, ADMIN-only otherwise (§6 matrix, profile-gated).
-                val swaggerAccess = if (devProfile) permitAll else hasRole("ADMIN")
+                val swaggerAccess: AuthorizationManager<in RequestAuthorizationContext> = if (devProfile) permitAll else hasRole("ADMIN")
                 authorize("/swagger-ui.html", swaggerAccess)
                 authorize("/swagger-ui/**", swaggerAccess)
                 authorize("/v3/api-docs/**", swaggerAccess)

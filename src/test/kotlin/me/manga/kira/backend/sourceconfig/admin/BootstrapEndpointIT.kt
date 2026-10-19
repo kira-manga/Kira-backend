@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.ObjectNode
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
 import me.manga.kira.backend.sourceconfig.application.GenericV2CutoverService
+import me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidator
 import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogPhase
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfig
@@ -35,7 +36,7 @@ class BootstrapEndpointIT : AbstractAdminSourceIT() {
     @Test
     fun `anonymous and USER cannot bootstrap and ADMIN still needs exact confirmation`() {
         val raw = approvedBootstrapPayload()
-        val user = users.create("bootstrap-user-${UUID.randomUUID()}@test.local", passwordEncoder.encode(ADMIN_PASSWORD), Role.USER)
+        val user = users.create("bootstrap-user-${UUID.randomUUID()}@test.local", checkNotNull(passwordEncoder.encode(ADMIN_PASSWORD)), Role.USER)
         val userToken = jwtService.issue(user).value
         val before = publicState()
         val mutationsBefore = jdbcTemplate.bootstrapMutationRows()
@@ -141,7 +142,10 @@ class BootstrapEndpointIT : AbstractAdminSourceIT() {
         assertNotEquals(original, changed, "the negative must change source content, not just serialization")
         val candidate = raw.copy(sources = raw.sources.map { if (it.api == api) changed else it })
         assertEquals(raw.sources.map { it.api }, candidate.sources.map { it.api })
-        assertTrue(SourceConfigValidator().validate(candidate).isValid, "valid content drift must reach the initial reference policy")
+        assertTrue(
+            SourceConfigValidator(declarations = SharedSourceDeclarationValidator()).validate(candidate).isValid,
+            "valid content drift must reach the initial reference policy",
+        )
         val before = publicState()
         val mutationsBefore = jdbcTemplate.bootstrapMutationRows()
         assertEquals(InitialSourceCatalogPhase.PENDING, documents.initialSourceCatalogState().phase)

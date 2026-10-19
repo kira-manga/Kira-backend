@@ -63,7 +63,7 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
     fun `explicit admission preserves pre-v2 history disabled heads drafts and replay after evolution`() {
         val raw = heldHistory(evolved = true)
         val oldActor = admin.id
-        admin = users.create("approver-${UUID.randomUUID()}@test.local", passwordEncoder.encode(ADMIN_PASSWORD), Role.ADMIN)
+        admin = users.create("approver-${UUID.randomUUID()}@test.local", checkNotNull(passwordEncoder.encode(ADMIN_PASSWORD)), Role.ADMIN)
         adminToken = jwtService.issue(admin).value
         val retained = retainedRows()
         val oldAudits = rows("SELECT to_jsonb(a)::text FROM audit_log a ORDER BY id")
@@ -141,7 +141,7 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
     @Test
     fun `real ADMIN and a fresh one use step up are required including exact replay`() {
         val raw = heldHistory()
-        val user = users.create("reader-${UUID.randomUUID()}@test.local", passwordEncoder.encode(ADMIN_PASSWORD), Role.USER)
+        val user = users.create("reader-${UUID.randomUUID()}@test.local", checkNotNull(passwordEncoder.encode(ADMIN_PASSWORD)), Role.USER)
         val proof = issueStepUp()
         val retained = retainedRows()
         request(raw, proof, jwtService.issue(user).value).andExpect { status { isForbidden() } }
@@ -172,7 +172,7 @@ class SourceCatalogReconciliationIT : AbstractAdminSourceIT() {
         val pair = checkNotNull(catalogs.findByRevision(latest))
         val member = catalogs.findMembers(latest, 1).single()
         val document = checkNotNull(documents.findByRevision(101))
-        val otherActor = users.create("other-${UUID.randomUUID()}@test.local", passwordEncoder.encode(ADMIN_PASSWORD), Role.ADMIN)
+        val otherActor = users.create("other-${UUID.randomUUID()}@test.local", checkNotNull(passwordEncoder.encode(ADMIN_PASSWORD)), Role.ADMIN)
         val badLink = checkNotNull(
             signer.sign(
                 DocumentSigningInput(

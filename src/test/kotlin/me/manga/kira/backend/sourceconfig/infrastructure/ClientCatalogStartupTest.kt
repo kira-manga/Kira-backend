@@ -24,6 +24,7 @@ import org.mockito.Mockito.inOrder
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verifyNoInteractions
 import org.springframework.aop.support.AopUtils
+import org.springframework.boot.DefaultApplicationArguments
 import org.springframework.boot.LazyInitializationBeanFactoryPostProcessor
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
@@ -54,7 +55,7 @@ class ClientCatalogStartupTest {
             val query = context.getBean(ClientCatalogQueryService::class.java)
             assertTrue(AopUtils.isAopProxy(query))
             // ContextRunner does not invoke ApplicationRunner automatically; use the real boot caller.
-            context.getBean(StartupConsistencyRunner::class.java).run(null)
+            context.getBean(StartupConsistencyRunner::class.java).run(DefaultApplicationArguments())
             inOrder(floor, state, fixture.documents).apply {
                 verify(floor).validate()
                 verify(state).validate()
@@ -78,7 +79,7 @@ class ClientCatalogStartupTest {
             val startup = context.getBean(StartupConsistencyRunner::class.java)
             // Existing signer lifecycle initialization is outside the client startup/read interaction assertion.
             clearInvocations(fixture.documents, fixture.catalogs, fixture.signer)
-            startup.run(null)
+            startup.run(DefaultApplicationArguments())
             inOrder(floor, state).apply {
                 verify(floor).validate()
                 verify(state).validate()
@@ -87,7 +88,7 @@ class ClientCatalogStartupTest {
             clearInvocations(floor, state)
             val refusal = IllegalStateException("synthetic existing floor refusal")
             doThrow(refusal).`when`(floor).validate()
-            assertSame(refusal, assertThrows(IllegalStateException::class.java) { startup.run(null) })
+            assertSame(refusal, assertThrows(IllegalStateException::class.java) { startup.run(DefaultApplicationArguments()) })
             verifyNoInteractions(state, fixture.documents, fixture.catalogs, fixture.signer)
         }
     }
@@ -108,7 +109,7 @@ class ClientCatalogStartupTest {
         context(properties()).run { context ->
             assertNull(context.startupFailure)
             val error = assertThrows(ServiceUnavailableException::class.java) {
-                context.getBean(StartupConsistencyRunner::class.java).run(null)
+                context.getBean(StartupConsistencyRunner::class.java).run(DefaultApplicationArguments())
             }
             assertEquals("CLIENT_CATALOG_UNAVAILABLE", error.code)
             assertNull(error.cause)
@@ -117,9 +118,18 @@ class ClientCatalogStartupTest {
     }
 
     private fun observeTransactions() {
-        doAnswer { assertTransaction(); fixture.pointer }.`when`(fixture.documents).latestPointer()
-        doAnswer { assertTransaction(); fixture.documentRows[it.getArgument<Long>(0)] }.`when`(fixture.documents).findByRevision(anyLong())
-        doAnswer { assertTransaction(); fixture.manifestRows[it.getArgument<Long>(0)] }.`when`(fixture.catalogs).findByRevision(anyLong())
+        doAnswer {
+            assertTransaction()
+            fixture.pointer
+        }.`when`(fixture.documents).latestPointer()
+        doAnswer {
+            assertTransaction()
+            fixture.documentRows[it.getArgument<Long>(0)]
+        }.`when`(fixture.documents).findByRevision(anyLong())
+        doAnswer {
+            assertTransaction()
+            fixture.manifestRows[it.getArgument<Long>(0)]
+        }.`when`(fixture.catalogs).findByRevision(anyLong())
     }
 
     private fun assertTransaction() {

@@ -59,7 +59,7 @@ class FlywayMigrationIT : AbstractIntegrationTest() {
 
     @Test
     fun `fresh schema defaults credential version to zero and rejects negative and null versions`() {
-        val hash = PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("migration credential fixture password")
+        val hash = checkNotNull(PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("migration credential fixture password"))
         val defaultVersion = jdbcTemplate.queryForObject(
             "INSERT INTO users (email, password_hash, role) VALUES (?, ?, 'USER') RETURNING credential_version",
             Long::class.java,

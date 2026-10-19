@@ -39,10 +39,10 @@ class CredentialVerifierTest {
     private class RecordingPasswordEncoder : PasswordEncoder {
         val verifiedHashes = mutableListOf<String>()
 
-        override fun encode(rawPassword: CharSequence): String = "decoy-hash"
+        override fun encode(rawPassword: CharSequence?): String = "decoy-hash"
 
-        override fun matches(rawPassword: CharSequence, encodedPassword: String): Boolean {
-            verifiedHashes += encodedPassword
+        override fun matches(rawPassword: CharSequence?, encodedPassword: String?): Boolean {
+            verifiedHashes += checkNotNull(encodedPassword)
             return encodedPassword == "enabled-real-hash"
         }
     }

@@ -51,8 +51,8 @@ constructor(
     @Test
     fun `concurrent password updates wait on the real row lock and increment the stored version twice`() {
         val user = createUser("concurrent-reset@example.com")
-        val hashA = passwords.encode(FIRST_PASSWORD)
-        val hashB = passwords.encode(SECOND_PASSWORD)
+        val hashA = checkNotNull(passwords.encode(FIRST_PASSWORD))
+        val hashB = checkNotNull(passwords.encode(SECOND_PASSWORD))
         val aUpdated = CountDownLatch(1)
         val releaseA = CountDownLatch(1)
         val bEntering = CountDownLatch(1)
@@ -119,7 +119,7 @@ constructor(
 
     @Test
     fun `all mutations flush unrelated pending work clear managed state and explicitly stamp timestamps`() {
-        val resetHash = passwords.encode(FIRST_PASSWORD)
+        val resetHash = checkNotNull(passwords.encode(FIRST_PASSWORD))
         Mutation.entries.forEach { mutation ->
             val user = createUser("timestamp-${mutation.name.lowercase()}@example.com")
             val unrelated = createUser("pending-${mutation.name.lowercase()}@example.com")
@@ -209,7 +209,7 @@ constructor(
     @Test
     fun `missing targets remain not found for every direct mutation and service reset`() {
         val missing = UUID.randomUUID()
-        val hash = passwords.encode(FIRST_PASSWORD)
+        val hash = checkNotNull(passwords.encode(FIRST_PASSWORD))
         Mutation.entries.forEach { mutation ->
             val failure = assertThrows<UserNotFoundException> { mutate(mutation, missing, hash) }
             assertEquals("USER_NOT_FOUND", failure.code)
@@ -220,7 +220,7 @@ constructor(
 
     private fun assertStaleMutation(mutation: Mutation, resetLast: Boolean) {
         val user = createUser("stale-${mutation.name.lowercase()}-$resetLast@example.com")
-        val hash = passwords.encode(FIRST_PASSWORD)
+        val hash = checkNotNull(passwords.encode(FIRST_PASSWORD))
         val loaded = CountDownLatch(1)
         val competitorCommitted = CountDownLatch(1)
         val workers = Executors.newSingleThreadExecutor()
@@ -264,7 +264,7 @@ constructor(
         }
     }
 
-    private fun createUser(email: String): User = users.findById(users.create(email, passwords.encode(ORIGINAL_PASSWORD), Role.USER).id)!!
+    private fun createUser(email: String): User = users.findById(users.create(email, checkNotNull(passwords.encode(ORIGINAL_PASSWORD)), Role.USER).id)!!
 
     private fun mutate(mutation: Mutation, id: UUID, hash: String) {
         when (mutation) {

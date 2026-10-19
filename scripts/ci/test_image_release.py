@@ -473,6 +473,33 @@ class ProvenanceTests(unittest.TestCase):
             release.produce(failed, ctx)
         self.assertEqual(list(failed.iterdir()), [])
 
+    def test_producer_failure_reports_only_the_last_allowlisted_smoke_phase(self):
+        identity = 'sha256:' + 'e' * 64
+        failed = self.root / 'failed'; failed.mkdir()
+        cases = [
+            (b'synthetic-secret\nKIRA_SMOKE_PHASE:database-migration\n\xffuntrusted-output\n', 'database-migration'),
+            (b'KIRA_SMOKE_PHASE:unknown-secret\n', 'unreported'),
+            (b'KIRA_SMOKE_PHASE:tls-material\nKIRA_SMOKE_PHASE:postgres-startup\nnot-a-phase\n', 'postgres-startup'),
+        ]
+        for payload, phase in cases:
+            with self.subTest(phase=phase):
+                refusal = release.Refused('command failed'); printed = io.StringIO()
+                def command(argv, **kwargs):
+                    self.assertEqual(argv, [str(ROOT / release.SMOKE), identity])
+                    self.assertEqual(kwargs['seconds'], 600)
+                    self.assertEqual(kwargs['maximum'], release.MAX_CONFIG)
+                    kwargs['output'].write(payload)
+                    raise refusal
+                with patch.object(release, 'inspect_image', return_value=identity), \
+                     patch.object(release, 'command', side_effect=command), \
+                     patch.dict(os.environ, {'BUILDX_IMAGE_ID': identity}), \
+                     contextlib.redirect_stdout(printed), self.assertRaises(release.Refused) as caught:
+                    release.produce(failed, self.api.ctx)
+                self.assertIs(caught.exception, refusal)
+                self.assertEqual(printed.getvalue(), 'Image produce boundary: inspect-built\n'
+                                 'Image produce boundary: smoke\nImage smoke last phase: ' + phase + '\n')
+                self.assertEqual(list(failed.iterdir()), [])
+
     def test_workflow_has_no_deployment_build_and_keeps_all_gates(self):
         producer = (ROOT / release.CI).read_text(); consumer = (ROOT / release.DEPLOY).read_text()
         for forbidden in ('docker/', 'docker save', 'build-push', 'packages:', 'KIRA_PACKAGES', 'head_sha }}\n          persist'):

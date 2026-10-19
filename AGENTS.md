@@ -20,10 +20,16 @@ ahead of or behind an implementation detail.
 
 ## Verified stack and build
 
-The version catalog and build script pin Kotlin **2.1.21**, Spring Boot **3.5.16**, Gradle
-**8.14.5**, Java toolchain **21**, kotlinx-serialization-json **1.8.1**, and springdoc **2.8.17**.
-PostgreSQL is `postgres:17.6-alpine` in Docker Compose and integration tests. Stay on the Spring
-Boot 3.5.x line; a Boot 4 upgrade is a separate migration.
+The version catalog and build script pin Kotlin **2.2.21**, Spring Boot **4.0.8**, Gradle
+**8.14.5**, Java toolchain **21**, kotlinx-serialization **1.9.0** (JSON/JVM/core/BOM), and springdoc **3.0.3**.
+The serialization BOM override is required for the published source-engine **0.2.6** serializer ABI;
+static-analysis classpaths retain their separately locked tool runtimes. Ordinary CI must verify
+strict dependency resolution and unchanged canonical golden tests after runtime changes.
+PostgreSQL is `postgres:17.6-alpine` in Docker Compose and integration tests. The owner explicitly
+authorized the separate Boot **4.0.x** migration on **2026-10-19**. Its candidate pins are not proof
+of passing runtime, security or deployment gates. Jackson 2 remains on Boot's supported transition
+module with its separate `jackson-2-bom.version`; do not silently switch parser/API contracts to
+Jackson 3. Flyway remains the only schema writer; preserve historical migrations and signed goldens.
 
 ```bash
 export JAVA_HOME=$(/usr/libexec/java_home -v 21)

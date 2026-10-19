@@ -86,7 +86,7 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
         bootstrapReceipt = null
         admin = users.create(
             "admin-${UUID.randomUUID()}@test.local",
-            passwordEncoder.encode(ADMIN_PASSWORD),
+            checkNotNull(passwordEncoder.encode(ADMIN_PASSWORD)),
             Role.ADMIN,
         )
         adminToken = jwtService.issue(admin).value
