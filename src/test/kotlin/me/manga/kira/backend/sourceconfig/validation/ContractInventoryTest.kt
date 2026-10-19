@@ -69,7 +69,7 @@ class ContractInventoryTest {
         assertEquals(
             setOf(
                 "url", "method", "format", "scriptId", "root", "rootDirs", "listSelector", "formBody", "jsonBody", "listFilters",
-                "pageParam", "lastPageLocator",
+                "pageParam", "lastPageLocator", "singlePage",
             ),
             keysOf(EndpointSpec.serializer(), EndpointSpec(url = "u")),
         )
