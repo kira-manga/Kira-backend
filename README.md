@@ -50,7 +50,7 @@ infrastructure JPA entities, Spring Data repos, port adapters, entity↔domain m
   (`infrastructure`) — mapped explicitly (no MapStruct).
 - **`sourceconfig/domain` + `sourceconfig/validation` remain framework-free** (kotlin-stdlib +
   kotlinx-serialization only). Deterministic config-driven execution and preview use the pinned
-  `me.manga.kira.source:source-engine:0.1.0` Kotlin Multiplatform package shared with the app;
+  `me.manga.kira.source:source-engine:0.2.6` Kotlin Multiplatform package shared with the app;
   backend canonicalization, persistence, signing, and publication remain backend-owned.
 - **Serialization split:** Spring MVC API DTOs use Jackson (the Boot default); the **source-config
   model uses kotlinx-serialization** so default-omission behaves identically to the app. Document
@@ -70,10 +70,10 @@ fully-tested change).
 |---|---|---|
 | Gradle wrapper | **8.14.5** | `gradle/wrapper/gradle-wrapper.properties` |
 | Java toolchain | **21** (built/tested on Homebrew OpenJDK 21.0.11) | `build.gradle.kts` |
-| Kotlin (jvm/spring/jpa/serialization plugins + stdlib) | **2.1.21** | `gradle/libs.versions.toml` (+ `extra["kotlin.version"]` BOM override in `build.gradle.kts`) |
+| Kotlin (jvm/spring/jpa/serialization plugins + stdlib) | **2.2.21** | `gradle/libs.versions.toml` (+ `extra["kotlin.version"]` BOM override in `build.gradle.kts`) |
 | Spring Boot | **3.5.16** | `gradle/libs.versions.toml` |
 | io.spring.dependency-management | **1.1.7** | `gradle/libs.versions.toml` |
-| kotlinx-serialization-json | **1.8.1** | `gradle/libs.versions.toml` |
+| kotlinx-serialization (JSON/JVM/core/BOM) | **1.9.0** | `gradle/libs.versions.toml` (+ `extra["kotlin-serialization.version"]` BOM override) |
 | springdoc-openapi-starter-webmvc-ui | **2.8.17** | `gradle/libs.versions.toml` |
 | Jackson BOM / Commons Lang / Commons Compress / Log4j security overrides | **2.21.5 / 3.20.0 / 1.28.0 / 2.25.5** | `gradle/libs.versions.toml` + dependency locks |
 | PostgreSQL Docker image | **`postgres:17.6-alpine`** (digest `sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94`) | `docker-compose.yml`, test base class |
@@ -90,7 +90,13 @@ provenance, not separately pinned):
 
 > Note: `./gradlew --version` reports "Kotlin: 2.0.21" — that is the Kotlin runtime *embedded in
 > Gradle 8.14.5* for `.gradle.kts` script compilation, **not** the project's Kotlin. Project sources
-> compile with the pinned **2.1.21** plugin.
+> compile with the pinned **2.2.21** plugin.
+
+The serialization BOM override matches the published Engine 0.2.6 generated-serializer ABI;
+pinning only the multiplatform JSON root leaves Boot's older JVM/core runtime selected. Detekt
+and ktlint keep their isolated locked Kotlin/serialization versions. Runtime changes still require
+ordinary CI dependency-lock resolution and the existing canonical-byte golden tests; configured
+versions alone are not release acceptance.
 
 ## Quick start
 

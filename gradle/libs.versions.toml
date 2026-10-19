@@ -11,12 +11,14 @@
 #   - Kotlin stdlib/reflect are forced to the `kotlin` version below via the BOM
 #     property override (`extra["kotlin.version"]`) in build.gradle.kts so the runtime
 #     stdlib matches the compiler.
+#   - Serialization's root/JVM/core/BOM use `kotlinxSerialization` through the exact
+#     Boot property `extra["kotlin-serialization.version"]`, not only the JSON root pin.
 
 [versions]
-kotlin = "2.1.21"                       # Kotlin plugins + stdlib (PLAN §3: "Kotlin 2.1+")
+kotlin = "2.2.21"                       # Kotlin plugins + stdlib, aligned with source-engine 0.2.6
 springBoot = "3.5.16"                   # Spring Boot 3.5.x line (NOT 4.x — PLAN §3 hard pin)
 springDependencyManagement = "1.1.7"    # io.spring.dependency-management (applies the Boot BOM)
-kotlinxSerialization = "1.8.1"          # kotlinx-serialization-json runtime (PLAN §3: "1.7+")
+kotlinxSerialization = "1.9.0"          # Root/JVM/core/BOM runtime required by source-engine 0.2.6
 springdoc = "2.8.17"                    # springdoc-openapi 2.8.x = the Spring Boot 3.x line
 ktlintPlugin = "14.2.0"
 detekt = "1.23.8"

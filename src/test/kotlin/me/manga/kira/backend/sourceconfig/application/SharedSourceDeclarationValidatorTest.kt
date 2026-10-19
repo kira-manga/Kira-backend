@@ -49,22 +49,22 @@ class SharedSourceDeclarationValidatorTest {
         val source =
             base.copy(
                 endpoints =
-                    base.endpoints + mapOf(
-                        "search" to
-                            EndpointSpec(
-                                url = "{baseUrl}/search",
-                                method = "post-form",
-                                formBody = linkedMapOf("z_private_form_name" to "{baseUrl}", "a_private_form_name" to "{unknown_form_value}"),
-                            ),
-                    ),
+                base.endpoints + mapOf(
+                    "search" to
+                        EndpointSpec(
+                            url = "{baseUrl}/search",
+                            method = "post-form",
+                            formBody = linkedMapOf("z_private_form_name" to "{baseUrl}", "a_private_form_name" to "{unknown_form_value}"),
+                        ),
+                ),
                 fields =
-                    mapOf(
-                        "item.url" to
-                            FieldSpec(
-                                template = "{z_private_var_name}/{a_private_var_name}",
-                                vars = linkedMapOf("z_private_var_name" to "slug", "a_private_var_name" to "id|unknown_pipe_value"),
-                            ),
-                    ),
+                mapOf(
+                    "item.url" to
+                        FieldSpec(
+                            template = "{z_private_var_name}/{a_private_var_name}",
+                            vars = linkedMapOf("z_private_var_name" to "slug", "a_private_var_name" to "id|unknown_pipe_value"),
+                        ),
+                ),
             )
         val findings = adapter.validate(source, strategies)
         assertEquals(2, findings.size)
@@ -86,14 +86,14 @@ class SharedSourceDeclarationValidatorTest {
         val source =
             SourceConfigFixtures.validGenericSource().copy(
                 fields =
-                    mapOf(
-                        "item.url" to
-                            FieldSpec(
-                                template = "{id}",
-                                vars = mapOf("id" to "slug|trim"),
-                                transform = listOf(TransformSpec("trim")),
-                            ),
-                    ),
+                mapOf(
+                    "item.url" to
+                        FieldSpec(
+                            template = "{id}",
+                            vars = mapOf("id" to "slug|trim"),
+                            transform = listOf(TransformSpec("trim")),
+                        ),
+                ),
             )
         assertTrue(validator.validate(SourceConfigFixtures.document(source)).isValid)
         val restricted =

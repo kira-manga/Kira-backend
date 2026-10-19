@@ -20,8 +20,11 @@ ahead of or behind an implementation detail.
 
 ## Verified stack and build
 
-The version catalog and build script pin Kotlin **2.1.21**, Spring Boot **3.5.16**, Gradle
-**8.14.5**, Java toolchain **21**, kotlinx-serialization-json **1.8.1**, and springdoc **2.8.17**.
+The version catalog and build script pin Kotlin **2.2.21**, Spring Boot **3.5.16**, Gradle
+**8.14.5**, Java toolchain **21**, kotlinx-serialization **1.9.0** (JSON/JVM/core/BOM), and springdoc **2.8.17**.
+The serialization BOM override is required for the published source-engine **0.2.6** serializer ABI;
+static-analysis classpaths retain their separately locked tool runtimes. Ordinary CI must verify
+strict dependency resolution and unchanged canonical golden tests after runtime changes.
 PostgreSQL is `postgres:17.6-alpine` in Docker Compose and integration tests. Stay on the Spring
 Boot 3.5.x line; a Boot 4 upgrade is a separate migration.
 

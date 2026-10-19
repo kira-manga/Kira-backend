@@ -22,8 +22,11 @@ springBoot {
 
 // Force the Spring Boot BOM's Kotlin stdlib/reflect to match the compiler version above.
 // Boot 3.5.x's BOM pins an older Kotlin; overriding this BOM property keeps the runtime
-// stdlib aligned with the 2.1.x compiler (PLAN §3: Kotlin 2.1+).
+// stdlib aligned with the compiler (PLAN §3: Kotlin 2.1+).
 extra["kotlin.version"] = libs.versions.kotlin.get()
+// The shared Engine's generated serializers require its matching runtime, including JVM/core.
+// An explicit JSON root dependency alone does not override Boot's imported serialization BOM.
+extra["kotlin-serialization.version"] = libs.versions.kotlinxSerialization.get()
 extra["jackson-bom.version"] = libs.versions.jackson.get()
 extra["commons-lang3.version"] = libs.versions.commonsLang3.get()
 extra["log4j2.version"] = libs.versions.log4j2.get()
@@ -136,13 +139,21 @@ detekt {
     config.setFrom(files("config/detekt/detekt.yml"))
 }
 
-// The Spring dependency-management plugin aligns the project's Kotlin runtime to 2.1.x.
-// Detekt 1.23.8 embeds the Kotlin 2.0.21 compiler and must retain that isolated tool runtime.
-configurations.matching { it.name == "detekt" }.configureEach {
+// Application BOM upgrades must not change the already-selected static-analysis tool runtimes.
+// Detekt 1.23.8 retains Kotlin 2.0.21; ktlint retains Kotlin 2.1.21. Neither consumes the Engine.
+val kotlinAnalysisConfigurations = setOf("detekt", "ktlint", "ktlintBaselineReporter", "ktlintReporter", "ktlintRuleset")
+configurations.matching { it.name in kotlinAnalysisConfigurations }.configureEach {
+    val toolKotlinVersion = if (name == "detekt") "2.0.21" else "2.1.21"
     resolutionStrategy.eachDependency {
-        if (requested.group == "org.jetbrains.kotlin") {
-            useVersion("2.0.21")
-            because("detekt 1.23.8 is compiled against Kotlin 2.0.21")
+        when {
+            requested.group == "org.jetbrains.kotlin" -> {
+                useVersion(toolKotlinVersion)
+                because("preserve the isolated static-analysis Kotlin runtime")
+            }
+            requested.group == "org.jetbrains.kotlinx" && requested.name.startsWith("kotlinx-serialization-") -> {
+                useVersion("1.6.3")
+                because("preserve the isolated static-analysis serialization runtime")
+            }
         }
     }
 }
