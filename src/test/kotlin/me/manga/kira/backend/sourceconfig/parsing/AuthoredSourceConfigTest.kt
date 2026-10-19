@@ -1,5 +1,6 @@
 package me.manga.kira.backend.sourceconfig.parsing
 
+import me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidator
 import me.manga.kira.backend.sourceconfig.validation.SourceConfigValidator
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -12,7 +13,7 @@ import java.nio.file.Path
 class AuthoredSourceConfigTest {
     @Test
     fun `authored sources strictly parse validate and preserve their model through canonicalization`() {
-        val validator = SourceConfigValidator()
+        val validator = SourceConfigValidator(declarations = SharedSourceDeclarationValidator())
         for (api in listOf("Lavatoons", "Manhwatop", "Mangatuk", "Dilar")) {
             val source = SourceConfigParser.parseStrictSource(Files.readString(Path.of("config", "sources", "$api.json")))
             assertEquals(api, source.api)

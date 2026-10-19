@@ -1,6 +1,7 @@
 package me.manga.kira.backend.sourceconfig.validation
 
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
+import me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidator
 import me.manga.kira.backend.sourceconfig.domain.model.EndpointSpec
 import me.manga.kira.backend.sourceconfig.parsing.SourceConfigParser
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -10,7 +11,7 @@ import org.junit.jupiter.api.Test
 
 /** Authoring mirror only: installed preview/package/native readiness is a separate delivery gate. */
 class SourceConfigValidatorReaderCapabilityTest {
-    private val validator = SourceConfigValidator()
+    private val validator = SourceConfigValidator(declarations = SharedSourceDeclarationValidator())
 
     @Test
     fun `finite feeds survive canonical authoring and reject unsupported verbs`() {
