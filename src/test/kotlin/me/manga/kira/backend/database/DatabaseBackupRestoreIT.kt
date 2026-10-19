@@ -410,7 +410,7 @@ class DatabaseBackupRestoreIT {
                     "VALUES (?, 'restore@example.com', ?, 'ADMIN', true, now(), now())",
             ).use { statement ->
                 statement.setObject(1, id)
-                statement.setString(2, PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("unused-test-only"))
+                statement.setString(2, checkNotNull(PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("unused-test-only")))
                 assertEquals(1, statement.executeUpdate())
             }
         }

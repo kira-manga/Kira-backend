@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.DefaultApplicationArguments
 import org.springframework.test.context.TestPropertySource
 
 /**
@@ -29,7 +30,7 @@ constructor(private val adminSeeder: AdminSeeder) : AbstractIntegrationTest() {
 
     @Test
     fun `seeds exactly one admin and is idempotent`() {
-        adminSeeder.run(null)
+        adminSeeder.run(DefaultApplicationArguments())
         assertEquals(1L, adminCount())
         assertEquals(
             1L,
@@ -40,15 +41,15 @@ constructor(private val adminSeeder: AdminSeeder) : AbstractIntegrationTest() {
         )
 
         // Idempotent: a second run (a "restart") creates no second admin and resets no password.
-        adminSeeder.run(null)
+        adminSeeder.run(DefaultApplicationArguments())
         assertEquals(1L, adminCount())
     }
 
     @Test
     fun `an admin already present short-circuits (no duplicate)`() {
-        adminSeeder.run(null)
+        adminSeeder.run(DefaultApplicationArguments())
         val before = adminCount()
-        adminSeeder.run(null)
+        adminSeeder.run(DefaultApplicationArguments())
         assertTrue(before == 1L && adminCount() == 1L)
     }
 }

@@ -36,6 +36,7 @@ jobs:
           mkdir --mode=700 "$GRADLE_USER_HOME" "$EVIDENCE"
           printf 'GRADLE_USER_HOME=%s\nEVIDENCE=%s\n' "$GRADLE_USER_HOME" "$EVIDENCE" >> "$GITHUB_ENV"
       - name: Resolve locks and compile migrated source (no release)
+        id: resolve
         env:
           KIRA_PACKAGES_USER: ${{ github.actor }}
           KIRA_PACKAGES_READ_TOKEN: ${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
@@ -44,10 +45,31 @@ jobs:
           set -euo pipefail
           test -n "$KIRA_PACKAGES_READ_TOKEN"
           printf '%s\n' "$GITHUB_SHA" > "$EVIDENCE/source.txt"
-          ./gradlew --no-daemon --no-parallel --max-workers=2 --no-build-cache --no-configuration-cache \
-            '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' \
-            -Pkotlin.compiler.execution.strategy=in-process dependencies --write-locks compileTestKotlin \
-            2>&1 | tee "$EVIDENCE/gradle.log"
+          gradle() {
+            ./gradlew --no-daemon --no-parallel --max-workers=2 --no-build-cache --no-configuration-cache \
+              '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' \
+              -Pkotlin.compiler.execution.strategy=in-process "$@"
+          }
+          # Gradle persists locks only after a successful invocation, not a failed compile.
+          gradle dependencies --write-locks 2>&1 | tee "$EVIDENCE/dependencies.log"
+          if grep -q ' FAILED' "$EVIDENCE/dependencies.log"; then
+            echo 'Dependency resolution failed; refusing incomplete locks' >&2
+            exit 1
+          fi
+          grep -q '^org.springframework.boot:spring-boot:4.0.8=' gradle.lockfile
+          grep -q '^org.springframework:spring-webmvc:7.0.9=' gradle.lockfile
+          printf 'locks_ready=true\n' >> "$GITHUB_OUTPUT"
+          gradle compileTestKotlin 2>&1 | tee "$EVIDENCE/gradle.log"
+      - name: Scan the actual generated migration dependency lock
+        if: always() && steps.resolve.outputs.locks_ready == 'true'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          osv_image=ghcr.io/google/osv-scanner@sha256:64e86bec6df2466feea5137fc7c78fb3b7c21ec077f014d7130f64810e50676b
+          docker run --rm --volume "$GITHUB_WORKSPACE/gradle.lockfile:/src/gradle.lockfile:ro" \
+            --volume "$EVIDENCE:/reports" "$osv_image" scan source \
+            --lockfile /src/gradle.lockfile --format json --output-file /reports/osv.json
       - name: Stop owned Gradle and preserve generated locks
         id: stop
         if: always() && steps.paths.outcome == 'success'

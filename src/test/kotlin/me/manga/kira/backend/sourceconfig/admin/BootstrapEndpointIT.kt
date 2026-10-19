@@ -36,7 +36,7 @@ class BootstrapEndpointIT : AbstractAdminSourceIT() {
     @Test
     fun `anonymous and USER cannot bootstrap and ADMIN still needs exact confirmation`() {
         val raw = approvedBootstrapPayload()
-        val user = users.create("bootstrap-user-${UUID.randomUUID()}@test.local", passwordEncoder.encode(ADMIN_PASSWORD), Role.USER)
+        val user = users.create("bootstrap-user-${UUID.randomUUID()}@test.local", checkNotNull(passwordEncoder.encode(ADMIN_PASSWORD)), Role.USER)
         val userToken = jwtService.issue(user).value
         val before = publicState()
         val mutationsBefore = jdbcTemplate.bootstrapMutationRows()

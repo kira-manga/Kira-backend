@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component
 @Component
 class AdminSeeder(private val properties: KiraAdminSeedProperties, private val userService: UserService) : ApplicationRunner {
 
-    override fun run(args: ApplicationArguments?) {
+    override fun run(args: ApplicationArguments) {
         if (!properties.seedEnabled) {
             log.info("Admin seeding disabled (kira.admin.seed-enabled=false).")
             return

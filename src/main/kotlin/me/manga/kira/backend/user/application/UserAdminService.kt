@@ -80,7 +80,8 @@ class UserAdminService(
     fun resetPassword(id: UUID, newRawPassword: String) {
         val user = users.findById(id) ?: throw UserNotFoundException()
         passwordPolicy.validate(newRawPassword)
-        users.updatePasswordHash(user.id, passwordEncoder.encode(newRawPassword))
+        val hash = checkNotNull(passwordEncoder.encode(newRawPassword)) { "Password encoding failed." }
+        users.updatePasswordHash(user.id, hash)
         log.info("User password reset id={} actor={}", id, actor())
         // Never the password — actor + target only (PLAN §4.4/§6).
         audit.record(AuditAction.USER_PASSWORD_RESET, AuditService.ENTITY_USER, id.toString())

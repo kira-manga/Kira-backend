@@ -21,7 +21,7 @@ class StartupConsistencyRunner(
     private val clientCatalogQueryService: ClientCatalogQueryService,
 ) : ApplicationRunner {
 
-    override fun run(args: ApplicationArguments?) {
+    override fun run(args: ApplicationArguments) {
         revisionFloorStartupValidator.validate()
         publicationStateStartupValidator.validate()
         clientCatalogQueryService.validateStartup()

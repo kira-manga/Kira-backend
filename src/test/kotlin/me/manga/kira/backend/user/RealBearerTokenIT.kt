@@ -60,7 +60,7 @@ constructor(
     }
 
     private fun operatorToken(): String {
-        val operator = users.create("reset-operator@example.com", passwords.encode(password), Role.ADMIN)
+        val operator = users.create("reset-operator@example.com", checkNotNull(passwords.encode(password)), Role.ADMIN)
         return login(operator.email, password)
     }
 
@@ -173,7 +173,7 @@ constructor(
     @Test
     fun `reset ADMIN bearer cannot access admin routes or obtain step-up even with the new password`() {
         val operator = operatorToken()
-        val admin = users.create("reset-admin@example.com", passwords.encode(password), Role.ADMIN)
+        val admin = users.create("reset-admin@example.com", checkNotNull(passwords.encode(password)), Role.ADMIN)
         val original = login(admin.email, password)
         mockMvc.get("/api/v1/admin/users") { header("Authorization", "Bearer $original") }
             .andExpect { status { isOk() } }

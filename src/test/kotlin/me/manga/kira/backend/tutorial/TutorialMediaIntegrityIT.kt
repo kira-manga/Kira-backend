@@ -196,7 +196,11 @@ class TutorialMediaIntegrityIT : TutorialMediaIntegrationSupport() {
     private fun bearer(app: MediaTestApplication, role: Role, diagnosticRole: String = role.name): String {
         val users = app.context.getBean(UserRepository::class.java)
         val passwords = app.context.getBean(PasswordEncoder::class.java)
-        val user = requireNotNull(app.transaction().execute { users.create("${UUID.randomUUID()}@example.test", passwords.encode("media-fixture-only"), role) })
+        val user = requireNotNull(
+            app.transaction().execute {
+                users.create("${UUID.randomUUID()}@example.test", checkNotNull(passwords.encode("media-fixture-only")), role)
+            },
+        )
         return JwtTestSupport.mint(user.id, user.email, diagnosticRole, credentialVersion = user.credentialVersion.toString())
     }
 

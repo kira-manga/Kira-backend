@@ -83,7 +83,7 @@ class FlywayIncrementalOrderIT {
             assertEquals(priorVersions, historyVersions(database))
             val priorHistory = historyRows(database)
             val id = UUID.randomUUID()
-            val hash = PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("migration credential fixture password")
+            val hash = checkNotNull(PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("migration credential fixture password"))
             DriverManager.getConnection(databaseUrl(database), user, password).use { connection ->
                 connection.prepareStatement(
                     "INSERT INTO users (id, email, password_hash, role, enabled, created_at, updated_at) " +
@@ -370,7 +370,7 @@ class FlywayIncrementalOrderIT {
     }
 
     private fun insertBootstrapMigrationUser(database: String): UUID = UUID.randomUUID().also { id ->
-        val hash = PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("bootstrap migration fixture password")
+        val hash = checkNotNull(PasswordEncoderFactories.createDelegatingPasswordEncoder().encode("bootstrap migration fixture password"))
         execute(
             database,
             "INSERT INTO users (id, email, password_hash, role, credential_version) VALUES (?, 'retained-user@example.invalid', ?, 'ADMIN', 7)",

@@ -17,7 +17,7 @@ class PasswordHashingTest {
     @Test
     fun `hash verifies and is not the plaintext`() {
         val raw = "correct horse battery staple"
-        val hash = encoder.encode(raw)
+        val hash = checkNotNull(encoder.encode(raw))
 
         assertTrue(encoder.matches(raw, hash))
         assertNotEquals(raw, hash)
@@ -28,8 +28,8 @@ class PasswordHashingTest {
     @Test
     fun `two hashes of the same password differ (salt)`() {
         val raw = "correct horse battery staple"
-        val first = encoder.encode(raw)
-        val second = encoder.encode(raw)
+        val first = checkNotNull(encoder.encode(raw))
+        val second = checkNotNull(encoder.encode(raw))
 
         assertNotEquals(first, second)
         assertTrue(encoder.matches(raw, first))

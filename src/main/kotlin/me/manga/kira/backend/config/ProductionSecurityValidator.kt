@@ -17,7 +17,7 @@ class ProductionSecurityValidator(
     private val security: KiraSecurityProperties,
     private val completion: KiraCompletionProperties,
 ) : ApplicationRunner {
-    override fun run(args: ApplicationArguments?) {
+    override fun run(args: ApplicationArguments) {
         ProductionSecurityPolicy.validate(
             activeProfiles = environment.activeProfiles.toSet(),
             auth = auth,

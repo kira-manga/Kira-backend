@@ -43,7 +43,7 @@ class UserService(private val users: UserRepository, private val passwordEncoder
         val normalized = normalizeEmail(email)
         passwordPolicy.validate(rawPassword)
         if (users.existsByEmail(normalized)) throw DuplicateEmailException()
-        val hash = passwordEncoder.encode(rawPassword)
+        val hash = checkNotNull(passwordEncoder.encode(rawPassword)) { "Password encoding failed." }
         return try {
             users.create(normalized, hash, role)
         } catch (ex: DataIntegrityViolationException) {

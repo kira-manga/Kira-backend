@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import me.manga.kira.backend.common.web.RequestBodySizeLimitFilter
 import me.manga.kira.backend.common.web.RequestDiagnosticsFilter
 import me.manga.kira.backend.security.AuthenticatedMdcFilter
-import org.springframework.boot.security.autoconfigure.SecurityProperties
+import org.springframework.boot.security.autoconfigure.web.servlet.SecurityFilterProperties
 import org.springframework.boot.web.servlet.FilterRegistrationBean
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -14,7 +14,7 @@ import org.springframework.core.Ordered
  * Registers the diagnostics filters (PLAN §6).
  *
  *  - [RequestDiagnosticsFilter] runs at [Ordered.HIGHEST_PRECEDENCE], **before** the Spring Security
- *    chain (`SecurityProperties.DEFAULT_FILTER_ORDER`, -100), so the correlation id is in the MDC
+ *    chain (`SecurityFilterProperties.DEFAULT_FILTER_ORDER`, -100), so the correlation id is in the MDC
  *    for security-layer logs too and the access-log line captures the final status even for
  *    security-rejected requests.
  *  - [AuthenticatedMdcFilter] runs just **after** the security chain, so it can read the
@@ -40,7 +40,7 @@ class WebDiagnosticsConfig {
 
     @Bean
     fun authenticatedMdcFilter(): FilterRegistrationBean<AuthenticatedMdcFilter> = FilterRegistrationBean(AuthenticatedMdcFilter()).apply {
-        order = SecurityProperties.DEFAULT_FILTER_ORDER + 1 // after the security chain (auth populated)
+        order = SecurityFilterProperties.DEFAULT_FILTER_ORDER + 1 // after the security chain (auth populated)
         addUrlPatterns("/*")
     }
 }
