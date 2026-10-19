@@ -1,0 +1,80 @@
+name: Backend container smoke check
+
+# One check-only issue branch; normal CI and all deployment gates remain separate.
+on:
+  push:
+    branches: [remediation/backend-container-smoke-20261019]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: container-smoke-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  container:
+    if: github.repository_id == '1304735394' && github.ref == 'refs/heads/remediation/backend-container-smoke-20261019'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DOCKER_BUILD_RECORD_RETENTION_DAYS: "1"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build exact-SHA production image
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: kira-backend:${{ github.sha }}
+          build-args: |
+            VERSION=1.0.0
+            VCS_REF=${{ github.sha }}
+            BUILD_DATE=1970-01-01T00:00:00Z
+            KIRA_PACKAGES_USER=${{ github.actor }}
+          secrets: |
+            github_token=${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Allocate owned image scratch
+        id: scratch
+        run: python3 -B scripts/ci/image_release.py scratch
+      - name: Production-profile immutable-ID smoke (not a production candidate)
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          BUILDX_IMAGE_ID: ${{ steps.image.outputs.imageid }}
+        run: python3 -B scripts/ci/image_release.py produce
+      - name: Validate deployment manifests and rendered media policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d "${RUNNER_TEMP:?}/kira-media-policy.XXXXXXXX")"
+          trap 'rm -rf -- "$work"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          mkdir "$work/tmp"
+          export TMPDIR="$work/tmp"
+          kubectl_image=registry.k8s.io/kubectl@sha256:59bafa07ff3a6d4b417e7633ddb9d79a9606ca98bf64bac080b3e65748669250
+          docker run --rm --volume "$GITHUB_WORKSPACE/deploy/kubernetes:/work:ro" "$kubectl_image" \
+            kustomize /work/base > "$work/rendered.yaml"
+          kubeconform_image=ghcr.io/yannh/kubeconform@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
+          docker run --rm --volume "$work/rendered.yaml:/work/kira-rendered.yaml:ro" "$kubeconform_image" \
+            -strict -summary -kubernetes-version 1.34.1 /work/kira-rendered.yaml
+          python3 -B -m venv "$work/venv"
+          "$work/venv/bin/python" -I -B -m pip --isolated install --disable-pip-version-check \
+            --require-hashes --only-binary=:all: --no-deps --no-cache-dir \
+            --requirement scripts/ci/kubernetes-media-requirements.txt
+          "$work/venv/bin/python" -I -B scripts/ci/test_kubernetes_media_storage.py check-template "$work/rendered.yaml"
+          "$work/venv/bin/python" -I -B scripts/ci/test_kubernetes_media_storage.py test-rendered "$work/rendered.yaml"
+      - name: Remove only owned image scratch
+        if: always() && steps.scratch.outputs.path != ''
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+        run: python3 -B scripts/ci/image_release.py cleanup

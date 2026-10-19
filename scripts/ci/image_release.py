@@ -11,6 +11,7 @@ import contextlib
 import datetime as dt
 import gzip
 import hashlib
+import io
 import json
 import math
 import os
@@ -46,6 +47,14 @@ MAX_CONFIG = 1024 * 1024
 MAX_API = 4 * 1024 * 1024
 FILES = {'image.tar.gz': MAX_IMAGE, 'receipt.json': MAX_RECEIPT}
 POLICY = 'backend-production-profile-v1'
+SMOKE_PHASES = {
+    b'KIRA_SMOKE_PHASE:initialization': 'initialization',
+    b'KIRA_SMOKE_PHASE:tls-material': 'tls-material',
+    b'KIRA_SMOKE_PHASE:postgres-startup': 'postgres-startup',
+    b'KIRA_SMOKE_PHASE:database-migration': 'database-migration',
+    b'KIRA_SMOKE_PHASE:application-startup': 'application-startup',
+    b'KIRA_SMOKE_PHASE:health-probes': 'health-probes',
+}
 
 
 class Refused(Exception):
@@ -739,10 +748,25 @@ def inspect_image(tag, expected=None):
     return identity
 
 
+def smoke_image(identity):
+    # Capture this invocation only; never forward raw stdout or stderr on failure.
+    with io.BytesIO() as progress:
+        try:
+            command([str(ROOT / SMOKE), identity], seconds=600, maximum=MAX_CONFIG, output=progress)
+        except Refused:
+            phase = next((SMOKE_PHASES[line] for line in reversed(progress.getvalue().splitlines())
+                          if line in SMOKE_PHASES), 'unreported')
+            print('Image smoke last phase:', phase, flush=True)
+            raise
+
+
 def produce(directory, ctx):
     tag = 'kira-backend:' + ctx['sha']
+    print('Image produce boundary: inspect-built', flush=True)
     identity = inspect_image(tag, image_id(os.environ.get('BUILDX_IMAGE_ID')))
-    command([str(ROOT / SMOKE), identity], seconds=600, maximum=MAX_CONFIG)
+    print('Image produce boundary: smoke', flush=True)
+    smoke_image(identity)
+    print('Image produce boundary: reinspect-built', flush=True)
     inspect_image(tag, identity)  # The tag saved below still identifies the smoked object.
     if ctx['event'] != 'push' or ctx['ref'] != 'refs/heads/main':
         print('Exact-ID smoke passed; non-main/PR output is not a production candidate')
