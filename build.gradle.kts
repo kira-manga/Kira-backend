@@ -28,6 +28,9 @@ extra["kotlin.version"] = libs.versions.kotlin.get()
 extra["kotlin-serialization.version"] = libs.versions.kotlinxSerialization.get()
 // Boot 4 manages Jackson 3 separately; preserve the supported Jackson 2 API/parser contract.
 extra["jackson-2-bom.version"] = libs.versions.jackson.get()
+extra["jackson-bom.version"] = libs.versions.jackson3.get()
+extra["tomcat.version"] = libs.versions.tomcat.get()
+extra["opentelemetry.version"] = libs.versions.openTelemetry.get()
 extra["commons-lang3.version"] = libs.versions.commonsLang3.get()
 extra["log4j2.version"] = libs.versions.log4j2.get()
 
@@ -157,6 +160,20 @@ configurations.matching { it.name in kotlinAnalysisConfigurations }.configureEac
                 useVersion("1.6.3")
                 because("preserve the isolated static-analysis serialization runtime")
             }
+        }
+    }
+}
+
+// These are Kotlin plugin tooling dependencies, not the application's signing provider.
+// Resolve a coherent patched cohort without altering the isolated analysis-tool runtimes.
+configurations.matching { it.name == "kotlinBouncyCastleConfiguration" }.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "org.bouncycastle") {
+            check(requested.name in setOf("bcpg-jdk18on", "bcpkix-jdk18on", "bcprov-jdk18on", "bcutil-jdk18on")) {
+                "Unexpected Kotlin Bouncy Castle module"
+            }
+            useVersion(libs.versions.bouncyCastle.get())
+            because("retain the patched, coherent Kotlin tooling cryptography cohort")
         }
     }
 }

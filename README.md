@@ -105,6 +105,12 @@ parsers, existing DTOs and error rendering retain their contract; Jackson 3's ma
 replaced with a 2.x BOM. Flyway is an explicit starter after Boot's module split. Tomcat 11,
 Spring Framework 7, Security 7, Hibernate 7 and Testcontainers 2 follow the coherent Boot 4.0 BOM.
 Existing migration files and signed canonical golden bytes must remain unchanged.
+The Boot 4 baseline's remaining advisories require same-family Jackson 3 **3.1.7** and Tomcat
+**11.0.27** patches. OpenTelemetry **1.62.0** and Bouncy Castle **1.85** are security-patched in
+Kotlin tooling configurations exposed by complete lock generation; those are not application
+runtime dependencies. Bouncy Castle is restricted to its four existing Kotlin-tool modules,
+not substituted for the backend's JDK signing provider. The unchanged scanner must verify the
+actually resolved lock; these selected pins alone are not a clean-scan claim.
 
 ## Quick start
 

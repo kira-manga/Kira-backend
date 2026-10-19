@@ -74,10 +74,10 @@ internal fun assertAuthAdmissionWave(throttles: List<AuthThrottle>, path: AuthWa
     `when`(users.findByEmail(user.email)).thenReturn(user)
     `when`(users.findById(user.id)).thenReturn(user)
     val encoder = object : PasswordEncoder {
-        override fun encode(rawPassword: CharSequence): String = "decoy-hash"
+        override fun encode(rawPassword: CharSequence?): String = "decoy-hash"
 
-        override fun matches(rawPassword: CharSequence, encodedPassword: String): Boolean {
-            hashes += encodedPassword
+        override fun matches(rawPassword: CharSequence?, encodedPassword: String?): Boolean {
+            hashes += checkNotNull(encodedPassword)
             classified.countDown()
             check(release.await(10, TimeUnit.SECONDS)) { "verifier was not released" }
             return encodedPassword == user.passwordHash

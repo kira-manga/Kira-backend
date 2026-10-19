@@ -252,7 +252,7 @@ class AdminHistoryRepositoryIT : AbstractAdminSourceIT() {
         }
     }
 
-    private fun storedState(): Map<String, Any> = jdbcTemplate.queryForMap(
+    private fun storedState(): Map<String, Any?> = jdbcTemplate.queryForMap(
         "SELECT (SELECT count(*) FROM source_config_revisions) AS revisions, " +
             "(SELECT count(*) FROM published_documents) AS documents, " +
             "(SELECT count(*) FROM source_validation_results) AS validations, " +

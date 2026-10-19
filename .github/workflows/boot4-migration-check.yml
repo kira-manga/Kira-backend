@@ -60,16 +60,6 @@ jobs:
           grep -q '^org.springframework:spring-webmvc:7.0.9=' gradle.lockfile
           printf 'locks_ready=true\n' >> "$GITHUB_OUTPUT"
           gradle compileTestKotlin 2>&1 | tee "$EVIDENCE/gradle.log"
-      - name: Scan the actual generated migration dependency lock
-        if: always() && steps.resolve.outputs.locks_ready == 'true'
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          set -euo pipefail
-          osv_image=ghcr.io/google/osv-scanner@sha256:64e86bec6df2466feea5137fc7c78fb3b7c21ec077f014d7130f64810e50676b
-          docker run --rm --volume "$GITHUB_WORKSPACE/gradle.lockfile:/src/gradle.lockfile:ro" \
-            --volume "$EVIDENCE:/reports" "$osv_image" scan source \
-            --lockfile /src/gradle.lockfile --format json --output-file /reports/osv.json
       - name: Stop owned Gradle and preserve generated locks
         id: stop
         if: always() && steps.paths.outcome == 'success'
@@ -89,6 +79,16 @@ jobs:
           git diff -- gradle.lockfile > "$EVIDENCE/locks.diff"
           df -h .
           free -h
+      - name: Scan the actual generated migration dependency lock
+        if: always() && steps.resolve.outputs.locks_ready == 'true'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          osv_image=ghcr.io/google/osv-scanner@sha256:64e86bec6df2466feea5137fc7c78fb3b7c21ec077f014d7130f64810e50676b
+          docker run --rm --volume "$GITHUB_WORKSPACE/gradle.lockfile:/src/gradle.lockfile:ro" \
+            --volume "$EVIDENCE:/reports" "$osv_image" scan source \
+            --lockfile /src/gradle.lockfile --format json --output-file /reports/osv.json
       - name: Preserve compilation evidence
         id: reports
         if: always() && steps.paths.outcome == 'success'
