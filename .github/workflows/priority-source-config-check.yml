@@ -2,7 +2,7 @@ name: Priority source configuration verification
 
 on:
   push:
-    branches: [remediation/priority-source-configs-20261017]
+    branches: [remediation/priority-source-configs-20261017, remediation/source-optional-conversions-20261020]
     paths:
       - config/sources/**
       - src/main/kotlin/me/manga/kira/backend/config/KiraClientCatalogProperties.kt
@@ -33,7 +33,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Verify signed client selection and conditional delivery
+      - name: Verify source authoring or signed client delivery
         env:
           KIRA_PACKAGES_USER: ${{ github.actor }}
           KIRA_PACKAGES_READ_TOKEN: ${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
@@ -43,13 +43,18 @@ jobs:
           test -n "$KIRA_PACKAGES_READ_TOKEN"
           mkdir -p "$EVIDENCE"
           printf 'Source commit: %s\n' "$GITHUB_SHA" > "$EVIDENCE/source.txt"
+          tests=(--tests me.manga.kira.backend.sourceconfig.parsing.AuthoredSourceConfigTest)
+          if [[ "$GITHUB_REF" == refs/heads/remediation/priority-source-configs-20261017 ]]; then
+            tests=(
+              --tests me.manga.kira.backend.sourceconfig.application.ClientCatalogQueryServiceTest
+              --tests me.manga.kira.backend.sourceconfig.api.ClientCatalogDeliveryTest
+              --tests me.manga.kira.backend.sourceconfig.infrastructure.ClientCatalogStartupTest
+              --tests me.manga.kira.backend.sourceconfig.api.SourceConfigConditionalResponseTest
+            )
+          fi
           ./gradlew --no-daemon --no-parallel --max-workers=1 --no-build-cache --no-configuration-cache \
             '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' \
-            -Pkotlin.compiler.execution.strategy=in-process test \
-            --tests me.manga.kira.backend.sourceconfig.application.ClientCatalogQueryServiceTest \
-            --tests me.manga.kira.backend.sourceconfig.api.ClientCatalogDeliveryTest \
-            --tests me.manga.kira.backend.sourceconfig.infrastructure.ClientCatalogStartupTest \
-            --tests me.manga.kira.backend.sourceconfig.api.SourceConfigConditionalResponseTest \
+            -Pkotlin.compiler.execution.strategy=in-process test "${tests[@]}" \
             -x jacocoTestReport
       - name: Stop owned Gradle, preserve results and remove disposable outputs
         if: always()
