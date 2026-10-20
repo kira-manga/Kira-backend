@@ -1,0 +1,311 @@
+{
+  "api": "Manhwaweb",
+  "language": "(ES)",
+  "displayName": "Manhwaweb",
+  "baseUrl": "https://manhwaweb.com",
+  "previousHosts": [
+    "manhwawebbackend-production.up.railway.app",
+    "api.manhwaweb.com"
+  ],
+  "engine": "generic",
+  "enabled": false,
+  "usesCapturedHeaders": false,
+  "pagination": {
+    "start": 1
+  },
+  "blacklistGenres": [
+    "Girls love",
+    "Boys love",
+    "Milf"
+  ],
+  "endpoints": {
+    "home": {
+      "url": "https://api.manhwaweb.com/manhwa/library?buscar=&tipo=&demografia=&estado=&erotico=no&order_dir=desc&order_item=alfabetico&page={pageOffset}",
+      "format": "json",
+      "root": "data",
+      "listFilters": [
+        {
+          "path": "_erotico",
+          "op": "equals",
+          "value": "no",
+          "mode": "include"
+        }
+      ]
+    },
+    "search": {
+      "url": "https://api.manhwaweb.com/manhwa/library?buscar={queryEncoded}&tipo=&demografia=&estado=&erotico=no&order_dir=desc&order_item={sourceSort}&page={pageOffset}",
+      "format": "json",
+      "root": "data",
+      "listFilters": [
+        {
+          "path": "_erotico",
+          "op": "equals",
+          "value": "no",
+          "mode": "include"
+        }
+      ]
+    },
+    "details": {
+      "url": "https://api.manhwaweb.com/manhwa/see/{id}",
+      "format": "json"
+    },
+    "pages": {
+      "url": "https://api.manhwaweb.com/chapters/see/{chapterId}",
+      "format": "json",
+      "root": "chapter.img"
+    }
+  },
+  "fields": {
+    "item.title": {
+      "path": "the_real_name",
+      "fallbackPath": "name_esp"
+    },
+    "item.url": {
+      "template": "{baseUrl}/manhwa/see/{id}",
+      "vars": {
+        "id": "real_id,_id"
+      }
+    },
+    "item.cover": {
+      "path": "_imagen"
+    },
+    "item.genres": {
+      "listPath": "_categoris[*]",
+      "transform": [
+        {
+          "fn": "enum-map",
+          "args": {
+            "3": "Acción",
+            "29": "Aventura",
+            "18": "Comedia",
+            "1": "Drama",
+            "42": "Recuentos de la vida",
+            "2": "Romance",
+            "5": "Venganza",
+            "6": "Harem",
+            "23": "Fantasía",
+            "31": "Sobrenatural",
+            "25": "Tragedia",
+            "43": "Psicológico",
+            "32": "Horror",
+            "44": "Thriller",
+            "28": "Historias cortas",
+            "30": "Ecchi",
+            "34": "Gore",
+            "27": "Girls love",
+            "45": "Boys love",
+            "41": "Reencarnación",
+            "37": "Sistema de niveles",
+            "33": "Ciencia ficción",
+            "38": "Apocalíptico",
+            "39": "Artes marciales",
+            "40": "Superpoderes",
+            "35": "Cultivación (cultivo)",
+            "8": "Milf"
+          }
+        }
+      ]
+    },
+    "detail.title": {
+      "path": "the_real_name"
+    },
+    "detail.cover": {
+      "path": "_imagen"
+    },
+    "detail.description": {
+      "path": "_sinopsis"
+    },
+    "detail.status": {
+      "path": "_status"
+    },
+    "detail.author": {
+      "path": "autor[0].name",
+      "fallbackPath": "_extras.autores[0]"
+    },
+    "detail.chapters": {
+      "listPath": "chapters"
+    },
+    "chapter.entries": {
+      "listPath": "versions"
+    },
+    "chapter.name": {
+      "template": "Capítulo {number}",
+      "vars": {
+        "number": "root:chapter|format-number"
+      }
+    },
+    "chapter.number": {
+      "template": "{number}",
+      "vars": {
+        "number": "root:chapter|format-number"
+      }
+    },
+    "chapter.order": {
+      "template": "{number}",
+      "vars": {
+        "number": "root:chapter"
+      }
+    },
+    "chapter.url": {
+      "template": "{link}",
+      "vars": {
+        "link": "link"
+      },
+      "transform": [
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "^https://(?:www\\.)?manhwaweb\\.com/leer/([^/?#]+)/?$",
+            "replacement": "https://manhwaweb.com/chapters/see/$1"
+          }
+        }
+      ]
+    },
+    "chapter.date": {
+      "path": "create",
+      "dateStrategy": "epoch-millis"
+    },
+    "page.image": {
+      "path": "$"
+    }
+  },
+  "headers": {
+    "Referer": "https://manhwaweb.com/"
+  },
+  "imageBase": "https://img2mw.xyz",
+  "trustedHosts": [
+    "img1mw.xyz"
+  ],
+  "filters": [
+    {
+      "id": "genres",
+      "label": "Géneros",
+      "type": "multiselect",
+      "options": [
+        {
+          "value": "3",
+          "label": "Acción"
+        },
+        {
+          "value": "29",
+          "label": "Aventura"
+        },
+        {
+          "value": "18",
+          "label": "Comedia"
+        },
+        {
+          "value": "1",
+          "label": "Drama"
+        },
+        {
+          "value": "42",
+          "label": "Recuentos de la vida"
+        },
+        {
+          "value": "2",
+          "label": "Romance"
+        },
+        {
+          "value": "5",
+          "label": "Venganza"
+        },
+        {
+          "value": "6",
+          "label": "Harem"
+        },
+        {
+          "value": "23",
+          "label": "Fantasía"
+        },
+        {
+          "value": "31",
+          "label": "Sobrenatural"
+        },
+        {
+          "value": "25",
+          "label": "Tragedia"
+        },
+        {
+          "value": "43",
+          "label": "Psicológico"
+        },
+        {
+          "value": "32",
+          "label": "Horror"
+        },
+        {
+          "value": "44",
+          "label": "Thriller"
+        },
+        {
+          "value": "28",
+          "label": "Historias cortas"
+        },
+        {
+          "value": "34",
+          "label": "Gore"
+        },
+        {
+          "value": "41",
+          "label": "Reencarnación"
+        },
+        {
+          "value": "37",
+          "label": "Sistema de niveles"
+        },
+        {
+          "value": "33",
+          "label": "Ciencia ficción"
+        },
+        {
+          "value": "38",
+          "label": "Apocalíptico"
+        },
+        {
+          "value": "39",
+          "label": "Artes marciales"
+        },
+        {
+          "value": "40",
+          "label": "Superpoderes"
+        },
+        {
+          "value": "35",
+          "label": "Cultivación (cultivo)"
+        }
+      ],
+      "request": {
+        "target": "query",
+        "param": "generes",
+        "encode": "csv",
+        "delimiter": "a"
+      }
+    },
+    {
+      "id": "sort",
+      "label": "Orden",
+      "type": "select",
+      "options": [
+        {
+          "value": "alfabetico",
+          "label": "Alphabetical"
+        },
+        {
+          "value": "creacion",
+          "label": "Creation"
+        },
+        {
+          "value": "num_chapter",
+          "label": "Number of Chapters"
+        }
+      ],
+      "default": "alfabetico",
+      "required": true,
+      "request": {
+        "target": "path",
+        "param": "sourceSort"
+      }
+    }
+  ]
+}
