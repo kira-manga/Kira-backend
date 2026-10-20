@@ -83,7 +83,7 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
     implementation(libs.kotlinx.serialization.json)
-    implementation("me.manga.kira.source:source-engine:0.2.6")
+    implementation("me.manga.kira.source:source-engine:0.2.7")
 
     // --- API docs ---
     implementation(libs.springdoc.openapi.starter.webmvc.ui)
@@ -95,7 +95,7 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation("org.springframework.security:spring-security-test")
-    testImplementation("me.manga.kira.source:source-testkit:0.2.6")
+    testImplementation("me.manga.kira.source:source-testkit:0.2.7")
     testImplementation("org.testcontainers:testcontainers-junit-jupiter")
     testImplementation("org.testcontainers:testcontainers-postgresql")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
