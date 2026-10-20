@@ -1,0 +1,191 @@
+{
+  "api": "Mangahub",
+  "language": "(RU)",
+  "displayName": "Mangahub",
+  "baseUrl": "https://mangahub.ru/",
+  "imageBase": "https://p1.statichub.org/",
+  "enabled": false,
+  "engine": "generic",
+  "headers": {},
+  "usesCapturedHeaders": false,
+  "pagination": {
+    "type": "page-number",
+    "param": "page",
+    "start": 1
+  },
+  "endpoints": {
+    "home": {
+      "url": "{baseUrl}/explore/genres-is-nor-erotica-nor-omegavers-nor-shoujo_ai-nor-shounen_ai-nor-yaoi-nor-yuri/sort-is-update?page={page}",
+      "format": "html",
+      "listSelector": "div.item-grid"
+    },
+    "search": {
+      "url": "{baseUrl}/search/title?query={queryEncoded}&page={page}",
+      "format": "html",
+      "listSelector": "div.item-grid"
+    },
+    "details": {
+      "url": "{itemUrl}",
+      "format": "html"
+    },
+    "chapters": {
+      "url": "{itemUrl}/chapters",
+      "format": "html",
+      "listSelector": "div.detail-item[data-targets=\"sort-list.items\"][data-item-number]"
+    },
+    "pages": {
+      "url": "{chapterUrl}",
+      "format": "html",
+      "listSelector": "img.reader-viewer-img"
+    }
+  },
+  "fields": {
+    "item.title": {
+      "selector": "div.text-line-clamp a.fw-medium",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "item.url": {
+      "selector": "a.fw-medium",
+      "attr": "abs:href"
+    },
+    "item.cover": {
+      "selector": "img.item-grid-image",
+      "attr": "abs:src"
+    },
+    "item.rating": {
+      "selector": ".label-rating",
+      "attr": "text"
+    },
+    "detail.title": {
+      "selector": "div.text-line-clamp span.align-middle",
+      "attr": "text"
+    },
+    "detail.cover": {
+      "selector": "img.cover-detail",
+      "attr": "abs:src"
+    },
+    "detail.description": {
+      "selector": ".markdown-style.text-expandable-content",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.author": {
+      "selector": ".attr-name:contains(Автор) + .attr-value",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "detail.rating": {
+      "selector": ".rating-star-rate",
+      "attr": "text"
+    },
+    "detail.genres": {
+      "listSelector": "a.tag[href^=\"/genre/\"]",
+      "attr": "text"
+    },
+    "detail.status": {
+      "template": "{volumes} | {translation}",
+      "vars": {
+        "volumes": ".attr-name:contains(Томов) + .attr-value",
+        "translation": ".attr-name:contains(Перевод) + .attr-value"
+      },
+      "transform": [
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "(?i)^[^|]*продолжается[^|]*\\|.*$",
+            "replacement": "Продолжается"
+          }
+        },
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "(?i)^[^|]*приостановлен[^|]*\\|.*$",
+            "replacement": "Приостановлен"
+          }
+        },
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "(?i)^[^|]*(?:завершен|выпуск прекращён)[^|]*\\|.*завершен.*$",
+            "replacement": "Завершен"
+          }
+        },
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "(?i)^[^|]*(?:завершен|выпуск прекращён)[^|]*\\|.*$",
+            "replacement": "Выпуск завершён"
+          }
+        },
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "^.*\\|.*$",
+            "replacement": "Неизвестно"
+          }
+        }
+      ],
+      "selector": ":not(*)"
+    },
+    "chapter.number": {
+      "selector": "",
+      "attr": "data-item-number"
+    },
+    "chapter.order": {
+      "selector": "",
+      "attr": "data-item-number"
+    },
+    "chapter.name": {
+      "selector": "a[href^=\"/read/\"]",
+      "attr": "text",
+      "transform": [
+        {
+          "fn": "trim"
+        }
+      ]
+    },
+    "chapter.url": {
+      "selector": "a[href^=\"/read/\"]",
+      "attr": "abs:href"
+    },
+    "chapter.date": {
+      "selector": "div.detail-item-date",
+      "attr": "text",
+      "dateStrategy": "iso",
+      "transform": [
+        {
+          "fn": "regex-replace",
+          "args": {
+            "pattern": "^(\\d{2})\\.(\\d{2})\\.(\\d{4})$",
+            "replacement": "$3-$2-$1"
+          }
+        }
+      ]
+    },
+    "page.image": {
+      "selector": "",
+      "attr": "data-src"
+    }
+  },
+  "blacklistGenres": [
+    "Хентай",
+    "Hentai"
+  ],
+  "previousHosts": [],
+  "previousImageHosts": [],
+  "trustedHosts": [],
+  "filters": []
+}

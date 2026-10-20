@@ -71,3 +71,22 @@ existing scalar field declarations and are not emitted; the first named author i
 No site-ranked featured feed is invented: safe activation also needs the parser's optional
 featured-endpoint handling to avoid a visible missing-endpoint error. Keep disabled until
 that correction is delivered and normal backend validation/publication is completed.
+
+## Mangahub (candidate, not published)
+
+Preserves `Mangahub`, `(RU)`, and the original full `/title/...` and `/read/...`
+storage URLs. Uses current public HTML cards, encoded search queries, and the dedicated
+`/chapters` list. Chapter number/order/date come from actual row attributes and dates;
+do not drop the first chapter or manufacture today's date. Complete sampled lists contain
+2 and 329 chapters; the latter matches the site's advertised total, not a 700-chapter claim.
+
+Original browse exclusions and the Hentai blacklist remain. Search cards without genre
+metadata do not establish complete mature-content filtering. No captured headers, credentials,
+extra trusted hosts, scripts or age-confirmation actions are introduced. The sampled public
+reader yields 60 image URLs; an age-gated HTTP-200 interstitial must be an error, not an empty
+success. A JPEG-prefix check is not full rendering or all-CDN qualification.
+
+Keep disabled pending the new parser's absent-featured and empty-reader corrections,
+consumer qualification, and normal authenticated backend validation/publication. The input
+omits server-owned lifecycle state and retains the ordinary operational-state default;
+`enabled:false` is not an activation instruction. No optional featured feed is fabricated.
